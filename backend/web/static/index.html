@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VocalGuard - Gestion d'appels</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>VocalGuard</h1>
+            <p class="subtitle">Système de gestion d'appels avec interface vocale</p>
+        </header>
+
+        <nav class="tabs">
+            <button class="tab-btn active" data-tab="calls">Appels</button>
+            <button class="tab-btn" data-tab="callers">Appelants</button>
+            <button class="tab-btn" data-tab="voicemails">Messages vocaux</button>
+            <button class="tab-btn" data-tab="osint">OSINT</button>
+            <button class="tab-btn" data-tab="voice-test">Test vocal</button>
+        </nav>
+
+        <!-- Onglet Appels -->
+        <div id="calls-tab" class="tab-content active">
+            <div class="section-header">
+                <h2>Historique des appels</h2>
+                <button class="btn btn-primary" onclick="refreshCalls()">Actualiser</button>
+            </div>
+            <div id="calls-list" class="data-list">
+                <div class="loading">Chargement...</div>
+            </div>
+        </div>
+
+        <!-- Onglet Appelants -->
+        <div id="callers-tab" class="tab-content">
+            <div class="section-header">
+                <h2>Gestion des appelants</h2>
+                <button class="btn btn-primary" onclick="showAddCallerForm()">Ajouter un appelant</button>
+            </div>
+            
+            <div id="add-caller-form" class="form-container" style="display: none;">
+                <h3>Nouvel appelant</h3>
+                <form onsubmit="addCaller(event)">
+                    <div class="form-group">
+                        <label for="phone-number">Numéro de téléphone:</label>
+                        <input type="text" id="phone-number" name="phone_number" required 
+                               placeholder="+33123456789" pattern="\+?[0-9]+">
+                    </div>
+                    <div class="form-group">
+                        <label for="caller-name">Nom (optionnel):</label>
+                        <input type="text" id="caller-name" name="name" placeholder="Nom de l'appelant">
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" name="is_whitelisted"> Liste blanche
+                        </label>
+                        <label>
+                            <input type="checkbox" name="is_blocked"> Bloqué
+                        </label>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Ajouter</button>
+                        <button type="button" class="btn btn-secondary" onclick="hideAddCallerForm()">Annuler</button>
+                    </div>
+                </form>
+            </div>
+
+            <div id="callers-list" class="data-list">
+                <div class="loading">Chargement...</div>
+            </div>
+        </div>
+
+        <!-- Onglet Messages vocaux -->
+        <div id="voicemails-tab" class="tab-content">
+            <div class="section-header">
+                <h2>Messages vocaux</h2>
+                <button class="btn btn-primary" onclick="refreshVoicemails()">Actualiser</button>
+            </div>
+            <div id="voicemails-list" class="data-list">
+                <div class="loading">Chargement...</div>
+            </div>
+        </div>
+
+        <!-- Onglet OSINT -->
+        <div id="osint-tab" class="tab-content">
+            <div class="section-header">
+                <h2>Recherche OSINT</h2>
+            </div>
+            <div class="form-container">
+                <form onsubmit="searchOSINT(event)">
+                    <div class="form-group">
+                        <label for="osint-phone">Numéro de téléphone:</label>
+                        <input type="text" id="osint-phone" name="phone" required 
+                               placeholder="+33123456789 ou 0123456789" pattern="\+?[0-9]+">
+                        <small style="display: block; margin-top: 5px; color: var(--text-light);">
+                            Format accepté: +33... ou 0... (sera automatiquement converti en +33)
+                        </small>
+                    </div>
+                    <div class="form-group">
+                        <label for="osint-caller-name">Nom de l'appelant (optionnel):</label>
+                        <input type="text" id="osint-caller-name" name="caller_name" 
+                               placeholder="Ex: V123456789012345 ou TELEMARKETING">
+                        <small style="display: block; margin-top: 5px; color: var(--text-light);">
+                            Utile pour la détection commerciale et télémarketeurs
+                        </small>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Rechercher</button>
+                    </div>
+                </form>
+            </div>
+            <div id="osint-results" class="data-list"></div>
+        </div>
+
+        <!-- Onglet Test vocal -->
+        <div id="voice-test-tab" class="tab-content">
+            <div class="section-header">
+                <h2>Test de l'interface vocale</h2>
+            </div>
+            
+            <!-- Test de synthèse vocale -->
+            <div class="form-container">
+                <h3>Synthèse vocale (Text-to-Speech)</h3>
+                <p style="margin-bottom: 15px; color: var(--text-light);">
+                    Teste la génération de parole à partir d'un texte
+                </p>
+                <form onsubmit="testSynthesis(event)">
+                    <div class="form-group">
+                        <label for="synthesis-text">Texte à synthétiser:</label>
+                        <textarea id="synthesis-text" name="text" rows="3" required 
+                                  placeholder="Bonjour, ceci est un test de synthèse vocale."></textarea>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Générer et écouter</button>
+                    </div>
+                </form>
+                <div id="synthesis-result" style="margin-top: 20px;"></div>
+            </div>
+
+            <!-- Test de reconnaissance vocale -->
+            <div class="form-container">
+                <h3>Reconnaissance vocale (Speech-to-Text)</h3>
+                <p style="margin-bottom: 15px; color: var(--text-light);">
+                    Uploade un fichier audio pour le transcrire en texte
+                </p>
+                <form onsubmit="testRecognition(event)">
+                    <div class="form-group">
+                        <label for="recognition-file">Fichier audio (WAV, MP3, etc.):</label>
+                        <input type="file" id="recognition-file" name="audio_file" accept="audio/*" required>
+                        <small style="display: block; margin-top: 5px; color: var(--text-light);">
+                            Formats supportés: WAV, MP3, FLAC. Taux d'échantillonnage recommandé: 16kHz
+                        </small>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Transcrire</button>
+                    </div>
+                </form>
+                <div id="recognition-result" style="margin-top: 20px;"></div>
+            </div>
+
+            <!-- Test de conversation -->
+            <div class="form-container">
+                <h3>Test de conversation</h3>
+                <p style="margin-bottom: 15px; color: var(--text-light);">
+                    Uploade un fichier audio, le système le transcrit, génère une réponse et la synthétise
+                </p>
+                <form onsubmit="testConversation(event)">
+                    <div class="form-group">
+                        <label for="conversation-file">Fichier audio de votre message:</label>
+                        <input type="file" id="conversation-file" name="audio_file" accept="audio/*" required>
+                    </div>
+                    <div class="form-actions">
+                        <button type="submit" class="btn btn-primary">Tester la conversation</button>
+                    </div>
+                </form>
+                <div id="conversation-result" style="margin-top: 20px;"></div>
+            </div>
+        </div>
+
+        <div id="notification" class="notification"></div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
+

@@ -1,0 +1,79 @@
+# Fichier de configuration des patterns de réponses pour VocalGuard
+# 
+# Structure:
+# - patterns: Liste de patterns de réponses
+#   - keywords: Mots-clés à rechercher dans le texte utilisateur
+#   - responses: Liste de réponses possibles (une sera choisie aléatoirement)
+#   - priority: Priorité du pattern (plus élevé = vérifié en premier, défaut: 0)
+#   - exact_match: Si true, tous les mots-clés doivent être présents (défaut: false)
+#
+# - default_responses: Réponses utilisées si aucun pattern ne correspond
+#   - Utilisez {text} pour insérer le texte de l'utilisateur
+
+patterns:
+  # Salutations
+  - keywords: ['bonjour', 'salut', 'hello', 'bonsoir']
+    responses:
+      - "Bonjour ! Comment puis-je vous aider aujourd'hui ?"
+      - "Salut ! Que puis-je faire pour vous ?"
+      - "Bonjour ! Je suis VocalGuard, comment puis-je vous assister ?"
+    priority: 10
+
+  # Au revoir
+  - keywords: ['au revoir', 'bye', 'à bientôt']
+    responses:
+      - "Au revoir, bonne journée !"
+      - "À bientôt !"
+      - "Au revoir, passez une excellente journée !"
+    priority: 10
+
+  # Remerciements
+  - keywords: ['merci', 'thanks', 'merci beaucoup']
+    responses:
+      - "De rien, c'est un plaisir de vous aider !"
+      - "Je vous en prie !"
+      - "Avec plaisir !"
+    priority: 8
+
+  # Gestion des appels
+  - keywords: ['appel', 'téléphone', 'appeler']
+    responses:
+      - "Je peux vous aider à gérer vos appels. Que souhaitez-vous faire ?"
+      - "Pour les appels, je peux vous aider. Que voulez-vous faire ?"
+    priority: 7
+
+  # Blocage de numéros
+  - keywords: ['bloquer', 'blocage', 'bloquer un numéro']
+    responses:
+      - "Je peux vous aider à bloquer des numéros indésirables."
+      - "Pour bloquer un numéro, je peux vous assister."
+    priority: 7
+
+  # Messages vocaux
+  - keywords: ['message', 'vocal', 'voicemail']
+    responses:
+      - "Je peux gérer vos messages vocaux. Que voulez-vous faire ?"
+      - "Pour les messages vocaux, je suis là pour vous aider."
+    priority: 7
+
+  # Aide générale
+  - keywords: ['aide', 'help', 'assistance']
+    responses:
+      - "Je peux vous aider avec la gestion des appels, le blocage de numéros et les messages vocaux."
+      - "Je suis là pour vous aider avec VocalGuard. Que souhaitez-vous faire ?"
+    priority: 6
+
+  # Exemple avec exact_match (tous les mots-clés doivent être présents)
+  # - keywords: ['bloquer', 'numéro', 'spam']
+  #   responses:
+  #     - "Je vais bloquer ce numéro de spam pour vous."
+  #   priority: 9
+  #   exact_match: true
+
+# Réponses par défaut si aucun pattern ne correspond
+# Utilisez {text} pour insérer le texte de l'utilisateur
+default_responses:
+  - "J'ai bien entendu : {text}. Comment puis-je vous aider ?"
+  - "D'accord, j'ai compris : {text}. Que souhaitez-vous faire ?"
+  - "Je comprends : {text}. Comment puis-je vous assister ?"
+

@@ -1,0 +1,44 @@
+# Normalisation des fins de ligne
+
+# Par défaut, laisser Git gérer le texte intelligemment
+* text=auto
+
+# Scripts shell et code (LF)
+*.sh text eol=lf
+*.py text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
+Dockerfile text eol=lf
+
+# Scripts Windows (CRLF)
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Fichiers de configuration spécifiques
+*.ini text eol=lf
+*.toml text eol=lf
+
+# Fichiers binaires / à ne pas convertir
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+
+# Lockfiles (frontend)
+package-lock.json -text
+pnpm-lock.yaml -text
+yarn.lock -text
+

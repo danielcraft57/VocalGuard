@@ -1,0 +1,60 @@
+# Configuration exemple pour VocalGuard
+
+# Base de données
+database_url: "sqlite:///vocalguard.db"
+
+# API
+api_host: "0.0.0.0"
+api_port: 8000
+api_debug: false
+
+# Modem
+modem_port: null  # Auto-détection si null
+modem_baudrate: 115200
+
+# Voice - Reconnaissance
+voice_recognition_engine: "whisper"  # whisper ou vosk
+voice_language: "fr"
+
+# Whisper
+whisper_model: "base"  # tiny, base, small, medium, large
+whisper_device: "cpu"  # cpu ou cuda
+
+# VOSK (si utilisé)
+vosk_model_path: null  # Chemin vers le modèle VOSK
+
+# Voice - Synthèse
+voice_synthesis_engine: "pyttsx3"  # pyttsx3 ou gtts
+
+# Appels
+rings_before_answer: 2
+max_call_duration: 300  # secondes
+
+# Blocage
+block_enabled: true
+block_service: "nomorobo"  # nomorobo, truecaller, etc.
+
+# Détection commerciale (inspiré de callattendant)
+commercial_detection:
+  enabled: true
+  # Patterns personnalisés de numéros (optionnel)
+  number_patterns: {}
+  # Patterns personnalisés de noms (optionnel)
+  name_patterns: {}
+  # Exemple de patterns personnalisés:
+  # number_patterns:
+  #   "^(\+33|0)8[0-9]{2}[0-9]{6}$": "Numéro surtaxé personnalisé"
+  # name_patterns:
+  #   "V[0-9]{15}": "Télémarketeur (Caller ID)"
+
+# OSINT - Services externes (optionnel)
+# Définir les clés API dans le fichier .env ou variables d'environnement
+# NUMLOOKUP_API_KEY=your_key
+# OPENCNAM_API_KEY=your_key
+# NUMVERIFY_API_KEY=your_key
+# HLR_API_KEY=your_key
+
+# Messagerie vocale
+voicemail_enabled: true
+voicemail_max_duration: 120  # secondes
+

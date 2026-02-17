@@ -1,0 +1,52 @@
+# Core dependencies
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Database
+sqlalchemy==2.0.23
+alembic==1.12.1
+aiosqlite==0.21.0
+
+# Voice recognition and synthesis
+# openai-whisper - installer depuis GitHub pour Python 3.13
+# La version PyPI peut avoir des problèmes avec Python 3.13
+# Le script run.ps1 installera depuis GitHub automatiquement
+vosk==0.3.45
+pyttsx3==2.90
+gtts==2.4.0
+pyaudio==0.2.14
+
+# Audio processing
+soundfile==0.12.1
+librosa==0.10.1
+numpy>=1.26.0
+pygame==2.5.2
+
+# Modem communication
+pyserial==3.5
+
+# HTTP client
+httpx==0.25.1
+aiohttp==3.9.1
+
+# Tasks et workers
+celery
+
+# Utilities
+python-dotenv==1.0.0
+pyyaml==6.0.1
+loguru==0.7.2
+
+# Web interface (optional)
+jinja2==3.1.2
+
+# OSINT (optionnel)
+truecallerpy>=1.0.3
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+
