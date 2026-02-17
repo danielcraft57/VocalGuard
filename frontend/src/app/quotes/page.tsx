@@ -11,7 +11,14 @@ function renderRow(quote: Quote): React.ReactNode {
       <td style={{ padding: "0.5rem 0.75rem" }}>{quote.title}</td>
       <td style={{ padding: "0.5rem 0.75rem" }}>{quote.phone_number ?? ""}</td>
       <td style={{ padding: "0.5rem 0.75rem" }}>{totalTtc} €</td>
-      <td style={{ padding: "0.5rem 0.75rem" }}>{quote.status}</td>
+      <td style={{ padding: "0.5rem 0.75rem" }}>
+        <span className="vg-badge vg-badge-success">
+          <span className="material-icons" style={{ fontSize: "14px", marginRight: "0.25rem" }}>
+            request_quote
+          </span>
+          {quote.status}
+        </span>
+      </td>
     </tr>
   );
 }
@@ -36,12 +43,22 @@ const QuotesPage = async () => {
     >
       {error ? (
         <div className="vg-card">
-          <div className="vg-card-label">Erreur</div>
+          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <span className="material-icons" style={{ color: "#ef4444", fontSize: "18px" }}>
+              error_outline
+            </span>
+            Erreur de chargement des devis
+          </div>
           <div style={{ fontSize: "0.9rem", color: "#f97373" }}>{error}</div>
         </div>
       ) : quotes.length === 0 ? (
         <div className="vg-card">
-          <div className="vg-card-label">Aucun devis pour le moment.</div>
+          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <span className="material-icons" style={{ color: "#9ca3af", fontSize: "18px" }}>
+              description
+            </span>
+            Aucun devis pour le moment
+          </div>
           <div style={{ fontSize: "0.9rem", color: "#9ca3af" }}>
             Quand tu commenceras a generer des devis depuis les appels, ils apparaitront ici.
           </div>

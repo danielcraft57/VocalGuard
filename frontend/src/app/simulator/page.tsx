@@ -12,7 +12,12 @@ const SimulatorPage: React.FC = () => {
       subtitle="Teste les reponses de VocalGuard avec des phrases saisies au clavier."
     >
       <div className="vg-card">
-        <div className="vg-card-label">Simulation rapide</div>
+        <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <span className="material-icons" style={{ color: "#22c55e", fontSize: "18px" }}>
+            mic
+          </span>
+          Simulation rapide
+        </div>
         <p style={{ fontSize: "0.9rem", color: "#9ca3af", marginBottom: "0.75rem" }}>
           Plus tard, cette page pourra appeler directement l'API pour simuler un appel et afficher la reponse.
         </p>
@@ -41,6 +46,9 @@ const SimulatorPage: React.FC = () => {
             cursor: "pointer"
           }}
         >
+          <span className="material-icons" style={{ fontSize: "16px", marginRight: "0.25rem", verticalAlign: "middle" }}>
+            play_arrow
+          </span>
           Simuler la reponse
         </button>
       </div>

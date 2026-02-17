@@ -35,12 +35,22 @@ const CustomersPage = async () => {
     >
       {error ? (
         <div className="vg-card">
-          <div className="vg-card-label">Erreur</div>
+          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <span className="material-icons" style={{ color: "#ef4444", fontSize: "18px" }}>
+              error_outline
+            </span>
+            Erreur de chargement des clients
+          </div>
           <div style={{ fontSize: "0.9rem", color: "#f97373" }}>{error}</div>
         </div>
       ) : customers.length === 0 ? (
         <div className="vg-card">
-          <div className="vg-card-label">Aucun client encore enregistre.</div>
+          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <span className="material-icons" style={{ color: "#9ca3af", fontSize: "18px" }}>
+              groups
+            </span>
+            Aucun client encore enregistre
+          </div>
           <div style={{ fontSize: "0.9rem", color: "#9ca3af" }}>
             Des que des appels ou RDV creeront des dossiers, tu les verras ici.
           </div>

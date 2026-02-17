@@ -1,4 +1,6 @@
-import React from "react";
+"use client";
+
+import React, { useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 
@@ -18,11 +20,21 @@ export interface AppLayoutProps {
  * central passe en children.
  */
 export const AppLayout: React.FC<AppLayoutProps> = ({ children, title, subtitle }) => {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const handleToggleSidebar = () => {
+    setSidebarOpen((prev) => !prev);
+  };
+
+  const handleCloseSidebar = () => {
+    setSidebarOpen(false);
+  };
+
   return (
     <div className="vg-layout">
-      <Sidebar />
+      <Sidebar isOpen={sidebarOpen} onNavigate={handleCloseSidebar} />
       <div className="vg-main">
-        <Topbar title={title} />
+        <Topbar title={title} onMenuClick={handleToggleSidebar} />
         <main className="vg-content">
           <header>
             <h1 className="vg-page-title">{title}</h1>
@@ -31,6 +43,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children, title, subtitle 
           {children}
         </main>
       </div>
+      {sidebarOpen ? <div className="vg-sidebar-backdrop" onClick={handleCloseSidebar} /> : null}
     </div>
   );
 };

@@ -1,6 +1,15 @@
+"use client";
+
 import React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+
+export interface SidebarProps {
+  /** Etat d'ouverture sur mobile. */
+  isOpen?: boolean;
+  /** Appelé lorsqu'on clique sur un lien (pratique pour refermer sur mobile). */
+  onNavigate?: () => void;
+}
 
 /**
  * Determine si un lien est actif pour la route courante.
@@ -19,22 +28,28 @@ function isActive(pathname: string, href: string): boolean {
 /**
  * Sidebar principale de navigation pour VocalGuard.
  */
-export const Sidebar: React.FC = () => {
+export const Sidebar: React.FC<SidebarProps> = ({ isOpen = false, onNavigate }) => {
   const pathname = usePathname();
 
   const items = [
-    { href: "/dashboard", label: "Dashboard" },
-    { href: "/calls", label: "Appels" },
-    { href: "/appointments", label: "RDV" },
-    { href: "/quotes", label: "Devis" },
-    { href: "/customers", label: "Clients" },
-    { href: "/kb", label: "Base de connaissances" },
-    { href: "/simulator", label: "Simulateur d'appel" },
-    { href: "/settings", label: "Parametres" }
+    { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
+    { href: "/calls", label: "Appels", icon: "call" },
+    { href: "/appointments", label: "RDV", icon: "event" },
+    { href: "/quotes", label: "Devis", icon: "description" },
+    { href: "/customers", label: "Clients", icon: "groups" },
+    { href: "/kb", label: "Base de connaissances", icon: "help_outline" },
+    { href: "/simulator", label: "Simulateur d'appel", icon: "mic" },
+    { href: "/settings", label: "Parametres", icon: "settings" }
   ];
 
+  const handleClick = () => {
+    if (onNavigate) {
+      onNavigate();
+    }
+  };
+
   return (
-    <aside className="vg-sidebar">
+    <aside className={`vg-sidebar ${isOpen ? "vg-sidebar-open" : ""}`}>
       <div className="vg-sidebar-title">VocalGuard</div>
       <nav className="vg-sidebar-nav">
         {items.map((item) => {
@@ -44,8 +59,14 @@ export const Sidebar: React.FC = () => {
               key={item.href}
               href={item.href}
               className={`vg-sidebar-link ${active ? "vg-sidebar-link-active" : ""}`}
+              onClick={handleClick}
             >
-              {item.label}
+              {item.icon ? (
+                <span className="material-icons" style={{ fontSize: "18px", marginRight: "0.5rem" }}>
+                  {item.icon}
+                </span>
+              ) : null}
+              <span>{item.label}</span>
             </Link>
           );
         })}

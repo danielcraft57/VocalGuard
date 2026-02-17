@@ -11,7 +11,14 @@ function renderRow(appointment: Appointment): React.ReactNode {
       <td style={{ padding: "0.5rem 0.75rem" }}>{end}</td>
       <td style={{ padding: "0.5rem 0.75rem" }}>{appointment.title}</td>
       <td style={{ padding: "0.5rem 0.75rem" }}>{appointment.phone_number ?? ""}</td>
-      <td style={{ padding: "0.5rem 0.75rem" }}>{appointment.status}</td>
+      <td style={{ padding: "0.5rem 0.75rem" }}>
+        <span className="vg-badge vg-badge-success">
+          <span className="material-icons" style={{ fontSize: "14px", marginRight: "0.25rem" }}>
+            event_available
+          </span>
+          {appointment.status}
+        </span>
+      </td>
     </tr>
   );
 }
@@ -36,12 +43,22 @@ const AppointmentsPage = async () => {
     >
       {error ? (
         <div className="vg-card">
-          <div className="vg-card-label">Erreur</div>
+          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <span className="material-icons" style={{ color: "#ef4444", fontSize: "18px" }}>
+              error_outline
+            </span>
+            Erreur de chargement des rendez-vous
+          </div>
           <div style={{ fontSize: "0.9rem", color: "#f97373" }}>{error}</div>
         </div>
       ) : appointments.length === 0 ? (
         <div className="vg-card">
-          <div className="vg-card-label">Aucun rendez-vous planifie.</div>
+          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <span className="material-icons" style={{ color: "#9ca3af", fontSize: "18px" }}>
+              event_busy
+            </span>
+            Aucun rendez-vous planifie
+          </div>
           <div style={{ fontSize: "0.9rem", color: "#9ca3af" }}>
             Quand le moteur de prise de RDV sera branche, tu verras ici les prochains passages.
           </div>

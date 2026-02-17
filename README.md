@@ -21,7 +21,7 @@ Système moderne de gestion d'appels avec interface vocale intelligente, basé s
 - SQLAlchemy pour la base de données
 - Whisper/VOSK pour la reconnaissance vocale
 - pyttsx3/gTTS pour la synthèse vocale
-- React/Vue.js pour l'interface web (à venir)
+- Next.js + React (TypeScript) pour l'interface web
 - Docker pour le déploiement
 
 ## Installation
@@ -173,14 +173,14 @@ curl http://localhost:8000/api/v1/osint/reputation/+33123456789
 ### Structure du projet
 
 Le projet suit une architecture modulaire avec patterns modernes :
-- `vocalguard/core/` : Cœur du système (modem, gestion d'appels, événements)
-- `vocalguard/repositories/` : Pattern Repository pour l'accès aux données
-- `vocalguard/services/` : Couche Service pour la logique métier
-- `vocalguard/voice/` : Module vocal (reconnaissance et synthèse)
-- `vocalguard/api/` : API REST FastAPI avec dependency injection
-- `vocalguard/database/` : Modèles et gestion de base de données
+- `backend/core/` : Cœur du système (modem, gestion d'appels, événements)
+- `backend/repositories/` : Pattern Repository pour l'accès aux données
+- `backend/services/` : Couche Service pour la logique métier
+- `backend/voice/` : Module vocal (reconnaissance et synthèse)
+- `backend/api/` : API REST FastAPI avec dependency injection
+- `backend/database/` : Modèles et gestion de base de données
 
-Voir [ARCHITECTURE_V2.md](docs/ARCHITECTURE_V2.md) pour plus de détails.
+Voir [ARCHITECTURE_V3.md](docs/ARCHITECTURE_V3.md) pour plus de détails sur l'architecture unifiée backend/frontend.
 
 ### Tests
 
