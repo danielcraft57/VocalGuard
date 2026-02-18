@@ -1,4 +1,6 @@
-import React from "react";
+"use client";
+
+import React, { useState, useEffect } from "react";
 import { AppLayout } from "../../components/AppLayout";
 import { fetchAppointments, Appointment } from "../../services/appointmentsApi";
 
@@ -24,24 +26,53 @@ function renderRow(appointment: Appointment): React.ReactNode {
 }
 
 /**
- * Page agenda / rendez-vous.
+ * Page agenda / rendez-vous : chargement cote client pour les vraies donnees.
  */
-const AppointmentsPage = async () => {
-  let appointments: Appointment[] = [];
-  let error: string | null = null;
+export default function AppointmentsPage() {
+  const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  try {
-    appointments = await fetchAppointments();
-  } catch {
-    error = "Impossible de charger les rendez-vous (verifie le backend).";
-  }
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchAppointments()
+      .then((data) => {
+        if (!cancelled) {
+          setAppointments(data);
+          setError(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError("Impossible de charger les rendez-vous (verifie le backend).");
+          setAppointments([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <AppLayout
       title="Rendez-vous"
       subtitle="Vue agenda des interventions et RDV DanielCraftFr."
     >
-      {error ? (
+      {loading ? (
+        <div className="vg-card">
+          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <span className="material-icons" style={{ color: "#22c55e", fontSize: "18px" }}>
+              hourglass_empty
+            </span>
+            Chargement des rendez-vous...
+          </div>
+        </div>
+      ) : error ? (
         <div className="vg-card">
           <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
             <span className="material-icons" style={{ color: "#ef4444", fontSize: "18px" }}>
@@ -65,7 +96,7 @@ const AppointmentsPage = async () => {
         </div>
       ) : (
         <div className="vg-card">
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+          <table className="vg-table">
             <thead>
               <tr>
                 <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Debut</th>
@@ -81,7 +112,4 @@ const AppointmentsPage = async () => {
       )}
     </AppLayout>
   );
-};
-
-export default AppointmentsPage;
-
+}

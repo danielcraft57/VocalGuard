@@ -1,4 +1,6 @@
-import React from "react";
+"use client";
+
+import React, { useState, useEffect } from "react";
 import { AppLayout } from "../../components/AppLayout";
 import { fetchCustomers, Customer } from "../../services/customersApi";
 
@@ -16,24 +18,53 @@ function renderRow(customer: Customer): React.ReactNode {
 }
 
 /**
- * Page liste des clients / mini CRM.
+ * Page clients : chargement cote client pour les vraies donnees.
  */
-const CustomersPage = async () => {
-  let customers: Customer[] = [];
-  let error: string | null = null;
+export default function CustomersPage() {
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  try {
-    customers = await fetchCustomers();
-  } catch {
-    error = "Impossible de charger les clients (verifie le backend).";
-  }
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchCustomers()
+      .then((data) => {
+        if (!cancelled) {
+          setCustomers(data);
+          setError(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError("Impossible de charger les clients (verifie le backend).");
+          setCustomers([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <AppLayout
       title="Clients"
       subtitle="Dossiers clients centralises (appels, RDV, devis...)."
     >
-      {error ? (
+      {loading ? (
+        <div className="vg-card">
+          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <span className="material-icons" style={{ color: "#22c55e", fontSize: "18px" }}>
+              hourglass_empty
+            </span>
+            Chargement des clients...
+          </div>
+        </div>
+      ) : error ? (
         <div className="vg-card">
           <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
             <span className="material-icons" style={{ color: "#ef4444", fontSize: "18px" }}>
@@ -57,7 +88,7 @@ const CustomersPage = async () => {
         </div>
       ) : (
         <div className="vg-card">
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+          <table className="vg-table">
             <thead>
               <tr>
                 <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Numero</th>
@@ -73,7 +104,4 @@ const CustomersPage = async () => {
       )}
     </AppLayout>
   );
-};
-
-export default CustomersPage;
-
+}

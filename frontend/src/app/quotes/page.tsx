@@ -1,4 +1,6 @@
-import React from "react";
+"use client";
+
+import React, { useState, useEffect } from "react";
 import { AppLayout } from "../../components/AppLayout";
 import { fetchQuotes, Quote } from "../../services/quotesApi";
 
@@ -24,24 +26,53 @@ function renderRow(quote: Quote): React.ReactNode {
 }
 
 /**
- * Page de gestion des devis.
+ * Page devis : chargement cote client pour les vraies donnees.
  */
-const QuotesPage = async () => {
-  let quotes: Quote[] = [];
-  let error: string | null = null;
+export default function QuotesPage() {
+  const [quotes, setQuotes] = useState<Quote[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
-  try {
-    quotes = await fetchQuotes();
-  } catch {
-    error = "Impossible de charger les devis (verifie le backend).";
-  }
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchQuotes()
+      .then((data) => {
+        if (!cancelled) {
+          setQuotes(data);
+          setError(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError("Impossible de charger les devis (verifie le backend).");
+          setQuotes([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <AppLayout
       title="Devis"
       subtitle="Suivi des devis DanielCraftFr crees par VocalGuard."
     >
-      {error ? (
+      {loading ? (
+        <div className="vg-card">
+          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            <span className="material-icons" style={{ color: "#22c55e", fontSize: "18px" }}>
+              hourglass_empty
+            </span>
+            Chargement des devis...
+          </div>
+        </div>
+      ) : error ? (
         <div className="vg-card">
           <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
             <span className="material-icons" style={{ color: "#ef4444", fontSize: "18px" }}>
@@ -65,7 +96,7 @@ const QuotesPage = async () => {
         </div>
       ) : (
         <div className="vg-card">
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9rem" }}>
+          <table className="vg-table">
             <thead>
               <tr>
                 <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Date</th>
@@ -81,7 +112,4 @@ const QuotesPage = async () => {
       )}
     </AppLayout>
   );
-};
-
-export default QuotesPage;
-
+}

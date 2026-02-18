@@ -27,61 +27,67 @@ class FrenchPhoneDatabase:
         """
         self.db = db
     
-    def get_session(self) -> Session:
-        """Obtient une session de base de données"""
+    def get_session(self) -> Optional[Session]:
+        """Obtient une session de base de données, ou None si la DB n'est pas initialisee."""
         if self.db:
             return self.db
+        if SessionLocal is None:
+            return None
         return SessionLocal()
-    
+
     def get_prefix_info(self, prefix: str) -> Optional[Dict]:
         """
         Obtient les informations pour un préfixe depuis la base de données
-        
+
         Args:
             prefix: Préfixe (ex: 0387)
-            
+
         Returns:
             Dictionnaire avec les informations ou None
         """
         session = self.get_session()
+        if session is None:
+            return None
         try:
             prefix_obj = session.query(FrenchPhonePrefix).filter(
                 FrenchPhonePrefix.prefix == prefix
             ).first()
-            
+
             if prefix_obj:
                 return {
-                    'prefix': prefix_obj.prefix,
-                    'city': prefix_obj.city,
-                    'region': prefix_obj.region,
-                    'department': prefix_obj.department,
-                    'postal_code': prefix_obj.postal_code,
-                    'operator': prefix_obj.operator,
-                    'operator_type': prefix_obj.operator_type,
-                    'line_type': prefix_obj.line_type,
-                    'latitude': prefix_obj.latitude,
-                    'longitude': prefix_obj.longitude,
-                    'population': prefix_obj.population,
+                    "prefix": prefix_obj.prefix,
+                    "city": prefix_obj.city,
+                    "region": prefix_obj.region,
+                    "department": prefix_obj.department,
+                    "postal_code": prefix_obj.postal_code,
+                    "operator": prefix_obj.operator,
+                    "operator_type": prefix_obj.operator_type,
+                    "line_type": prefix_obj.line_type,
+                    "latitude": prefix_obj.latitude,
+                    "longitude": prefix_obj.longitude,
+                    "population": prefix_obj.population,
                 }
         except Exception as e:
             logger.error(f"Erreur lors de la recherche du préfixe {prefix}: {e}")
         finally:
             if not self.db:
                 session.close()
-        
+
         return None
     
     def add_prefix(self, prefix_data: Dict) -> bool:
         """
         Ajoute ou met à jour un préfixe dans la base de données
-        
+
         Args:
             prefix_data: Dictionnaire avec les données du préfixe
-            
+
         Returns:
             True si l'opération réussit
         """
         session = self.get_session()
+        if session is None:
+            return False
         try:
             prefix = prefix_data.get('prefix')
             if not prefix:
@@ -123,6 +129,8 @@ class FrenchPhoneDatabase:
             Nombre de préfixes importés
         """
         session = self.get_session()
+        if session is None:
+            return 0
         count = 0
         try:
             for prefix_data in prefixes_data:
@@ -165,14 +173,16 @@ class FrenchPhoneDatabase:
     def search_by_city(self, city: str) -> List[Dict]:
         """
         Recherche les préfixes par ville
-        
+
         Args:
             city: Nom de la ville
-            
+
         Returns:
             Liste de dictionnaires avec les préfixes
         """
         session = self.get_session()
+        if session is None:
+            return []
         try:
             prefixes = session.query(FrenchPhonePrefix).filter(
                 FrenchPhonePrefix.city.ilike(f"%{city}%")
@@ -194,14 +204,16 @@ class FrenchPhoneDatabase:
     def search_by_operator(self, operator: str) -> List[Dict]:
         """
         Recherche les préfixes par opérateur
-        
+
         Args:
             operator: Nom de l'opérateur
-            
+
         Returns:
             Liste de dictionnaires avec les préfixes
         """
         session = self.get_session()
+        if session is None:
+            return []
         try:
             prefixes = session.query(FrenchPhonePrefix).filter(
                 FrenchPhonePrefix.operator.ilike(f"%{operator}%")
@@ -223,11 +235,13 @@ class FrenchPhoneDatabase:
     def get_statistics(self) -> Dict:
         """
         Obtient des statistiques sur la base de données
-        
+
         Returns:
             Dictionnaire avec les statistiques
         """
         session = self.get_session()
+        if session is None:
+            return {}
         try:
             total = session.query(FrenchPhonePrefix).count()
             operators = session.query(FrenchPhonePrefix.operator).distinct().count()

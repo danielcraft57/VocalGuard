@@ -1,60 +1,110 @@
-import React from "react";
+"use client";
+
+import React, { useState, useEffect } from "react";
 import { AppLayout } from "../../components/AppLayout";
 import { DashboardCharts } from "../../components/DashboardCharts";
+import { fetchDashboardStats, DashboardStats } from "../../services/dashboardStatsApi";
 
 /**
- * Dashboard principal: vue synthese rapide.
- * Pour l'instant, les stats sont simulées côté frontend.
+ * Dashboard : stats chargees cote client pour afficher les vraies donnees.
  */
-const DashboardPage: React.FC = () => {
+export default function DashboardPage() {
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    fetchDashboardStats()
+      .then((data) => {
+        if (!cancelled) {
+          setStats(data);
+          setError(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setError("Impossible de charger les stats (verifie le backend).");
+          setStats(null);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const cards = [
+    {
+      label: "Appels aujourd'hui",
+      value: stats?.calls_today ?? "-",
+      icon: "call",
+      color: "#22c55e",
+    },
+    {
+      label: "RDV crees",
+      value: stats?.rdv_count ?? "-",
+      icon: "event",
+      color: "#0ea5e9",
+    },
+    {
+      label: "Devis envoyes",
+      value: stats?.quotes_count ?? "-",
+      icon: "request_quote",
+      color: "#22c55e",
+    },
+    {
+      label: "Appels suspects (OSINT)",
+      value: stats?.suspects_count ?? "-",
+      icon: "report_gmailerrorred",
+      color: "#ef4444",
+    },
+  ];
+
   return (
     <AppLayout
       title="Dashboard"
       subtitle="Vue d'ensemble des appels, RDV et devis VocalGuard."
     >
-      <div className="vg-card-grid">
+      {error ? (
         <div className="vg-card">
           <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-            <span className="material-icons" style={{ fontSize: "18px", color: "#22c55e" }}>
-              call
+            <span className="material-icons" style={{ color: "#ef4444", fontSize: "18px" }}>
+              error_outline
             </span>
-            Appels aujourd'hui
+            Erreur de chargement des stats
           </div>
-          <div className="vg-card-value">28</div>
+          <div style={{ fontSize: "0.9rem", color: "#ef4444" }}>{error}</div>
         </div>
-        <div className="vg-card">
-          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-            <span className="material-icons" style={{ fontSize: "18px", color: "#0ea5e9" }}>
-              event
-            </span>
-            RDV crees
-          </div>
-          <div className="vg-card-value">7</div>
+      ) : (
+        <div className="vg-card-grid">
+          {cards.map((card) => (
+            <div key={card.label} className="vg-card">
+              <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+                <span className="material-icons" style={{ fontSize: "18px", color: card.color }}>
+                  {card.icon}
+                </span>
+                {card.label}
+              </div>
+              <div className="vg-card-value">
+                {loading ? (
+                  <span className="material-icons" style={{ fontSize: "1.2rem", verticalAlign: "middle" }}>
+                    hourglass_empty
+                  </span>
+                ) : (
+                  card.value
+                )}
+              </div>
+            </div>
+          ))}
         </div>
-        <div className="vg-card">
-          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-            <span className="material-icons" style={{ fontSize: "18px", color: "#22c55e" }}>
-              request_quote
-            </span>
-            Devis envoyes
-          </div>
-          <div className="vg-card-value">5</div>
-        </div>
-        <div className="vg-card">
-          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-            <span className="material-icons" style={{ fontSize: "18px", color: "#ef4444" }}>
-              report_gmailerrorred
-            </span>
-            Appels suspects (OSINT)
-          </div>
-          <div className="vg-card-value">4</div>
-        </div>
-      </div>
+      )}
 
-      <DashboardCharts />
+      <DashboardCharts stats={stats} loading={loading} />
     </AppLayout>
   );
-};
-
-export default DashboardPage;
-
+}

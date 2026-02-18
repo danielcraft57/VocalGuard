@@ -1,5 +1,6 @@
 import React from "react";
 import "../styles/globals.css";
+import { ThemeProviderWrapper } from "../components/ThemeProviderWrapper";
 
 export const metadata = {
   title: "VocalGuard - DanielCraftFr",
@@ -12,7 +13,7 @@ export interface RootLayoutProps {
 
 /**
  * Layout racine Next.js (app router).
- * On y charge aussi la font d'icônes Material.
+ * ThemeProviderWrapper applique le theme (dark/light) a toute l'app.
  */
 const RootLayout: React.FC<RootLayoutProps> = ({ children }) => {
   return (
@@ -30,7 +31,9 @@ const RootLayout: React.FC<RootLayoutProps> = ({ children }) => {
           referrerPolicy="no-referrer"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <ThemeProviderWrapper>{children}</ThemeProviderWrapper>
+      </body>
     </html>
   );
 };

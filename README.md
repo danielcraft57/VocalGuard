@@ -6,8 +6,11 @@ Système moderne de gestion d'appels avec interface vocale intelligente, basé s
 
 - Interface vocale moderne avec reconnaissance et synthèse vocale
 - Blocage intelligent des appels indésirables avec OSINT
+- Enrichissement OSINT des numéros (réputation, lieu, opérateur) via `phone_number_profiles`
+- Services de réputation externes (NOMOROBO pour USA, SHOULDIANSWER pour hors USA)
+- Page Appels avec recherche intelligente et filtres avancés (statut, réputation)
 - Messagerie vocale avancée
-- Interface web moderne et réactive
+- Interface web moderne et réactive (Next.js + TypeScript)
 - API REST complète
 - Support des modems USB modernes
 - Intégration avec services de reconnaissance vocale (Whisper, VOSK)
@@ -124,6 +127,8 @@ VocalGuard/
 - [Architecture v2 (améliorée)](docs/ARCHITECTURE_V2.md) - historique
 - [Architecture originale](docs/ARCHITECTURE.md) - historique
 - [Module OSINT](docs/OSINT.md) - Enrichissement des numéros de téléphone
+- [Page Appels et OSINT](docs/APPELS_OSINT_UI.md) - Liste des appels, filtres, recherche intelligente
+- [Services de réputation](docs/REPUTATION_SERVICES.md) - NOMOROBO / SHOULDIANSWER (type callattendant)
 - [Résumé des améliorations](docs/IMPROVEMENTS_SUMMARY.md)
 - [Améliorations par rapport à callattendant](docs/IMPROVEMENTS.md)
 

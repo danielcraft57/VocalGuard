@@ -1,12 +1,16 @@
 /**
  * Retourne l'URL de base de l'API VocalGuard.
  *
- * On lit d'abord la variable d'environnement NEXT_PUBLIC_API_BASE_URL,
- * puis on retombe sur http://localhost:8000/api/v1 en dev.
+ * - Cote navigateur : on utilise un chemin relatif /api/v1 pour que les appels
+ *   soient same-origin quand le front est servi par le backend (pas de CORS, vraies donnees).
+ * - Cote build (Node) : on utilise la variable d'env ou localhost pour le fallback.
  *
  * @returns URL de base de l'API.
  */
 export function getApiBaseUrl(): string {
+  if (typeof window !== "undefined") {
+    return (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").trim() || "/api/v1";
+  }
   return process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
 }
 
