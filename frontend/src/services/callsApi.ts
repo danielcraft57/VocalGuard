@@ -29,6 +29,9 @@ export interface OsintReputation {
   confidence: number;
   sources: string[];
   recommendation: string;
+  city?: string | null;
+  region?: string | null;
+  operator?: string | null;
 }
 
 export interface CallWithOsint extends Call {
@@ -36,33 +39,13 @@ export interface CallWithOsint extends Call {
 }
 
 /**
- * Recupere la liste des appels et tente d'enrichir chaque numero
- * avec une reputation OSINT basique.
- *
- * @returns Liste des appels enrichis.
+ * Recupere la liste des appels avec la reputation OSINT depuis la base (un seul appel API, rapide).
+ * Les numeros deja enrichis en base (migration --run-osint ou appels recents) auront leur reputation.
  */
 export async function fetchCallsWithOsint(): Promise<CallWithOsint[]> {
-  const data = await getJson<CallListResponse>("/calls");
-
-  const calls = data.calls ?? [];
-
-  const enriched: CallWithOsint[] = await Promise.all(
-    calls.map(async (call) => {
-      const phone = call.phone_number;
-      if (!phone) {
-        return { ...call, osint: null };
-      }
-
-      try {
-        const osint = await getJson<OsintReputation>(`/osint/reputation/${encodeURIComponent(phone)}`);
-        return { ...call, osint };
-      } catch {
-        // En cas d'erreur OSINT, on garde quand meme l'appel.
-        return { ...call, osint: null };
-      }
-    })
+  const data = await getJson<CallListResponse & { calls: CallWithOsint[] }>(
+    "/calls?with_osint=true&limit=500"
   );
-
-  return enriched;
+  return data.calls ?? [];
 }
 

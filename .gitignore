@@ -93,3 +93,7 @@ Thumbs.db
 # Docker
 .dockerignore
 
+# Build frontend (export statique)
+frontend/out/
+backend/web/
+

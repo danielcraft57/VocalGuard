@@ -109,6 +109,18 @@ sudo apt-get install theharvester
 
 **Site** : https://www.hlrlookup.com/
 
+## Services de reputation (NOMOROBO / SHOULDIANSWER)
+
+Pour des services de blocage/reputation de type callattendant (NOMOROBO pour les USA, SHOULDIANSWER pour le reste), voir [REPUTATION_SERVICES.md](REPUTATION_SERVICES.md). Ils sont branches dans l'OSINT et dans le blocage d'appels.
+
+## Liste des appels et profils en base
+
+La page **Appels** affiche pour chaque appel la reputation OSINT, le lieu et l'operateur sans appeler les APIs en direct : tout est lu depuis la table `phone_number_profiles`.
+
+- **Endpoint** : `GET /api/v1/calls?with_osint=true&limit=500`
+- Les profils sont remplis par la migration avec `--run-osint` ou par les taches Celery d'enrichissement. Si un profil a un lieu/operateur (détection française) mais aucune reputation fournie par NumLookup/phoneinfoga, le service pose `reputation: "neutral"` (affichée "Non evaluee" en UI).
+- Voir aussi [APPELS_OSINT_UI.md](APPELS_OSINT_UI.md) pour les détails (filtres, recherche, colonnes).
+
 ## Utilisation dans VocalGuard
 
 ### Via l'API
@@ -173,8 +185,8 @@ Le service OSINT est automatiquement intégré au système de blocage :
 # Activer l'enrichissement OSINT automatique
 OSINT_ENABLED=true
 
-# Chemin vers les outils OSINT
-OSINT_TOOLS_PATH=/home/user/vocalguard/osint_tools
+# Chemin vers les outils OSINT (adapter selon votre installation)
+OSINT_TOOLS_PATH=/chemin/vers/vocalguard/osint_tools
 
 # Clés API pour les services externes (optionnel)
 NUMLOOKUP_API_KEY=your_key_here
@@ -190,7 +202,7 @@ HLR_API_KEY=your_key_here
 osint:
   enabled: true
   auto_enrich: true
-  tools_path: "/home/user/vocalguard/osint_tools"
+  tools_path: "/chemin/vers/vocalguard/osint_tools"
 
 # Détection commerciale
 commercial_detection:

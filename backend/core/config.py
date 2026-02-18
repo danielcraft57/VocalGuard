@@ -48,9 +48,14 @@ class Config(BaseSettings):
     rings_before_answer: int = Field(default=2)
     max_call_duration: int = Field(default=300)  # secondes
     
-    # Blocage
+    # Blocage (inspire de callattendant: NOMOROBO USA, SHOULDIANSWER hors USA, ou vide pour desactiver)
     block_enabled: bool = Field(default=True)
-    block_service: str = Field(default="nomorobo")  # nomorobo, truecaller, etc.
+    block_service: str = Field(default="")  # "NOMOROBO", "SHOULDIANSWER", ou "" (desactive)
+    # Credentials pour les services de reputation / blocage
+    nomorobo_api_key: Optional[str] = Field(default=None)  # X-API-Key pour api.nomorobo.com
+    nomorobo_username: Optional[str] = Field(default=None)  # Compatibilite callattendant (legacy)
+    nomorobo_password: Optional[str] = Field(default=None)
+    shouldianswer_api_key: Optional[str] = Field(default=None)  # Si API disponible a l'avenir
     
     # OSINT - Clés API (optionnel)
     numlookup_api_key: Optional[str] = Field(default=None)

@@ -10,6 +10,11 @@ from loguru import logger
 from backend.repositories.caller_repository import CallerRepository
 from backend.repositories.block_rule_repository import BlockRuleRepository
 from backend.services.osint_service import OSINTService
+from backend.services.reputation_providers import (
+    check_nomorobo,
+    check_shouldianswer,
+    should_block_from_reputation_result,
+)
 from backend.core.config import Config
 
 
@@ -115,23 +120,32 @@ class BlockService:
     
     async def _check_external_service(self, phone_number: str, caller_name: Optional[str]) -> bool:
         """
-        Vérifie via un service externe de blocage
-        
+        Verifie via le service externe de reputation (NOMOROBO ou SHOULDIANSWER, type callattendant).
+
         Args:
-            phone_number: Numéro de téléphone
-            caller_name: Nom de l'appelant
-            
+            phone_number: Numero de telephone
+            caller_name: Nom de l'appelant (non utilise par Nomorobo/ShouldIAnswer)
+
         Returns:
-            True si l'appel doit être bloqué
+            True si l'appel doit etre bloque selon le fournisseur
         """
-        # TODO: Implémenter l'intégration avec les services externes
-        # (Nomorobo, Truecaller, etc.)
-        
-        # Vérification basique par patterns suspects
-        if phone_number.startswith('V') and len(phone_number) > 10:
-            logger.info(f"Appel bloqué (pattern suspect): {phone_number}")
+        block_service = (getattr(self.config, "block_service", None) or "").strip().upper()
+        if not block_service:
+            return False
+
+        result = {}
+        if block_service == "NOMOROBO":
+            api_key = getattr(self.config, "nomorobo_api_key", None)
+            if api_key:
+                result = await check_nomorobo(phone_number, api_key=api_key)
+        elif block_service == "SHOULDIANSWER":
+            api_key = getattr(self.config, "shouldianswer_api_key", None)
+            if api_key:
+                result = await check_shouldianswer(phone_number, api_key=api_key)
+
+        if should_block_from_reputation_result(result):
+            logger.info("Appel bloque via {}: {}", block_service, phone_number)
             return True
-        
         return False
     
     async def block_caller(self, phone_number: str, reason: Optional[str] = None) -> bool:

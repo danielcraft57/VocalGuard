@@ -20,10 +20,11 @@ class CallResponse(BaseModel):
     duration: Optional[int] = None
     transcription: Optional[str] = None
     audio_file: Optional[str] = None
-    
+    osint: Optional["OsintReputationResponse"] = None
+
     class Config:
         from_attributes = True
-    
+
     @classmethod
     def from_orm(cls, obj):
         """Compatibilité avec Pydantic v1"""
@@ -72,6 +73,20 @@ class CallerUpdate(BaseModel):
     name: Optional[str] = None
     is_blocked: Optional[bool] = None
     is_whitelisted: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class WhitelistAddRequest(BaseModel):
+    """Corps pour ajouter un numéro à la liste blanche (inspiré callattendant Permitted)."""
+    phone_number: str = Field(..., min_length=1, max_length=20)
+    name: Optional[str] = Field(None, max_length=255)
+    notes: Optional[str] = None
+
+
+class BlockAddRequest(BaseModel):
+    """Corps pour ajouter un numéro à la liste noire (inspiré callattendant Blocked)."""
+    phone_number: str = Field(..., min_length=1, max_length=20)
+    name: Optional[str] = Field(None, max_length=255)
     notes: Optional[str] = None
 
 
@@ -141,8 +156,8 @@ class PhoneNumberProfileResponse(BaseModel):
 
 
 class OsintReputationResponse(BaseModel):
-    """Reponse typee pour la reputation d'un numero."""
-    
+    """Reponse typee pour la reputation d'un numero (optionnellement lieu et operateur)."""
+
     phone_number: str
     reputation: str = "unknown"
     is_spam: bool = False
@@ -152,6 +167,13 @@ class OsintReputationResponse(BaseModel):
     confidence: float = 0.0
     sources: List[str] = []
     recommendation: str = "review"
+    city: Optional[str] = None
+    region: Optional[str] = None
+    operator: Optional[str] = None
+
+
+# Resoudre la reference forward dans CallResponse (osint: Optional[OsintReputationResponse])
+CallResponse.model_rebuild()
 
 
 class AppointmentBase(BaseModel):
@@ -252,5 +274,49 @@ class SettingsResponse(BaseModel):
     voice_language: str
     rings_before_answer: int
     voicemail_enabled: bool
+
+
+class DailyStatsItem(BaseModel):
+    """Stats par jour pour les graphiques (volume d'appels, RDV, devis, blocages)."""
+    day: str  # Libelle court : Lun, Mar, ...
+    date: str  # ISO date pour coherence
+    calls: int = 0
+    rdv: int = 0
+    quotes: int = 0
+    spam: int = 0
+
+
+class DashboardStatsResponse(BaseModel):
+    """Stats du dashboard : cartes + donnees pour graphiques (valeurs reelles backend)."""
+    calls_today: int = 0
+    rdv_count: int = 0
+    quotes_count: int = 0
+    suspects_count: int = 0
+    total_calls: int = 0
+    total_blocked: int = 0
+    daily_series: List["DailyStatsItem"] = []
+
+
+class BlockRuleResponse(BaseModel):
+    """Regle de blocage (pattern exact, prefixe ou regex)."""
+    id: int
+    name: str
+    pattern: str
+    pattern_type: str = "regex"
+    is_active: bool = True
+    description: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class BlockRuleCreate(BaseModel):
+    """Creation d'une regle de blocage."""
+    name: str = Field(..., min_length=1, max_length=255)
+    pattern: str = Field(..., min_length=1, max_length=255)
+    pattern_type: str = Field(default="regex", pattern="^(exact|prefix|regex)$")
+    description: Optional[str] = None
 
 

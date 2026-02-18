@@ -18,7 +18,7 @@ from backend.core.config import Config
 from backend.services.commercial_detector import CommercialDetector
 from backend.services.french_phone_detector import FrenchPhoneDetector
 from backend.services.person_lookup import PersonLookupService
-from backend.services.french_phone_detector import FrenchPhoneDetector
+from backend.services.reputation_providers import check_nomorobo, check_shouldianswer
 
 
 class OSINTService:
@@ -40,6 +40,10 @@ class OSINTService:
         self.opencnam_api_key = os.getenv('OPENCNAM_API_KEY')
         self.numverify_api_key = os.getenv('NUMVERIFY_API_KEY')
         self.hlr_api_key = os.getenv('HLR_API_KEY')
+        # Services de reputation type callattendant (NOMOROBO USA, SHOULDIANSWER hors USA)
+        self.block_service = (getattr(config, 'block_service', None) or '').strip().upper()
+        self.nomorobo_api_key = getattr(config, 'nomorobo_api_key', None) or os.getenv('NOMOROBO_API_KEY')
+        self.shouldianswer_api_key = getattr(config, 'shouldianswer_api_key', None) or os.getenv('SHOULDIANSWER_API_KEY')
         
         # Détecter si on est sur WSL/Kali Linux
         self.is_wsl = self._detect_wsl()
@@ -89,6 +93,8 @@ class OSINTService:
             "numverify": bool(self.numverify_api_key),
             "hlr_lookup": bool(self.hlr_api_key),
             "commercial_detector": True,  # Toujours disponible
+            "nomorobo": self.block_service == "NOMOROBO" and bool(self.nomorobo_api_key),
+            "shouldianswer": self.block_service == "SHOULDIANSWER" and bool(self.shouldianswer_api_key),
         }
         
         # Vérifier phoneinfoga
@@ -257,6 +263,11 @@ class OSINTService:
         
         if self.available_tools.get("hlr_lookup"):
             tasks.append(self._query_hlr_lookup(clean_number))
+
+        if self.available_tools.get("nomorobo"):
+            tasks.append(self._query_nomorobo_reputation(clean_number))
+        if self.available_tools.get("shouldianswer"):
+            tasks.append(self._query_shouldianswer_reputation(clean_number))
         
         # Exécuter les requêtes en parallèle
         if tasks:
@@ -317,7 +328,14 @@ class OSINTService:
                 "sources": [],
                 "error": "Erreur lors de l'enrichissement OSINT"
             }
-        
+
+        # Si on a au moins lieu ou opérateur (détection FR) mais aucune réputation des APIs externes,
+        # poser "neutral" pour que la migration / le profil persiste une réputation (affichée "Non évaluée").
+        if result.get("reputation") is None and (
+            result.get("region") or result.get("city") or result.get("operator")
+        ):
+            result["reputation"] = "neutral"
+
         logger.debug(f"Résultat OSINT: {result}")
         return result
     
@@ -540,19 +558,37 @@ class OSINTService:
             Informations sur la réputation
         """
         result = await self.enrich_phone_number(phone_number, caller_name)
-        
+
+        rep = result.get("reputation")
+        if rep is None:
+            rep = "unknown"
+        elif not isinstance(rep, str):
+            rep = str(rep) if rep is not None else "unknown"
+
+        sources = result.get("sources")
+        if sources is None or not isinstance(sources, list):
+            sources = []
+
+        conf = result.get("confidence", 0.0)
+        if conf is None:
+            conf = 0.0
+        try:
+            conf = float(conf)
+        except (TypeError, ValueError):
+            conf = 0.0
+
         reputation_info = {
             "phone_number": phone_number,
-            "reputation": result.get("reputation", "unknown"),
-            "is_spam": result.get("is_spam", False),
-            "is_scam": result.get("is_scam", False),
-            "is_commercial": result.get("is_commercial", False),
-            "is_telemarketer": result.get("is_telemarketer", False),
-            "confidence": result.get("confidence", 0.0),
-            "sources": result.get("sources", []),
+            "reputation": rep,
+            "is_spam": bool(result.get("is_spam", False)),
+            "is_scam": bool(result.get("is_scam", False)),
+            "is_commercial": bool(result.get("is_commercial", False)),
+            "is_telemarketer": bool(result.get("is_telemarketer", False)),
+            "confidence": conf,
+            "sources": sources,
             "recommendation": self._get_recommendation(result),
         }
-        
+
         return reputation_info
     
     def _get_recommendation(self, result: Dict[str, Any]) -> str:
@@ -747,6 +783,26 @@ class OSINTService:
             logger.exception(f"Erreur lors de l'interrogation HLR Lookup: {e}")
         
         return {}
+
+    async def _query_nomorobo_reputation(self, phone_number: str) -> Dict[str, Any]:
+        """
+        Interroge Nomorobo (USA) pour reputation robocall/spam.
+        Utilise quand block_service=NOMOROBO et NOMOROBO_API_KEY sont configures.
+        """
+        return await check_nomorobo(
+            phone_number,
+            api_key=self.nomorobo_api_key,
+        )
+
+    async def _query_shouldianswer_reputation(self, phone_number: str) -> Dict[str, Any]:
+        """
+        Interroge Should I Answer (hors USA, communaute).
+        Stub : pas d'API publique pour l'instant.
+        """
+        return await check_shouldianswer(
+            phone_number,
+            api_key=self.shouldianswer_api_key,
+        )
     
     def install_phoneinfoga(self) -> bool:
         """

@@ -18,6 +18,24 @@ class CallRepository(BaseRepository[Call]):
         """Initialise le repository des appels"""
         super().__init__(Call, db)
     
+    def get_all(self, skip: int = 0, limit: int = 100, **filters) -> List[Call]:
+        """
+        Recupere les appels avec filtres, du plus recent au plus ancien (call_time desc).
+
+        Args:
+            skip: Nombre d'entites a sauter
+            limit: Nombre maximum d'entites a retourner
+            **filters: Filtres a appliquer
+
+        Returns:
+            Liste des appels ordonnee par date decroissante
+        """
+        query = self.db.query(Call)
+        for key, value in filters.items():
+            if hasattr(Call, key) and value is not None:
+                query = query.filter(getattr(Call, key) == value)
+        return query.order_by(desc(Call.call_time)).offset(skip).limit(limit).all()
+
     def get_recent_calls(self, limit: int = 50) -> List[Call]:
         """
         Récupère les appels récents

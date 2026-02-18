@@ -1,15 +1,17 @@
 #!/bin/bash
-# Script de déploiement de VocalGuard sur Raspberry Pi (node15.lan)
+# Script de déploiement de VocalGuard sur Raspberry Pi
+# Utilise RPI_HOST (ex: pi@raspberrypi.local) pour ne pas stocker d'hôte en dur.
 
 set -e
 
-# Configuration
-RPI_HOST="pi@node15.lan"
+# Configuration : préférer la variable d'environnement pour éviter les données personnelles dans le dépôt
+RPI_HOST="${RPI_HOST:-pi@raspberrypi.local}"
 RPI_DIR="~/VocalGuard"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 echo "=========================================="
-echo "Déploiement de VocalGuard sur node15.lan"
+echo "Déploiement de VocalGuard sur Raspberry Pi"
+echo "Hôte: $RPI_HOST"
 echo "=========================================="
 echo ""
 

@@ -30,9 +30,11 @@ voice_synthesis_engine: "pyttsx3"  # pyttsx3 ou gtts
 rings_before_answer: 2
 max_call_duration: 300  # secondes
 
-# Blocage
+# Blocage (inspire de callattendant: NOMOROBO USA, SHOULDIANSWER hors USA, ou vide)
 block_enabled: true
-block_service: "nomorobo"  # nomorobo, truecaller, etc.
+# block_service: "NOMOROBO" | "SHOULDIANSWER" | "" (desactive)
+block_service: ""
+# Credentials dans .env: NOMOROBO_API_KEY, SHOULDIANSWER_API_KEY
 
 # Détection commerciale (inspiré de callattendant)
 commercial_detection:
