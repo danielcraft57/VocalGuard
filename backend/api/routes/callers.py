@@ -8,7 +8,7 @@ from typing import List, Optional
 from backend.api.dependencies import get_caller_repository, get_block_service
 from backend.repositories.caller_repository import CallerRepository
 from backend.services.block_service import BlockService
-from backend.api.models import CallerResponse, CallerCreate, CallerUpdate
+from backend.api.models import CallerResponse, CallerCreate, CallerUpdate, WhitelistAddRequest, BlockAddRequest
 
 
 router = APIRouter()
@@ -131,4 +131,52 @@ async def delete_caller(
         raise HTTPException(status_code=404, detail="Appelant non trouvé")
     
     return {"message": "Appelant supprimé"}
+
+
+@router.post("/callers/whitelist", response_model=CallerResponse)
+async def add_to_whitelist(
+    payload: WhitelistAddRequest,
+    block_service: BlockService = Depends(get_block_service),
+    caller_repo: CallerRepository = Depends(get_caller_repository),
+):
+    """
+    Ajoute un numéro à la liste blanche (inspiré callattendant Permitted).
+    Crée ou met à jour l'appelant avec is_whitelisted=True, is_blocked=False.
+    """
+    await block_service.whitelist_caller(payload.phone_number)
+    caller = caller_repo.get_by_phone_number(payload.phone_number)
+    if caller and (payload.name is not None or payload.notes is not None):
+        caller_repo.update(
+            caller.id,
+            name=payload.name if payload.name is not None else caller.name,
+            notes=payload.notes if payload.notes is not None else caller.notes,
+        )
+        caller = caller_repo.get_by_id(caller.id)
+    if not caller:
+        raise HTTPException(status_code=500, detail="Erreur lors de l'ajout à la liste blanche")
+    return CallerResponse.model_validate(caller)
+
+
+@router.post("/callers/block", response_model=CallerResponse)
+async def add_to_blocklist(
+    payload: BlockAddRequest,
+    block_service: BlockService = Depends(get_block_service),
+    caller_repo: CallerRepository = Depends(get_caller_repository),
+):
+    """
+    Ajoute un numéro à la liste noire (inspiré callattendant Blocked).
+    Crée ou met à jour l'appelant avec is_blocked=True, is_whitelisted=False.
+    """
+    await block_service.block_caller(payload.phone_number, reason=payload.notes)
+    caller = caller_repo.get_by_phone_number(payload.phone_number)
+    if caller and (payload.name is not None or payload.notes is not None):
+        caller_repo.update(
+            caller.id,
+            name=payload.name if payload.name is not None else caller.name,
+            notes=payload.notes if payload.notes is not None else caller.notes,
+        )
+        caller = caller_repo.get_by_id(caller.id)
+    if not caller:
+        raise HTTPException(status_code=500, detail="Erreur lors de l'ajout à la liste noire")
+    return CallerResponse.model_validate(caller)
 

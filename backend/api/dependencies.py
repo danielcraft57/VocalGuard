@@ -94,3 +94,10 @@ def get_block_service(
     """
     return BlockService(config, db)
 
+
+def get_block_rule_repository(db: Session = Depends(get_db)) -> BlockRuleRepository:
+    """
+    Obtient le repository des regles de blocage.
+    """
+    return BlockRuleRepository(db)
+

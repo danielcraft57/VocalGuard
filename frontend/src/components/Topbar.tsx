@@ -28,10 +28,8 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
         <div className="vg-topbar-title">{title}</div>
       </div>
       <div className="vg-topbar-status">
-        <span className="material-icons" style={{ fontSize: "16px", marginRight: "0.35rem", verticalAlign: "middle" }}>
-          wifi_calling_3
-        </span>
-        Ligne DanielCraftFr: en service
+        <span className="material-icons vg-topbar-status-icon">wifi_calling_3</span>
+        <span>Ligne DanielCraftFr: en service</span>
       </div>
     </header>
   );

@@ -15,9 +15,7 @@ export interface AppLayoutProps {
 
 /**
  * Layout principal de l'application VocalGuard.
- *
- * Il affiche la sidebar de navigation, la topbar et le contenu
- * central passe en children.
+ * Le theme (sombre par defaut) est fourni par le layout racine et s'applique a toutes les pages.
  */
 export const AppLayout: React.FC<AppLayoutProps> = ({ children, title, subtitle }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -32,18 +30,23 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children, title, subtitle 
 
   return (
     <div className="vg-layout">
-      <Sidebar isOpen={sidebarOpen} onNavigate={handleCloseSidebar} />
-      <div className="vg-main">
-        <Topbar title={title} onMenuClick={handleToggleSidebar} />
-        <main className="vg-content">
-          <header>
-            <h1 className="vg-page-title">{title}</h1>
-            {subtitle ? <p className="vg-page-subtitle">{subtitle}</p> : null}
-          </header>
-          {children}
-        </main>
-      </div>
-      {sidebarOpen ? <div className="vg-sidebar-backdrop" onClick={handleCloseSidebar} /> : null}
+        <Sidebar isOpen={sidebarOpen} onNavigate={handleCloseSidebar} />
+        <div className="vg-main">
+          <Topbar title={title} onMenuClick={handleToggleSidebar} />
+          <main className="vg-content">
+            <header className="vg-page-header">
+              <h1 className="vg-page-title">{title}</h1>
+              {subtitle ? <p className="vg-page-subtitle">{subtitle}</p> : null}
+            </header>
+            {children}
+          </main>
+          <footer className="vg-footer">
+            <span className="vg-footer-brand">VocalGuard</span>
+            <span className="vg-footer-sep">·</span>
+            <span className="vg-footer-copy">DanielCraftFr</span>
+          </footer>
+        </div>
+        {sidebarOpen ? <div className="vg-sidebar-backdrop" onClick={handleCloseSidebar} /> : null}
     </div>
   );
 };

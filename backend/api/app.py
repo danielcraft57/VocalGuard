@@ -2,7 +2,7 @@
 Application FastAPI principale
 """
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -21,6 +21,8 @@ from backend.api.routes import (
     quotes,
     customers,
     settings as settings_routes,
+    stats as stats_routes,
+    block_rules as block_rules_routes,
 )
 from backend.database.database import init_database
 
@@ -61,21 +63,55 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(quotes.router, prefix="/api/v1", tags=["quotes"])
     app.include_router(customers.router, prefix="/api/v1", tags=["customers"])
     app.include_router(settings_routes.router, prefix="/api/v1", tags=["settings"])
+    app.include_router(stats_routes.router, prefix="/api/v1", tags=["stats"])
+    app.include_router(block_rules_routes.router, prefix="/api/v1", tags=["block-rules"])
     
-    # Servir les fichiers statiques de l'interface web
-    static_path = Path(__file__).parent.parent / "web" / "static"
-    if static_path.exists():
-        app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
+    # Dossier qui accueille le front (build statique Next.js copié depuis `frontend/out`)
+    # Resolve en absolu pour ne pas dépendre du répertoire de travail au lancement.
+    web_root = Path(__file__).resolve().parent.parent / "web"
+
+    # Si un dossier `_next` est présent, on le monte pour servir les assets statiques du front.
+    next_static = web_root / "_next"
+    if next_static.exists():
+        app.mount("/_next", StaticFiles(directory=str(next_static)), name="next-static")
     
     @app.on_event("startup")
     async def on_startup() -> None:
         """Initialise la base de donnees au demarrage de l'application."""
         await init_database(config.database_url)
     
-    @app.get("/")
+    def _serve_html(rel_path: str):
+        """Sert un fichier HTML du build front s'il existe (sécurisé: sous web_root uniquement)."""
+        web_abs = web_root.resolve()
+        if not rel_path:
+            p = web_abs / "index.html"
+        else:
+            p = (web_abs / f"{rel_path}.html").resolve()
+            if not p.is_file():
+                p = (web_abs / rel_path / "index.html").resolve()
+            if not p.is_file():
+                p = web_abs / "index.html"
+        if not p.is_file():
+            return None
+        try:
+            p.resolve().relative_to(web_abs)
+        except ValueError:
+            return None
+        return FileResponse(str(p))
+
+    @app.get("/health", include_in_schema=True)
+    async def health():
+        """Endpoint de santé"""
+        return {"status": "healthy"}
+
+    @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
     async def root():
-        """Point d'entrée - redirige vers l'interface web"""
-        index_path = static_path / "index.html"
+        """
+        Point d'entrée HTTP principal.
+        Sert le front (index.html) si présent, sinon JSON d'info API.
+        Accepte GET et HEAD (précharge des liens Next.js).
+        """
+        index_path = web_root / "index.html"
         if index_path.exists():
             return FileResponse(str(index_path))
         return {
@@ -85,10 +121,18 @@ def create_app(config: Config) -> FastAPI:
             "docs": "/docs"
         }
     
-    @app.get("/health")
-    async def health():
-        """Endpoint de santé"""
-        return {"status": "healthy"}
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"], include_in_schema=False)
+    async def serve_frontend(full_path: str):
+        """
+        Sert les pages du front (dashboard, calls, etc.) pour les URLs comme
+        /dashboard, /calls... et fallback sur index.html pour le SPA.
+        """
+        if full_path.startswith("api/") or full_path.startswith("_next") or full_path == "docs" or full_path.startswith("redoc") or full_path == "openapi.json" or full_path == "health":
+            raise HTTPException(status_code=404, detail="Not Found")
+        resp = _serve_html(full_path)
+        if resp is not None:
+            return resp
+        raise HTTPException(status_code=404, detail="Not Found")
     
     logger.info("Application FastAPI créée")
     return app
