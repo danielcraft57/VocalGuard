@@ -1,42 +1,56 @@
 # Test de l'interface vocale en local
 
-Ce script permet de tester l'interface vocale de VocalGuard sans modem, en utilisant le micro et les haut-parleurs de votre PC.
+Les scripts de ce dossier permettent de tester l'interface vocale de VocalGuard sans modem, en utilisant le micro et les haut-parleurs du PC.
 
 ## Prérequis
 
-- Python 3.9+ (ou 3.13+)
+- Python 3.9+ (3.11+ recommandé pour VOSK)
 - Microphone fonctionnel
 - Haut-parleurs ou casque audio
-- Les dépendances installées : `pyaudio`, `pygame` (ou `playsound`)
+- Dépendances : `sounddevice` (capture micro), `pygame` ou équivalent (lecture audio), `pydub` + `ffmpeg` (optionnel, pour WAV téléphone 8 kHz)
 
 ## Installation des dépendances
 
 ```bash
-pip install pyaudio pygame
+pip install sounddevice pygame pydub
 ```
 
-**Note pour Windows** : `pyaudio` peut nécessiter l'installation de `pipwin` :
+- **Windows** : la capture micro utilise `sounddevice` (plus fiable que PyAudio). Pour générer les WAV IVR 8 kHz à partir du TTS (gTTS produit du MP3), installez ffmpeg dans l'environnement conda : `conda install -c conda-forge "ffmpeg=4.3.1"`.
+- **Linux** : `sudo apt-get install portaudio19-dev` puis `pip install sounddevice`.
+
+## Scripts disponibles
+
+### test_ollama_voice.py – Conversation avec Ollama
+
 ```bash
-pip install pipwin
-pipwin install pyaudio
+python scripts/test_ollama_voice.py
 ```
 
-## Utilisation
+- Reconnaissance vocale (VOSK en temps réel avec détection de fin de phrase, ou Whisper en bloc)
+- Réponse générée par Ollama (IA locale)
+- Synthèse et lecture de la réponse
 
-### Via le script Python
+Avec `VOICE_RECOGNITION_ENGINE=vosk`, le micro est écouté en continu jusqu'à une pause (fin de phrase), puis la phrase est envoyée à Ollama.
+
+### test_patterns_voice.py – Conversation par intents (sans Ollama)
+
+```bash
+python scripts/test_patterns_voice.py
+```
+
+- Reconnaissance VOSK en temps réel (fin de phrase)
+- Réponse choisie selon des **intents** définis dans `config/intents_ivr.yaml`
+- Génération de WAV 8 kHz (téléphone) dans `ivr_wav/` et lecture locale
+
+Idéal pour tester un IVR type téléphone fixe sans dépendance à un modèle IA. Voir [config/README_INTENTS_IVR.md](../config/README_INTENTS_IVR.md).
+
+### test_voice_conversation.py
 
 ```bash
 python scripts/test_voice_conversation.py
 ```
 
-Le script va :
-1. Initialiser la reconnaissance vocale (Whisper ou VOSK)
-2. Initialiser la synthèse vocale (pyttsx3 ou gTTS)
-3. Démarrer une boucle de conversation interactive
-4. Enregistrer votre voix pendant 5 secondes
-5. Transcrire votre message
-6. Générer une réponse automatique
-7. Synthétiser et jouer la réponse
+Boucle classique : enregistrement 5 secondes, transcription, réponse via patterns (fichier `config/responses.yaml`), synthèse et lecture.
 
 ### Via l'interface web
 
@@ -50,11 +64,9 @@ Le script va :
 
 ## Personnalisation des réponses
 
-Pour personnaliser les réponses de conversation, modifiez la fonction `generate_response()` dans :
-- `scripts/test_voice_conversation.py` (pour le script Python)
-- `vocalguard/api/routes/voice_test.py` (pour l'API web)
-
-Vous pouvez ajouter vos propres règles de conversation, intégrer un chatbot, ou utiliser des modèles de langage pour des réponses plus intelligentes.
+- **test_patterns_voice** : éditez `config/intents_ivr.yaml` (intents, keywords, response, filename WAV). Voir [config/README_INTENTS_IVR.md](../config/README_INTENTS_IVR.md).
+- **test_voice_conversation** : modifiez `generate_response()` dans le script ou utilisez `config/responses.yaml` ; voir [config/README_RESPONSES.md](../config/README_RESPONSES.md).
+- **API web** : `backend/api/routes/voice_test.py` et `config/responses.yaml`.
 
 ## Exemple de conversation
 
@@ -70,15 +82,18 @@ VocalGuard: Au revoir ! À bientôt.
 
 ## Dépannage
 
-### Erreur "pyaudio not found"
-Installez pyaudio avec `pip install pyaudio` ou `pipwin install pyaudio` (Windows)
+### Erreur "sounddevice" ou micro inutilisable
+Installez avec `pip install sounddevice`. Sous Windows (conda), vous pouvez aussi utiliser `conda install -c conda-forge python-sounddevice`. Sous Linux : `sudo apt-get install portaudio19-dev`.
 
 ### Erreur "No module named 'pygame'"
-Installez pygame avec `pip install pygame` ou utilisez `playsound` à la place
+Installez pygame avec `pip install pygame` ou utilisez une autre méthode de lecture (winsound, playsound).
+
+### Erreur lors de la conversion WAV IVR (ffmpeg / ffprobe)
+Le script test_patterns_voice convertit le TTS (MP3) en WAV 8 kHz via pydub ; il faut ffmpeg. Sous Windows avec conda : `conda install -c conda-forge "ffmpeg=4.3.1"`. Si ffmpeg est absent, la génération des WAV IVR échoue mais le script peut continuer.
 
 ### Le micro ne fonctionne pas
-Vérifiez que votre microphone est bien connecté et autorisé dans les paramètres système
+Vérifiez que le microphone est connecté et autorisé dans les paramètres système.
 
 ### La transcription est vide
-Vérifiez que le fichier audio est au bon format (WAV, 16kHz recommandé) et que le volume est suffisant
+Parlez clairement après le message « Parlez. » ; avec VOSK en temps réel, faites une courte pause en fin de phrase pour déclencher la reconnaissance.
 

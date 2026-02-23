@@ -133,10 +133,10 @@ CallService → ModemHandler → Modem 56k
 ## Notes techniques
 
 ### Communication smartphone ↔ RPi
-- **Sur réseau local** : `http://node15.lan:8000/api/v1/...`
+- **Sur réseau local** : `http://votre-serveur:8000/api/v1/...`
 - **Depuis l'extérieur** : Nécessite :
   - VPN (WireGuard, OpenVPN)
-  - Tunnel SSH (`ssh -L 8000:localhost:8000 pi@node15.lan`)
+  - Tunnel SSH (`ssh -L 8000:localhost:8000 user@votre-serveur`)
   - Reverse proxy avec authentification (nginx + Let's Encrypt)
 
 ### Performance

@@ -1,6 +1,6 @@
 # Mise en production VocalGuard (Raspberry Pi)
 
-Guide pour faire tourner VocalGuard en production sur un Raspberry Pi (node14, node15, etc.) : service systemd, demarrage automatique, logs.
+Guide pour faire tourner VocalGuard en production sur un Raspberry Pi : service systemd, demarrage automatique, logs.
 
 ## Vue d'ensemble
 
@@ -21,14 +21,14 @@ Voir [INSTALLATION.md](INSTALLATION.md) pour la liste complete.
 
 ## 1. Deployer le projet
 
-Suivre [scripts/DEPLOY_NODE14.md](../scripts/DEPLOY_NODE14.md) (build frontend + `RPI_HOST=pi@node14 ./scripts/deploy_to_rpi.sh`).
+Suivre [scripts/DEPLOY_NODE14.md](../scripts/DEPLOY_NODE14.md) (build frontend + `RPI_HOST=pi@votre-rpi ./scripts/deploy_to_rpi.sh`).
 
 ## 2. Installer le service systemd
 
 Sur le Raspberry Pi, apres deploiement :
 
 ```bash
-ssh pi@node14
+ssh pi@votre-rpi
 cd ~/VocalGuard
 chmod +x scripts/install_service_rpi.sh
 ./scripts/install_service_rpi.sh

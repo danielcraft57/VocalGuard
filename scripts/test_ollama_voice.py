@@ -7,6 +7,8 @@ Permet de tester l'intégration Ollama + reconnaissance vocale + synthèse vocal
 import asyncio
 import sys
 import os
+import time
+import queue
 from pathlib import Path
 
 # Ajouter la racine du projet au path pour importer backend
@@ -45,7 +47,7 @@ def check_rpi_voice_engine():
         pass
 
 
-def check_pyaudio():
+def check_sounddevice():
     """
     Vérifie que sounddevice est utilisable (alternative a PyAudio).
     Sous Windows, sounddevice est souvent plus simple car fourni en wheel avec PortAudio.
@@ -112,6 +114,52 @@ async def record_audio(duration: int = 5) -> bytes:
     except Exception as e:
         logger.exception(f"Erreur lors de l'enregistrement: {e}")
         raise
+
+
+async def microphone_stream(
+    sample_rate: int = 16000,
+    channels: int = 1,
+    chunk_size: int = 4000,
+    max_seconds: float = 10.0,
+):
+    """
+    Flux asynchrone de chunks audio provenant du micro pour VOSK.
+    
+    Utilise sounddevice en mode RawInputStream et yield des blocs PCM 16-bit mono
+    jusqu a detection de fin de flux (max_seconds).
+    """
+    import sounddevice as sd
+
+    audio_q: "queue.Queue[bytes]" = queue.Queue()
+
+    def callback(indata, frames, time_info, status):
+        try:
+            audio_q.put_nowait(bytes(indata))
+        except Exception:
+            # Si la file est pleine ou autre, on ignore ce chunk
+            pass
+
+    logger.info(f"🎤 Ecoute micro en temps reel (max {max_seconds:.1f}s)... Parlez.")
+
+    start = time.monotonic()
+
+    with sd.RawInputStream(
+        samplerate=sample_rate,
+        blocksize=chunk_size,
+        dtype="int16",
+        channels=channels,
+        callback=callback,
+    ):
+        while True:
+            if time.monotonic() - start > max_seconds:
+                break
+            try:
+                chunk = audio_q.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if not chunk:
+                continue
+            yield chunk
 
 
 async def play_audio_file(audio_file: Path):
@@ -320,20 +368,33 @@ async def conversation_loop():
         logger.info("💬 Le système continue sans audio")
     
     # Verifier sounddevice avant la boucle d'enregistrement (evite des erreurs en boucle)
-    check_pyaudio()
+    check_sounddevice()
     
     while True:
         try:
-            # Enregistrer
-            audio_data = await record_audio(duration=5)
-            
-            if not audio_data:
-                logger.warning("⚠️ Aucun audio enregistré")
-                continue
-            
-            # Transcrire
-            logger.info("🔄 Transcription en cours...")
-            user_text = await recognition.transcribe(audio_data)
+            # Transcription differente selon le moteur
+            if recognition.engine == "vosk":
+                logger.info("🔄 Transcription VOSK en temps reel...")
+                audio_stream = microphone_stream(
+                    sample_rate=16000,
+                    channels=1,
+                    chunk_size=4000,
+                    max_seconds=10.0,
+                )
+                utterances = await recognition.stream_vosk(
+                    audio_stream=audio_stream,
+                    sample_rate=16000,
+                    max_utterances=1,
+                )
+                user_text = utterances[0] if utterances else ""
+            else:
+                # Fallback: enregistrement bloc + transcribe classique
+                audio_data = await record_audio(duration=5)
+                if not audio_data:
+                    logger.warning("⚠️ Aucun audio enregistré")
+                    continue
+                logger.info("🔄 Transcription en cours...")
+                user_text = await recognition.transcribe(audio_data)
             
             if not user_text:
                 logger.warning("⚠️ Aucune transcription obtenue")

@@ -1,0 +1,63 @@
+# Intents / strategies pour le test patterns (IVR / telephone)
+#
+# Chaque intent a:
+#   name: identifiant (logs, debug)
+#   keywords: liste de mots-cles; si exact_match est false, au moins un doit etre present;
+#             si exact_match est true, tous doivent etre presents
+#   response: phrase lue par le TTS (et exportee en WAV 8 kHz)
+#   filename: nom du fichier WAV genere (ex: ivr_bonjour.wav)
+#   priority: plus c'est eleve, plus l'intent est teste en premier (defaut: 0)
+#   exact_match: si true, tous les keywords doivent etre dans la phrase (defaut: false)
+#
+# Packages NLU / ML (optionnel):
+#   - Rasa, Snips NLU: permettent d'entrainer un modele sur des exemples de phrases
+#     et de generaliser a des formulations non vues. Utile quand tu as beaucoup
+#     d'intents et des tournures variees.
+#   - Ici (keywords + priority): suffisant pour un IVR avec peu d'options, pas de
+#     dependance lourde, editable a la main. Coupler du ML devient interessant si
+#     tu veux reconnaitre des formulations plus libres ou extraire des entites
+#     (dates, noms, numeros).
+#
+intents:
+  - name: salutation
+    keywords: ["bonjour", "salut", "hello", "bonsoir"]
+    response: "Bonjour, vous etes bien sur la ligne de demonstration de VocalGuard."
+    filename: ivr_bonjour.wav
+    priority: 10
+
+  - name: horaires
+    keywords: ["horaire", "heures", "ouvrir", "ouvert", "fermer"]
+    response: "Nos horaires d ouverture sont du lundi au vendredi, de neuf heures a dix-huit heures."
+    filename: ivr_horaires.wav
+    priority: 8
+
+  - name: aide
+    keywords: ["aide", "besoin", "comment", "quoi faire"]
+    response: "Vous pouvez poser une question simple, par exemple pour les horaires ou pour laisser un message."
+    filename: ivr_aide.wav
+    priority: 7
+
+  - name: message
+    keywords: ["message", "vocal", "voicemail", "laisser"]
+    response: "Apres le signal sonore, enregistrez votre message. Ne raccrochez pas."
+    filename: ivr_message.wav
+    priority: 7
+
+  - name: contact
+    keywords: ["contact", "telephone", "appeler", "joindre"]
+    response: "Pour nous joindre, composez le zero un deux trois quatre cinq six sept huit neuf."
+    filename: ivr_contact.wav
+    priority: 6
+
+# Intent par defaut (aucun intent ne matche)
+default_intent:
+  name: incompris
+  response: "Je n ai pas bien compris. Pouvez-vous reformuler votre question simplement ?"
+  filename: ivr_incompris.wav
+
+# Intent de sortie (au revoir) - optionnel, peut rester gere dans le code
+exit_intent:
+  name: fin
+  keywords: ["au revoir", "bye", "a bientot", "quitter", "terminer"]
+  response: "Au revoir. Merci pour votre appel."
+  filename: ivr_fin.wav

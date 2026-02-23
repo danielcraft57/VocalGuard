@@ -16,13 +16,18 @@ aiosqlite==0.21.0
 vosk==0.3.45
 pyttsx3==2.90
 gtts==2.4.0
-pyaudio==0.2.14
+sounddevice==0.5.5
 
 # Audio processing
 soundfile==0.12.1
 librosa==0.10.1
 numpy>=1.26.0
 pygame==2.5.2
+pydub==0.25.1
+
+# Note (Windows): pour convertir les MP3 gTTS en WAV "téléphone", installer ffmpeg/ffprobe.
+# Avec conda, ça marche bien avec:
+# conda install -c conda-forge "ffmpeg=4.3.1"
 
 # Modem communication
 pyserial==3.5

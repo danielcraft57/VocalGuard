@@ -12,9 +12,10 @@
 
 ### Logiciel
 
-- Python 3.9 ou supérieur (3.13 recommandé)
+- Python 3.9 ou supérieur (3.11+ recommandé pour VOSK)
 - pip (gestionnaire de paquets Python)
-- ffmpeg (pour le traitement audio)
+- ffmpeg (pour le traitement audio et, optionnellement, la conversion WAV IVR 8 kHz)
+- PortAudio (pour la capture micro : `sounddevice` sous Linux utilise `portaudio19-dev`)
 
 ## Installation
 
@@ -26,6 +27,8 @@ Sur Debian/Ubuntu/Raspberry Pi OS :
 sudo apt-get update
 sudo apt-get install -y python3 python3-pip python3-venv python3-dev portaudio19-dev libasound2-dev ffmpeg
 ```
+
+**Windows** : la capture micro utilise `sounddevice` (dans `requirements.txt`). Pour générer les WAV téléphoniques 8 kHz (script `test_patterns_voice.py`), installez ffmpeg dans votre environnement conda : `conda install -c conda-forge "ffmpeg=4.3.1"`.
 
 ### 2. Cloner ou créer le projet
 

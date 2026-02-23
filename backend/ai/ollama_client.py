@@ -21,7 +21,7 @@ class OllamaClient:
             model: Modèle à utiliser (défaut: depuis env)
             timeout: Timeout en secondes
         """
-        self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL", "http://node15.lan:11434")).rstrip('/')
+        self.base_url = (base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")).rstrip('/')
         self.model = model or os.getenv("OLLAMA_MODEL", "gemma-2b-chat")
         # Timeout depuis env ou valeur par défaut
         env_timeout = os.getenv("OLLAMA_TIMEOUT")

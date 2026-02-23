@@ -111,7 +111,7 @@ model phi-fr
 
 ### Vérifier l'état du système
 ```bash
-ssh pi@node15.lan "htop"
+ssh user@votre-serveur "htop"
 # Vérifier que CPU < 50% et RAM < 3GB
 ```
 
@@ -119,23 +119,23 @@ ssh pi@node15.lan "htop"
 
 ### Vérifier les modèles disponibles
 ```bash
-ssh pi@node15.lan "ollama list"
+ssh user@votre-serveur "ollama list"
 ```
 
 ### Arrêter/démarrer Ollama
 ```bash
-ssh pi@node15.lan "sudo systemctl stop ollama"
-ssh pi@node15.lan "sudo systemctl start ollama"
+ssh user@votre-serveur "sudo systemctl stop ollama"
+ssh user@votre-serveur "sudo systemctl start ollama"
 ```
 
 ### Voir les logs
 ```bash
-ssh pi@node15.lan "sudo journalctl -u ollama -f"
+ssh user@votre-serveur "sudo journalctl -u ollama -f"
 ```
 
 ### Vérifier les processus
 ```bash
-ssh pi@node15.lan "ps aux | grep ollama"
+ssh user@votre-serveur "ps aux | grep ollama"
 ```
 
 ## Performance attendue
@@ -162,17 +162,17 @@ Le modèle `phi` est principalement entraîné en anglais et peut ignorer les in
 
 1. Arrêter Ollama :
 ```bash
-ssh pi@node15.lan "sudo systemctl stop ollama"
+ssh user@votre-serveur "sudo systemctl stop ollama"
 ```
 
 2. Tuer les processus restants :
 ```bash
-ssh pi@node15.lan "sudo pkill -9 ollama"
+ssh user@votre-serveur "sudo pkill -9 ollama"
 ```
 
 3. Redémarrer :
 ```bash
-ssh pi@node15.lan "sudo systemctl start ollama"
+ssh user@votre-serveur "sudo systemctl start ollama"
 ```
 
 ### Si les réponses sont toujours lentes
@@ -185,7 +185,7 @@ ssh pi@node15.lan "sudo systemctl start ollama"
 
 Dans `env.example` :
 ```env
-OLLAMA_BASE_URL=http://node15.lan:11434
+OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=gemma:2b  # Recommandé pour le français, ou phi-fast-fr
 OLLAMA_TIMEOUT=30
 ```

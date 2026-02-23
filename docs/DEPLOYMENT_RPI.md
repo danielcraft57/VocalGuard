@@ -2,7 +2,7 @@
 
 ## Résumé
 
-VocalGuard a été déployé avec succès sur **node15.lan** (Raspberry Pi 5, 4GB) avec :
+Exemple de déploiement sur un Raspberry Pi (ex. votre-serveur.lan) :
 - ✅ Ollama installé et configuré (`gemma-2b-chat`)
 - ✅ Environnement virtuel Python créé
 - ✅ Toutes les dépendances installées
@@ -51,7 +51,7 @@ ctl.!default {
 ### Test de conversation vocale
 
 ```bash
-ssh pi@node15.lan
+ssh pi@votre-serveur
 cd ~/VocalGuard
 source venv/bin/activate
 python scripts/test_ollama_voice.py

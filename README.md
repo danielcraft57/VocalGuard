@@ -13,7 +13,7 @@ Système moderne de gestion d'appels avec interface vocale intelligente, basé s
 - Interface web moderne et réactive (Next.js + TypeScript)
 - API REST complète
 - Support des modems USB modernes
-- Intégration avec services de reconnaissance vocale (Whisper, VOSK)
+- Intégration avec services de reconnaissance vocale (Whisper, VOSK) et capture micro via sounddevice
 - Base de données moderne avec SQLAlchemy
 - Architecture modulaire et extensible avec patterns modernes (Repository, Service Layer, Event-Driven)
 
@@ -132,6 +132,8 @@ VocalGuard/
 - [Mise en production (RPi)](docs/DEPLOYMENT_PROD.md) - Service systemd, demarrage au boot, logs
 - [Résumé des améliorations](docs/IMPROVEMENTS_SUMMARY.md)
 - [Améliorations par rapport à callattendant](docs/IMPROVEMENTS.md)
+- [Test vocal (micro, Ollama, patterns)](scripts/README_VOICE_TEST.md)
+- [Intents IVR (strategies question-reponse)](config/README_INTENTS_IVR.md)
 
 ## API
 
@@ -193,6 +195,24 @@ Voir [ARCHITECTURE_V3.md](docs/ARCHITECTURE_V3.md) pour plus de détails sur l'a
 ```bash
 pytest tests/
 ```
+
+### Tests vocaux (micro + TTS)
+
+Deux scripts permettent de tester la voix en local sans modem :
+
+- **Conversation avec Ollama** (reco + IA + TTS) :
+  ```bash
+  python scripts/test_ollama_voice.py
+  ```
+  Utilise VOSK en temps reel (detection de fin de phrase) si `VOICE_RECOGNITION_ENGINE=vosk`.
+
+- **Conversation par intents** (reco + patterns + WAV telephonique 8 kHz) :
+  ```bash
+  python scripts/test_patterns_voice.py
+  ```
+  Les strategies question-reponse sont definies dans `config/intents_ivr.yaml`. Les reponses sont generees en WAV dans `ivr_wav/`.
+
+Prerequis : `sounddevice` (capture micro), et optionnellement `ffmpeg` pour la conversion MP3 vers WAV 8 kHz. Voir [scripts/README_VOICE_TEST.md](scripts/README_VOICE_TEST.md) et [config/README_INTENTS_IVR.md](config/README_INTENTS_IVR.md).
 
 ## Contribution
 

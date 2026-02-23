@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Shell interactif pour interagir avec Ollama sur node15.lan
+Shell interactif pour interagir avec Ollama (URL configurable)
 """
 
 import requests
@@ -9,7 +9,7 @@ import sys
 from typing import Optional
 
 # Configuration par défaut
-DEFAULT_BASE_URL = "http://node15.lan:11434"
+DEFAULT_BASE_URL = "http://localhost:11434"
 DEFAULT_MODEL = "gemma-2b-chat"  # Modèle optimisé pour conversations avec historique (recommandé)
 DEFAULT_TIMEOUT = 120  # 2 minutes pour les réponses longues
 
@@ -164,7 +164,7 @@ class OllamaClient:
 def interactive_shell():
     """Lance un shell interactif"""
     print("=" * 60)
-    print("Shell Ollama - Connexion à node15.lan")
+    print("Shell Ollama - Connexion au serveur configure")
     print("=" * 60)
     print()
     

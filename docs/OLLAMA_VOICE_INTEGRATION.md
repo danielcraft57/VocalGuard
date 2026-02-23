@@ -21,7 +21,7 @@ Microphone → Reconnaissance vocale → Ollama → Synthèse vocale → Haut-pa
 Dans `.env` :
 ```env
 # Ollama
-OLLAMA_BASE_URL=http://node15.lan:11434
+OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=gemma-2b-chat
 OLLAMA_TIMEOUT=30
 
@@ -36,12 +36,17 @@ VOICE_LANGUAGE=fr
 ### Test en local (micro + haut-parleurs)
 
 ```bash
-# Test simple avec Ollama
+# Test conversation Ollama (reco temps reel VOSK si engine=vosk)
 python scripts/test_ollama_voice.py
+
+# Test par intents (sans Ollama, WAV 8 kHz pour IVR)
+python scripts/test_patterns_voice.py
 
 # Test avec fallback vers patterns si Ollama indisponible
 python scripts/test_voice_conversation.py
 ```
+
+La capture micro utilise **sounddevice** (et non PyAudio). Avec `VOICE_RECOGNITION_ENGINE=vosk`, l'écoute est en temps réel : VOSK détecte la fin de phrase (pause) et envoie alors la phrase à Ollama, sans attendre un bloc de 5 secondes.
 
 ### Dans les appels téléphoniques
 
@@ -86,10 +91,10 @@ Si Ollama n'est pas disponible, le système utilise les patterns de réponse pr�
 
 ```bash
 # Vérifier la connexion
-curl http://node15.lan:11434/api/tags
+curl http://localhost:11434/api/tags
 
 # Vérifier les logs
-ssh pi@node15.lan "sudo journalctl -u ollama -f"
+ssh user@votre-serveur "sudo journalctl -u ollama -f"
 ```
 
 ### Problèmes audio
@@ -102,14 +107,14 @@ ssh pi@node15.lan "sudo journalctl -u ollama -f"
 
 - **Vérifier le préchargement** :
   ```bash
-  ssh pi@node15.lan "sudo systemctl status ollama-preload"
-  ssh pi@node15.lan "sudo systemctl restart ollama-preload"
+  ssh user@votre-serveur "sudo systemctl status ollama-preload"
+  ssh user@votre-serveur "sudo systemctl restart ollama-preload"
   ```
 - **Augmenter le timeout** dans `.env` : `OLLAMA_TIMEOUT=60` (ou plus)
 - Utiliser `gemma-2b-fast` au lieu de `gemma-2b-chat` (plus rapide mais historique limité)
 - Vérifier que le modèle est chargé :
   ```bash
-  ssh pi@node15.lan "curl http://localhost:11434/api/generate -d '{\"model\":\"gemma-2b-chat\",\"prompt\":\"test\"}'"
+  ssh user@votre-serveur "curl http://localhost:11434/api/generate -d '{\"model\":\"gemma-2b-chat\",\"prompt\":\"test\"}'"
   ```
 
 ## Performance
@@ -124,7 +129,7 @@ ssh pi@node15.lan "sudo journalctl -u ollama -f"
 Pour des réponses plus rapides :
 1. Vérifier que le service `ollama-preload` fonctionne :
    ```bash
-   ssh pi@node15.lan "sudo systemctl status ollama-preload"
+   ssh user@votre-serveur "sudo systemctl status ollama-preload"
    ```
 2. Augmenter le timeout si nécessaire dans `.env` :
    ```env

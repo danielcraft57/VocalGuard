@@ -5,7 +5,7 @@ Supporte Whisper et VOSK
 
 import asyncio
 from pathlib import Path
-from typing import Optional
+from typing import Optional, AsyncIterator, List
 import io
 from loguru import logger
 
@@ -182,7 +182,12 @@ class VoiceRecognition:
             import json
             
             # VOSK attend des données PCM 16-bit mono.
-            # Le recognizer est initialise avec un sample rate fixe (16000 Hz).
+            # Le recognizer est initialisé avec un sample rate fixe (16000 Hz).
+            # On remet l'état du recognizer à zéro pour chaque nouvelle séquence.
+            if self.vosk_recognizer is None:
+                await self._init_vosk()
+            else:
+                self.vosk_recognizer.Reset()
             
             # Traiter les données par chunks
             text_parts = []
@@ -208,4 +213,77 @@ class VoiceRecognition:
         except Exception as e:
             logger.exception(f"Erreur lors de la transcription VOSK: {e}")
             return ""
+
+    async def stream_vosk(
+        self,
+        audio_stream: AsyncIterator[bytes],
+        sample_rate: int = 16000,
+        max_utterances: int = 1,
+    ) -> List[str]:
+        """
+        Transcription VOSK en temps reel a partir d un flux de chunks audio.
+        
+        Le principe:
+        - On alimente VOSK chunk par chunk (PCM 16-bit mono).
+        - A chaque fois qu AcceptWaveform() renvoie True, VOSK considere qu il a
+          une phrase complete (fin de phrase / pause suffisante).
+        - On collecte ces phrases jusqu a max_utterances, puis on s arrete.
+        
+        Args:
+            audio_stream: Flux asynchrone de bytes PCM 16-bit mono.
+            sample_rate: Taux d echantillonnage des chunks (par defaut 16000 Hz).
+            max_utterances: Nombre maximum de phrases a retourner avant d arreter.
+        
+        Returns:
+            Liste de phrases reconnues (une entree par fin de phrase detectee).
+        """
+        if self.engine != "vosk":
+            raise ValueError("stream_vosk ne fonctionne que avec le moteur VOSK")
+        if not self.vosk_model:
+            await self._init_vosk()
+
+        try:
+            from vosk import KaldiRecognizer
+            import json
+        except ImportError as e:
+            raise ImportError("VOSK n'est pas installé. Installez-le avec: pip install vosk") from e
+
+        recognizer = KaldiRecognizer(self.vosk_model, sample_rate)
+        recognizer.SetWords(True)
+
+        utterances: List[str] = []
+
+        try:
+            async for chunk in audio_stream:
+                if not chunk:
+                    continue
+
+                # AcceptWaveform renvoie True quand VOSK estime avoir une phrase complete
+                if recognizer.AcceptWaveform(chunk):
+                    result = json.loads(recognizer.Result())
+                    text = (result.get("text") or "").strip()
+                    if text:
+                        utterances.append(text)
+                        logger.debug(f"Transcription VOSK (phrase terminee): {text}")
+                    if len(utterances) >= max_utterances:
+                        break
+                else:
+                    # Resultat partiel (en cours de phrase)
+                    partial = json.loads(recognizer.PartialResult())
+                    partial_text = (partial.get("partial") or "").strip()
+                    if partial_text:
+                        logger.debug(f"Transcription VOSK (partielle): {partial_text}")
+
+            # Resultat final apres la fin du flux
+            final_result = json.loads(recognizer.FinalResult())
+            final_text = (final_result.get("text") or "").strip()
+            if final_text:
+                utterances.append(final_text)
+                logger.debug(f"Transcription VOSK (finale): {final_text}")
+
+            return utterances
+
+        except Exception as e:
+            logger.exception(f"Erreur lors de la transcription VOSK en flux: {e}")
+            return []
 
