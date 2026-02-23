@@ -24,7 +24,7 @@ Sur Debian/Ubuntu/Raspberry Pi OS :
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y python3 python3-pip python3-venv portaudio19-dev libasound2-dev ffmpeg
+sudo apt-get install -y python3 python3-pip python3-venv python3-dev portaudio19-dev libasound2-dev ffmpeg
 ```
 
 ### 2. Cloner ou créer le projet
@@ -92,6 +92,12 @@ Mettre à jour `config.yaml` :
 vosk_model_path: "/home/pi/vosk-models/vosk-model-fr-0.22"
 ```
 
+**Raspberry Pi** : Whisper provoque souvent "Illegal instruction" sur ARM. Utiliser Vosk sur le Pi :
+
+- Dans `config/config.yaml` : `voice_recognition_engine: vosk`, et `vosk_model_path` comme ci-dessus.
+- Ou dans `.env` : `VOICE_RECOGNITION_ENGINE=vosk`.
+- Installer le modèle français VOSK (voir commandes ci-dessus).
+
 ### 7. Créer les dossiers nécessaires
 
 ```bash
@@ -139,10 +145,29 @@ docker-compose logs -f
 1. Vérifier que `portaudio19-dev` est installé
 2. Vérifier que `pyaudio` est installé : `pip install pyaudio`
 
+### Windows : "No module named 'pyaudio._portaudio'"
+
+Le module C de PyAudio (PortAudio) n'est souvent pas fourni par un simple `pip install pyaudio`. Sous conda, le paquet conda-forge inclut PortAudio ; pas besoin d'installer portaudio à part.
+
+- **Avec conda** : `conda install -c conda-forge pyaudio`. Si une ancienne version pip/distutils est déjà là et que `pip uninstall pyaudio` échoue ("distutils installed project") :
+  1. Supprimer à la main le dossier `pyaudio` dans le site-packages de l'env :  
+     `C:\Users\<user>\miniconda3\envs\vocalguard\Lib\site-packages\pyaudio`  
+     (et éventuellement `PyAudio-*.dist-info` dans le même dossier)
+  2. Puis : `conda install -c conda-forge pyaudio -y`
+- Sinon, télécharger un fichier `.whl` depuis [pythonlibs (PyAudio)](https://www.lfd.uci.edu/~gohlke/pythonlibs/#pyaudio) pour votre version de Python, puis `pip install chemin/vers/PyAudio‑...‑.whl`
+
 ### Erreurs Whisper
 
 1. Vérifier que `ffmpeg` est installé
 2. Pour utiliser le GPU : installer `torch` avec support CUDA
+
+### "Illegal instruction" sur Raspberry Pi
+
+Whisper (PyTorch) n'est en général pas compatible avec l'ARM du Pi. Utiliser Vosk à la place : `VOICE_RECOGNITION_ENGINE=vosk` dans `.env` ou dans la config, puis installer un modèle VOSK (voir section VOSK ci-dessus).
+
+### Windows : "Le module spécifié est introuvable" (torch_python.dll)
+
+PyTorch peut échouer au chargement sous Windows (conda, runtime C++ manquant, etc.). Pour éviter Whisper/torch, utiliser Vosk : dans le fichier `.env` à la racine du projet, ajouter `VOICE_RECOGNITION_ENGINE=vosk`, installer le paquet `vosk` (`pip install vosk`), puis télécharger un modèle français depuis [alphacephei.com/vosk/models](https://alphacephei.com/vosk/models) et définir `VOSK_MODEL_PATH` vers le dossier du modèle (ex. `C:\Users\...\vosk-model-fr-0.22`).
 
 ### Erreurs de base de données
 

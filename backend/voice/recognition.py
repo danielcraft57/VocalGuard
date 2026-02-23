@@ -32,12 +32,32 @@ class VoiceRecognition:
         """Initialise le moteur de reconnaissance vocale"""
         logger.info(f"Initialisation de la reconnaissance vocale ({self.engine})...")
         
+        # gtts est un moteur de synthèse (texte -> parole), pas de reconnaissance
+        if self.engine == "gtts":
+            logger.warning(
+                "VOICE_RECOGNITION_ENGINE=gtts est invalide (gtts sert à la synthèse vocale). "
+                "Utilisation de Vosk pour la reconnaissance."
+            )
+            self.engine = "vosk"
+        
         if self.engine == "whisper":
-            await self._init_whisper()
+            try:
+                await self._init_whisper()
+            except (ImportError, OSError) as e:
+                logger.warning(
+                    "Whisper indisponible (%s). Passage à Vosk. "
+                    "Pour éviter ce message, définir VOICE_RECOGNITION_ENGINE=vosk dans .env",
+                    e,
+                )
+                self.engine = "vosk"
+                await self._init_vosk()
         elif self.engine == "vosk":
             await self._init_vosk()
         else:
-            raise ValueError(f"Moteur de reconnaissance non supporté: {self.engine}")
+            raise ValueError(
+                f"Moteur de reconnaissance non supporté: {self.engine}. "
+                "Utiliser 'whisper' ou 'vosk'. (gtts est pour VOICE_SYNTHESIS_ENGINE.)"
+            )
         
         logger.info("Reconnaissance vocale initialisée")
     
@@ -74,6 +94,7 @@ class VoiceRecognition:
                 # Chercher dans les emplacements communs
                 common_paths = [
                     Path.home() / "vosk-models" / f"vosk-model-{self.config.voice_language}",
+                    Path.home() / "vosk-models" / f"vosk-model-{self.config.voice_language}-0.22",
                     Path("/usr/share/vosk-models") / f"vosk-model-{self.config.voice_language}",
                 ]
                 
@@ -93,8 +114,13 @@ class VoiceRecognition:
             self.vosk_recognizer.SetWords(True)
             logger.info("Modèle VOSK chargé")
             
-        except ImportError:
-            raise ImportError("VOSK n'est pas installé. Installez-le avec: pip install vosk")
+        except ImportError as e:
+            if "_cffi_backend" in str(e):
+                raise ImportError(
+                    "VOSK dépend de cffi ; le module _cffi_backend est manquant. "
+                    "Réinstaller avec : pip install --force-reinstall cffi"
+                ) from e
+            raise ImportError("VOSK n'est pas installé. Installez-le avec: pip install vosk") from e
         except Exception as e:
             logger.exception(f"Erreur lors du chargement de VOSK: {e}")
             raise
@@ -155,8 +181,8 @@ class VoiceRecognition:
         try:
             import json
             
-            # VOSK attend des données PCM 16-bit mono
-            self.vosk_recognizer.SetSampleRate(sample_rate)
+            # VOSK attend des données PCM 16-bit mono.
+            # Le recognizer est initialise avec un sample rate fixe (16000 Hz).
             
             # Traiter les données par chunks
             text_parts = []

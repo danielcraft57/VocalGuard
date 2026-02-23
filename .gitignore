@@ -96,4 +96,5 @@ Thumbs.db
 # Build frontend (export statique)
 frontend/out/
 backend/web/
+vosk-models/
 

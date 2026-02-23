@@ -81,91 +81,41 @@ if ($venvExists -eq "not exists") {
 }
 Write-Host ""
 
-# Synchroniser les fichiers avec rsync (si disponible) ou scp
+# Synchronisation des fichiers : sous Windows rsync echoue (chemins C:\ vs remote), on utilise tar+scp
 Write-Host "[6/8] Synchronisation des fichiers..." -ForegroundColor Yellow
 Write-Host "   (Cela peut prendre quelques minutes...)" -ForegroundColor Gray
 
-# Vérifier si rsync est disponible
-$rsyncAvailable = Get-Command rsync -ErrorAction SilentlyContinue
-if ($rsyncAvailable) {
-    # Utiliser rsync (plus rapide)
-    $excludes = @(
-        "--exclude=venv",
-        "--exclude=__pycache__",
-        "--exclude=*.pyc",
-        "--exclude=.env",
-        "--exclude=*.db",
-        "--exclude=.git",
-        "--exclude=audio_cache",
-        "--exclude=logs",
-        "--exclude=data"
-    )
-    $excludeArgs = $excludes -join " "
-    & rsync -avz --progress $excludeArgs "$PROJECT_DIR/" "${RPI_HOST}:${RPI_DIR}/"
-} else {
-    # Fallback: utiliser scp pour les fichiers essentiels
-    Write-Host "   rsync non disponible, utilisation de scp..." -ForegroundColor Yellow
-    Write-Host "   (Installation de rsync recommandée pour un déploiement plus rapide)" -ForegroundColor Yellow
-    
-    # Créer une archive temporaire
-    $tempArchive = "$env:TEMP\vocalguard_deploy.tar.gz"
-    Write-Host "   Création de l'archive..." -ForegroundColor Gray
-    
-    # Utiliser tar via WSL ou Git Bash si disponible
-    $tarCmd = Get-Command tar -ErrorAction SilentlyContinue
-    if ($tarCmd) {
-        # Créer l'archive en excluant les dossiers
-        # Utiliser --transform pour ne garder que le contenu du projet VocalGuard
-        Push-Location $PROJECT_DIR
-        $excludes = @(
-            'venv', '__pycache__', '*.pyc', '.env', '*.db', '.git', 
-            'audio_cache', 'logs', 'data', 'node_modules',
-            'V1', 'V2', 'V3', 'V4', 'V5', 'V6',
-            'coaching', 'formations', 'Mes CV', 'Notariat', 
-            'portfolio-projects', 'prospection', 'prospectlab',
-            'scripts/Data', 'scripts/*.py', 'scripts/*.txt', 'scripts/*.json', 'scripts/*.md'
-        )
-        $excludeArgs = ($excludes | ForEach-Object { "--exclude=$_" }) -join ' '
-        
-        # Créer l'archive avec seulement les fichiers du projet VocalGuard
-        $vocalguardFiles = @(
-            'vocalguard', 'scripts/test_*.py', 'scripts/deploy_*.ps1', 'scripts/deploy_*.sh',
-            'docs', 'config', 'requirements.txt', 'setup.py', 'README.md', 
-            'LICENSE', 'CHANGELOG.md', 'env.example', 'ollama_shell.py',
-            'ollama-preload.sh', 'ollama-preload.service', 'run.sh', 'run.ps1',
-            'Dockerfile', 'docker-compose.yml', '.gitignore', '.cursorrules'
-        )
-        
-        # Créer une archive avec seulement les fichiers nécessaires
-        $fileList = @()
-        foreach ($pattern in $vocalguardFiles) {
-            $files = Get-ChildItem -Path $PROJECT_DIR -Filter $pattern -Recurse -ErrorAction SilentlyContinue | Where-Object { -not $_.PSIsContainer }
-            $fileList += $files.FullName | ForEach-Object { $_.Replace($PROJECT_DIR + '\', '') }
-        }
-        
-        # Créer un fichier temporaire avec la liste des fichiers à inclure
-        $fileListPath = "$env:TEMP\vocalguard_files.txt"
-        $fileList | Out-File -FilePath $fileListPath -Encoding UTF8
-        
-        # Créer l'archive avec les fichiers listés
-        tar -czf $tempArchive -T $fileListPath 2>&1 | Out-Null
-        
-        Remove-Item $fileListPath -ErrorAction SilentlyContinue
-        Pop-Location
-        
-        # Transférer l'archive
-        scp $tempArchive "${RPI_HOST}:${RPI_DIR}/vocalguard_deploy.tar.gz"
-        
-        # Extraire sur le RPi
-        ssh "$RPI_HOST" "cd $RPI_DIR && tar -xzf vocalguard_deploy.tar.gz && rm vocalguard_deploy.tar.gz"
-        
-        # Nettoyer
-        Remove-Item $tempArchive -ErrorAction SilentlyContinue
-    } else {
-        Write-Host "   ⚠️ tar non disponible, transfert manuel requis" -ForegroundColor Yellow
-        Write-Host "   Vous pouvez utiliser WinSCP ou FileZilla pour transférer les fichiers" -ForegroundColor Yellow
-    }
+$tempArchive = "$env:TEMP\vocalguard_deploy.tar.gz"
+$tarCmd = Get-Command tar -ErrorAction SilentlyContinue
+if (-not $tarCmd) {
+    Write-Host "   Erreur: tar est requis (Git pour Windows ou WSL)." -ForegroundColor Red
+    exit 1
 }
+
+Push-Location $PROJECT_DIR
+try {
+    Write-Host "   Creation de l'archive..." -ForegroundColor Gray
+    tar -czf $tempArchive --exclude=venv --exclude=__pycache__ --exclude=.git --exclude=node_modules --exclude=frontend/.next --exclude=frontend/out --exclude=audio_cache --exclude=logs --exclude=*.db .
+} finally {
+    Pop-Location
+}
+
+if (-not (Test-Path $tempArchive)) {
+    Write-Host "   Erreur: archive non creee." -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "   Transfert vers $RPI_HOST ..." -ForegroundColor Gray
+scp $tempArchive "${RPI_HOST}:${RPI_DIR}/vocalguard_deploy.tar.gz"
+if ($LASTEXITCODE -ne 0) {
+    Remove-Item $tempArchive -ErrorAction SilentlyContinue
+    Write-Host "   Erreur: transfert scp a echoue." -ForegroundColor Red
+    exit 1
+}
+
+Write-Host "   Extraction sur le RPi..." -ForegroundColor Gray
+ssh "$RPI_HOST" "cd $RPI_DIR && tar -xzf vocalguard_deploy.tar.gz && rm -f vocalguard_deploy.tar.gz"
+Remove-Item $tempArchive -ErrorAction SilentlyContinue
 Write-Host "✅ Fichiers synchronisés" -ForegroundColor Green
 Write-Host ""
 
@@ -176,12 +126,9 @@ ssh "$RPI_HOST" "cd $RPI_DIR && source venv/bin/activate && pip install --upgrad
 Write-Host "✅ Dépendances installées" -ForegroundColor Green
 Write-Host ""
 
-# Créer le fichier .env
+# Creer le fichier .env si env.example existe
 Write-Host "[8/8] Configuration de l'environnement..." -ForegroundColor Yellow
-ssh "$RPI_HOST" "cd $RPI_DIR && if [ ! -f .env ]; then cp env.example .env; fi"
-
-# Configurer Ollama pour utiliser localhost
-ssh "$RPI_HOST" "cd $RPI_DIR && sed -i 's|OLLAMA_BASE_URL=.*|OLLAMA_BASE_URL=http://127.0.0.1:11434|' .env"
+ssh "$RPI_HOST" "cd $RPI_DIR && if [ -f env.example ] && [ ! -f .env ]; then cp env.example .env; fi; if [ -f .env ]; then sed -i 's|OLLAMA_BASE_URL=.*|OLLAMA_BASE_URL=http://127.0.0.1:11434|' .env; fi"
 
 Write-Host "✅ Configuration créée" -ForegroundColor Green
 Write-Host ""
@@ -197,5 +144,6 @@ Write-Host "  source venv/bin/activate" -ForegroundColor White
 Write-Host "  python scripts/test_ollama_voice.py" -ForegroundColor White
 Write-Host ""
 Write-Host "Ou lancer VocalGuard complet:" -ForegroundColor Yellow
-Write-Host "  python -m vocalguard.main" -ForegroundColor White
+Write-Host "  ./run_backend.sh" -ForegroundColor White
+Write-Host "  (ou: ./scripts/install_service_rpi.sh pour la mise en prod)" -ForegroundColor White
 Write-Host ""

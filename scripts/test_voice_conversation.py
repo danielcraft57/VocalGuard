@@ -12,11 +12,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from loguru import logger
-from vocalguard.core.config import Config
-from vocalguard.core.response_patterns import ResponsePatternManager
-from vocalguard.voice.recognition import VoiceRecognition
-from vocalguard.voice.synthesis import VoiceSynthesis
-from vocalguard.ai.ollama_client import OllamaClient
+from backend.core.config import Config
+from backend.core.response_patterns import ResponsePatternManager
+from backend.voice.recognition import VoiceRecognition
+from backend.voice.synthesis import VoiceSynthesis
+from backend.ai.ollama_client import OllamaClient
 
 
 def setup_logging():

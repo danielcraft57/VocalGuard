@@ -9,10 +9,10 @@ from pathlib import Path
 # Ajouter le répertoire parent au path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from vocalguard.database.database import init_database, get_db
-from vocalguard.services.french_phone_db import FrenchPhoneDatabase
-from vocalguard.services.french_phone_data import FrenchPhoneDataManager
-from vocalguard.core.config import Config
+from backend.database.database import init_database, get_db
+from backend.services.french_phone_db import FrenchPhoneDatabase
+from backend.services.french_phone_data import FrenchPhoneDataManager
+from backend.core.config import Config
 import asyncio
 
 

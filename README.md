@@ -129,6 +129,7 @@ VocalGuard/
 - [Module OSINT](docs/OSINT.md) - Enrichissement des numéros de téléphone
 - [Page Appels et OSINT](docs/APPELS_OSINT_UI.md) - Liste des appels, filtres, recherche intelligente
 - [Services de réputation](docs/REPUTATION_SERVICES.md) - NOMOROBO / SHOULDIANSWER (type callattendant)
+- [Mise en production (RPi)](docs/DEPLOYMENT_PROD.md) - Service systemd, demarrage au boot, logs
 - [Résumé des améliorations](docs/IMPROVEMENTS_SUMMARY.md)
 - [Améliorations par rapport à callattendant](docs/IMPROVEMENTS.md)
 

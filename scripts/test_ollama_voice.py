@@ -9,14 +9,15 @@ import sys
 import os
 from pathlib import Path
 
-# Ajouter le répertoire parent au path
-sys.path.insert(0, str(Path(__file__).parent.parent))
+# Ajouter la racine du projet au path pour importer backend
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from loguru import logger
-from vocalguard.core.config import Config
-from vocalguard.voice.recognition import VoiceRecognition
-from vocalguard.voice.synthesis import VoiceSynthesis
-from vocalguard.ai.ollama_client import OllamaClient
+from backend.core.config import Config
+from backend.voice.recognition import VoiceRecognition
+from backend.voice.synthesis import VoiceSynthesis
+from backend.ai.ollama_client import OllamaClient
 
 
 def setup_logging():
@@ -29,90 +30,84 @@ def setup_logging():
     )
 
 
+def check_rpi_voice_engine():
+    """Sur Raspberry Pi, Whisper provoque souvent 'Illegal instruction'. Rappel d'utiliser Vosk."""
+    if os.environ.get("VOICE_RECOGNITION_ENGINE", "").lower() == "vosk":
+        return
+    try:
+        with open("/proc/device-tree/model", "r") as f:
+            if "Raspberry" in (f.read() or ""):
+                logger.warning(
+                    "Sur Raspberry Pi, utilisez Vosk : VOICE_RECOGNITION_ENGINE=vosk "
+                    "(Whisper provoque 'Illegal instruction' sur ARM)."
+                )
+    except Exception:
+        pass
+
+
+def check_pyaudio():
+    """
+    Vérifie que sounddevice est utilisable (alternative a PyAudio).
+    Sous Windows, sounddevice est souvent plus simple car fourni en wheel avec PortAudio.
+    """
+    try:
+        import sounddevice as sd
+        # Simple check: lister les peripheriques audio sans crasher
+        sd.query_devices()
+        return
+    except ImportError as e:
+        msg = str(e)
+        if "sounddevice" in msg.lower():
+            logger.error("❌ sounddevice n'est pas installe.")
+            if sys.platform == "win32":
+                logger.error(
+                    "Sous Windows, installez via : pip install sounddevice"
+                )
+            else:
+                logger.error("Sur Linux, installez PortAudio si besoin : sudo apt-get install portaudio19-dev")
+                logger.error("Puis : pip install sounddevice")
+            sys.exit(1)
+        raise
+    except Exception as e:
+        logger.error("❌ sounddevice inutilisable : %s", e)
+        sys.exit(1)
+
+
 async def record_audio(duration: int = 5) -> bytes:
     """Enregistre l'audio depuis le micro"""
     try:
-        import pyaudio
-        import wave
         import io
-        
-        CHUNK = 1024
-        FORMAT = pyaudio.paInt16
+        import wave
+        import sounddevice as sd
+
         CHANNELS = 1
-        # Taux d'échantillonnage supportés (essayer dans l'ordre)
-        RATES = [48000, 44100, 32000, 22050, 16000, 8000]
-        RATE = None
-        
-        audio = pyaudio.PyAudio()
-        
-        # Trouver le périphérique USB (généralement device 0)
-        device_index = None
-        for i in range(audio.get_device_count()):
-            info = audio.get_device_info_by_index(i)
-            if info['maxInputChannels'] > 0 and 'USB' in info['name']:
-                device_index = i
-                logger.debug(f"Périphérique USB trouvé: {info['name']} (device {i})")
-                break
-        
-        if device_index is None:
-            # Utiliser le périphérique par défaut
-            device_index = audio.get_default_input_device_info()['index']
-            logger.debug(f"Utilisation du périphérique par défaut: device {device_index}")
-        
-        # Trouver un taux d'échantillonnage supporté
-        for test_rate in RATES:
-            try:
-                test_stream = audio.open(
-                    format=FORMAT,
-                    channels=CHANNELS,
-                    rate=test_rate,
-                    input=True,
-                    input_device_index=device_index,
-                    frames_per_buffer=CHUNK
-                )
-                test_stream.close()
-                RATE = test_rate
-                logger.debug(f"Taux d'échantillonnage sélectionné: {RATE} Hz")
-                break
-            except Exception:
-                continue
-        
-        if RATE is None:
-            raise Exception("Aucun taux d'échantillonnage supporté trouvé")
-        
+
+        # Vosk est le plus a l'aise en 16 kHz mono
+        RATE = 16000
+
         logger.info(f"🎤 Enregistrement de {duration} secondes à {RATE} Hz... Parlez maintenant !")
-        
-        stream = audio.open(
-            format=FORMAT,
+
+        frames = sd.rec(
+            int(duration * RATE),
+            samplerate=RATE,
             channels=CHANNELS,
-            rate=RATE,
-            input=True,
-            input_device_index=device_index,
-            frames_per_buffer=CHUNK
+            dtype="int16",
         )
-        
-        frames = []
-        for _ in range(0, int(RATE / CHUNK * duration)):
-            data = stream.read(CHUNK)
-            frames.append(data)
-        
-        stream.stop_stream()
-        stream.close()
-        audio.terminate()
+        sd.wait()
         
         wav_buffer = io.BytesIO()
         wf = wave.open(wav_buffer, 'wb')
         wf.setnchannels(CHANNELS)
-        wf.setsampwidth(audio.get_sample_size(FORMAT))
+        wf.setsampwidth(2)  # int16 -> 2 octets
         wf.setframerate(RATE)
-        wf.writeframes(b''.join(frames))
+        wf.writeframes(frames.tobytes())
         wf.close()
         
         logger.info("✅ Enregistrement terminé")
         return wav_buffer.getvalue()
         
-    except ImportError:
-        logger.error("❌ pyaudio n'est pas installé. Installez-le avec: pip install pyaudio")
+    except ImportError as e:
+        logger.error("❌ sounddevice n'est pas installe. Installez-le avec: pip install sounddevice")
         raise
     except Exception as e:
         logger.exception(f"Erreur lors de l'enregistrement: {e}")
@@ -324,6 +319,9 @@ async def conversation_loop():
         logger.warning(f"⚠️ Erreur lors de la synthèse/jouer du bienvenue: {e}")
         logger.info("💬 Le système continue sans audio")
     
+    # Verifier sounddevice avant la boucle d'enregistrement (evite des erreurs en boucle)
+    check_pyaudio()
+    
     while True:
         try:
             # Enregistrer
@@ -404,7 +402,8 @@ async def conversation_loop():
 async def main():
     """Fonction principale"""
     setup_logging()
-    
+    check_rpi_voice_engine()
+
     logger.info("🚀 Initialisation de la conversation vocale avec Ollama...")
     
     try:

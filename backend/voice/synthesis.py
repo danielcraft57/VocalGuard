@@ -32,7 +32,15 @@ class VoiceSynthesis:
         logger.info(f"Initialisation de la synthèse vocale ({self.engine})...")
         
         if self.engine == "pyttsx3":
-            await self._init_pyttsx3()
+            try:
+                await self._init_pyttsx3()
+            except (ImportError, Exception) as e:
+                logger.warning(
+                    "pyttsx3 indisponible (%s). Passage à gTTS. "
+                    "Pour éviter ce message, définir VOICE_SYNTHESIS_ENGINE=gtts dans .env",
+                    e,
+                )
+                self.engine = "gtts"
         elif self.engine == "gtts":
             # gTTS n'a pas besoin d'initialisation
             pass
@@ -63,8 +71,12 @@ class VoiceSynthesis:
             self.pyttsx3_engine.setProperty('rate', 150)  # Vitesse de parole
             self.pyttsx3_engine.setProperty('volume', 0.9)  # Volume
             
-        except ImportError:
-            raise ImportError("pyttsx3 n'est pas installé. Installez-le avec: pip install pyttsx3")
+        except ImportError as e:
+            raise ImportError(
+                "pyttsx3 n'est pas installé ou pywin32 manque. "
+                "Installez avec: pip install pyttsx3 pywin32. "
+                "Sinon utilisez gTTS: VOICE_SYNTHESIS_ENGINE=gtts dans .env"
+            ) from e
         except Exception as e:
             logger.exception(f"Erreur lors de l'initialisation de pyttsx3: {e}")
             raise
