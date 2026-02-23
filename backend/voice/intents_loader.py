@@ -53,8 +53,14 @@ def load_intents_ivr(config_path: Optional[Path] = None, base_path: Optional[Pat
         config_path = Path(__file__).resolve().parent.parent.parent / "config" / "intents_ivr.yaml"
 
     if not config_path.exists():
-        logger.warning(f"Fichier intents IVR non trouve: {config_path}. Utilisation des intents par defaut.")
-        return _default_intents_in_memory(), _default_intent(), _default_exit_intent()
+        # Secours: fichier d'exemple (template versionne, intents_ivr.yaml ignore par git)
+        example_path = config_path.parent / "intents_ivr.example.yaml"
+        if example_path.exists():
+            config_path = example_path
+            logger.debug(f"Utilisation du fichier exemple: {config_path}")
+        else:
+            logger.warning(f"Fichier intents IVR non trouve: {config_path}. Utilisation des intents par defaut.")
+            return _default_intents_in_memory(), _default_intent(), _default_exit_intent()
 
     try:
         with open(config_path, "r", encoding="utf-8") as f:

@@ -34,8 +34,9 @@ class Config(BaseSettings):
     
     # Voice
     voice_recognition_engine: str = Field(default="whisper")  # whisper ou vosk
-    voice_synthesis_engine: str = Field(default="pyttsx3")  # pyttsx3 ou gtts
+    voice_synthesis_engine: str = Field(default="pyttsx3")  # pyttsx3, gtts ou edgetts
     voice_language: str = Field(default="fr")
+    edge_tts_voice: Optional[str] = Field(default="fr-FR-DeniseNeural")  # pour edgetts (ex. fr-FR-HenriNeural)
     
     # Whisper
     whisper_model: str = Field(default="base")
@@ -127,6 +128,7 @@ class Config(BaseSettings):
             "voice_recognition_engine": self.voice_recognition_engine,
             "voice_synthesis_engine": self.voice_synthesis_engine,
             "voice_language": self.voice_language,
+            "edge_tts_voice": getattr(self, "edge_tts_voice", None),
             "whisper_model": self.whisper_model,
             "rings_before_answer": self.rings_before_answer,
             "block_enabled": self.block_enabled,

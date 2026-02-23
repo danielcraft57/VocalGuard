@@ -71,6 +71,8 @@ ENV/
 # Configuration
 config/config.yaml
 config/.env
+config/intents_ivr.yaml
+
 *.db
 *.sqlite
 *.sqlite3
@@ -97,4 +99,4 @@ Thumbs.db
 frontend/out/
 backend/web/
 vosk-models/
-
+ivr_wav/

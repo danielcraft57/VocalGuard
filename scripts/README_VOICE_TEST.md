@@ -44,6 +44,19 @@ python scripts/test_patterns_voice.py
 
 Idéal pour tester un IVR type téléphone fixe sans dépendance à un modèle IA. Voir [config/README_INTENTS_IVR.md](../config/README_INTENTS_IVR.md).
 
+### generate_intents_tts_examples.py – Exemples TTS à partir des intents (edge-tts)
+
+```bash
+python scripts/generate_intents_tts_examples.py
+```
+
+- Affiche les **voix disponibles** (toutes ou françaises uniquement) via edge-tts
+- Menu : choisir une voix, puis générer un fichier audio par intent (réponse TTS)
+- Fichiers générés dans `ivr_wav/` en WAV 8 kHz si pydub/ffmpeg sont installés, sinon en MP3
+- Utile pour pré-générer les messages IVR avec une voix Microsoft (Denise, Henri, etc.) au lieu de gTTS/pyttsx3
+
+Prérequis : `pip install edge-tts`. Optionnel : pydub + ffmpeg pour la conversion en WAV téléphone.
+
 ### test_voice_conversation.py
 
 ```bash

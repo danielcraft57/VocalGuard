@@ -1,0 +1,180 @@
+# Template des intents IVR (copier vers config/intents_ivr.yaml et adapter)
+#
+# Champs par intent: name, keywords, response, filename, priority, exact_match (optionnel)
+# default_intent et exit_intent en fin de fichier.
+#
+intents:
+  # --- Accueil et general ---
+  - name: salutation
+    keywords: ["bonjour", "salut", "hello", "bonsoir", "allô", "allo"]
+    response: "Bonjour, vous etes bien sur la ligne. Que puis-je pour vous ?"
+    filename: ivr_bonjour.wav
+    priority: 20
+
+  - name: horaires
+    keywords: ["horaire", "heures", "ouvrir", "ouvert", "fermer", "ouverture", "disponible"]
+    response: "Nos horaires sont du lundi au vendredi, de neuf heures a dix-huit heures."
+    filename: ivr_horaires.wav
+    priority: 18
+
+  - name: aide
+    keywords: ["aide", "besoin", "comment", "quoi faire", "options", "menu"]
+    response: "Vous pouvez demander un rendez-vous, des informations, un devis ou une facture. Dites simplement ce que vous souhaitez."
+    filename: ivr_aide.wav
+    priority: 17
+
+  - name: message
+    keywords: ["message", "vocal", "voicemail", "laisser", "rappeler", "rappel"]
+    response: "Apres le signal sonore, enregistrez votre message. Nous vous rappellerons."
+    filename: ivr_message.wav
+    priority: 16
+
+  - name: contact
+    keywords: ["contact", "telephone", "appeler", "joindre", "numero", "numéro"]
+    response: "Pour nous joindre, consultez notre site ou laissez un message vocal. Un conseiller vous rappellera."
+    filename: ivr_contact.wav
+    priority: 15
+
+  # --- Rendez-vous ---
+  - name: rdv_prendre
+    keywords: ["rendez-vous", "rdv", "prendre rendez-vous", "réserver", "reserver", "planifier", "créneau", "creneau", "disponibilités", "disponibilites", "meeting"]
+    response: "Pour prendre rendez-vous, dites-moi la date ou le type de rendez-vous souhaite. Sinon un conseiller vous rappellera pour fixer un creneau."
+    filename: ivr_rdv_prendre.wav
+    priority: 14
+
+  - name: rdv_annuler
+    keywords: ["annuler", "annulation", "annuler rendez-vous", "annuler rdv", "annuler le rendez-vous"]
+    response: "Pour annuler un rendez-vous, indiquez la date ou laissez vos coordonnees. Un conseiller confirmera l annulation."
+    filename: ivr_rdv_annuler.wav
+    priority: 13
+
+  - name: rdv_deplacer
+    keywords: ["déplacer", "deplacer", "reporter", "changer", "modifier rendez-vous", "autre date"]
+    response: "Pour reporter ou deplacer un rendez-vous, laissez un message avec votre nom et la date souhaitee. Nous vous recontacterons."
+    filename: ivr_rdv_deplacer.wav
+    priority: 12
+
+  - name: rdv_confirmer
+    keywords: ["confirmer", "confirmation", "confirmer rendez-vous", "confirmer rdv"]
+    response: "Vous recevrez ou avez recu une confirmation par mail ou SMS. Pour verifier, indiquez la date du rendez-vous ou laissez un message."
+    filename: ivr_rdv_confirmer.wav
+    priority: 11
+
+  # --- Informations ---
+  - name: info_presentation
+    keywords: ["qui", "présentation", "presentation", "société", "societe", "entreprise", "qui etes-vous", "c est quoi"]
+    response: "Nous sommes une structure proposant accompagnement, outils et services pour les professionnels. Dites-moi ce qui vous interesse."
+    filename: ivr_info_presentation.wav
+    priority: 10
+
+  - name: info_services
+    keywords: ["services", "offre", "proposons", "proposez", "faire", "accompagnement", "coaching"]
+    response: "Nous proposons de l accompagnement, de la facturation, de la gestion de prospects et d outils pour simplifier votre activite. Que souhaitez-vous en savoir plus ?"
+    filename: ivr_info_services.wav
+    priority: 9
+
+  - name: info_tarifs
+    keywords: ["tarif", "tarifs", "prix", "cout", "coût", "gratuit", "payant"]
+    response: "Les tarifs dependent du service et du forfait. Demandez un devis pour obtenir une proposition adaptee a vos besoins."
+    filename: ivr_info_tarifs.wav
+    priority: 9
+
+  - name: info_adresse
+    keywords: ["adresse", "où", "ou", "trouver", "localisation", "bureau", "siege"]
+    response: "Nous travaillons principalement a distance. Pour un rendez-vous en presentiel, indiquez votre demande et nous vous communiquerons l adresse."
+    filename: ivr_info_adresse.wav
+    priority: 8
+
+  - name: info_email
+    keywords: ["email", "mail", "courriel", "envoyer un mail", "écrire", "ecrire"]
+    response: "Vous pouvez nous ecrire a l adresse indiquee sur notre site. Pour un sujet urgent, laissez un message vocal et nous vous repondrons rapidement."
+    filename: ivr_info_email.wav
+    priority: 8
+
+  # --- Devis ---
+  - name: devis_demande
+    keywords: ["devis", "demande de devis", "demander un devis", "prix pour", "projet", "estimation", "chiffrage"]
+    response: "Pour obtenir un devis, decrivez brievement votre besoin ou laissez vos coordonnees. Un conseiller vous enverra une proposition sous quelques jours."
+    filename: ivr_devis_demande.wav
+    priority: 14
+
+  - name: devis_suivi
+    keywords: ["suivi devis", "où en est mon devis", "ou en est mon devis", "statut devis", "devis envoyé", "devis envoye"]
+    response: "Pour le suivi de votre devis, indiquez votre nom ou la reference du devis. Sinon laissez un message et nous vous rappellerons."
+    filename: ivr_devis_suivi.wav
+    priority: 12
+
+  - name: devis_modifier
+    keywords: ["modifier devis", "changer devis", "ajuster", "revoir le devis"]
+    response: "Pour modifier un devis, preciser la reference ou la date. Un conseiller vous recontactera pour ajuster la proposition."
+    filename: ivr_devis_modifier.wav
+    priority: 11
+
+  # --- Facture ---
+  - name: facture_payer
+    keywords: ["facture", "payer", "reglement", "règlement", "paiement", "payé", "paye"]
+    response: "Pour regler une facture, les coordonnees bancaires et le numero de facture figurent sur le document. Pour toute question, laissez un message."
+    filename: ivr_facture_payer.wav
+    priority: 14
+
+  - name: facture_relance
+    keywords: ["relance", "impayé", "impaye", "pas payé", "pas paye", "oublié", "oublie"]
+    response: "Pour un dossier impaye ou une relance, indiquez votre nom ou le numero de facture. Le service comptable vous recontactera."
+    filename: ivr_facture_relance.wav
+    priority: 13
+
+  - name: facture_duplicata
+    keywords: ["duplicata", "envoyer facture", "copie facture", "reçu", "recu", "justificatif"]
+    response: "Pour recevoir un duplicata ou une copie de facture, laissez votre nom et l annee ou le numero de facture. Nous vous l enverrons par mail."
+    filename: ivr_facture_duplicata.wav
+    priority: 12
+
+  - name: facture_delai
+    keywords: ["délai", "delai", "paiement", "conditions", "échéance", "echeance", "date limite"]
+    response: "Les conditions de paiement et les delais sont indiques sur chaque facture. En general, reglement a trente jours. Pour un amenagement, laissez un message."
+    filename: ivr_facture_delai.wav
+    priority: 11
+
+  # --- Produits / projets (DanielCraft) ---
+  - name: produit_facturio
+    keywords: ["facturio", "facturation", "logiciel facture", "logiciel de facturation"]
+    response: "Facturio est notre outil de facturation. Pour une demo ou un devis, dites demande de devis ou laissez vos coordonnees."
+    filename: ivr_facturio.wav
+    priority: 8
+
+  - name: produit_prospect
+    keywords: ["prospect", "prospects", "commercial", "vente", "prospection"]
+    response: "Nous proposons des outils et de l accompagnement pour la gestion de prospects. Dites devis ou informations pour en savoir plus."
+    filename: ivr_prospect.wav
+    priority: 8
+
+  - name: produit_mail
+    keywords: ["mail", "email", "campagne", "newsletter", "mailpilot"]
+    response: "Pour les campagnes email et la communication, nous pouvons vous orienter. Laissez un message ou demandez un rappel."
+    filename: ivr_mail.wav
+    priority: 7
+
+  - name: produit_coaching
+    keywords: ["coaching", "accompagnement", "formation", "conseil"]
+    response: "Nous proposons du coaching et de l accompagnement. Pour les modalites et les tarifs, dites devis ou laissez vos coordonnees."
+    filename: ivr_coaching.wav
+    priority: 8
+
+  - name: vocal_guard
+    keywords: ["vocalguard", "vocal guard", "telephone", "accueil telephone", "standard"]
+    response: "VocalGuard gere l accueil telephonique et le routage des appels. Pour une demo ou un devis, dites demande de devis."
+    filename: ivr_vocalguard.wav
+    priority: 7
+
+# Intent par defaut (aucun intent ne matche)
+default_intent:
+  name: incompris
+  response: "Je n ai pas bien compris. Vous pouvez demander un rendez-vous, des informations, un devis ou une facture. Reformulez ou laissez un message."
+  filename: ivr_incompris.wav
+
+# Intent de sortie
+exit_intent:
+  name: fin
+  keywords: ["au revoir", "bye", "a bientot", "quitter", "terminer", "c est tout", "c'est tout"]
+  response: "Au revoir. Merci pour votre appel."
+  filename: ivr_fin.wav

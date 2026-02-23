@@ -2,6 +2,9 @@
 
 Le fichier `intents_ivr.yaml` definit les strategies question-reponse utilisees par le script `scripts/test_patterns_voice.py`. Chaque intent associe des mots-cles a une reponse TTS et a un fichier WAV telephonique (8 kHz).
 
+- **Fichier personnalise** : `config/intents_ivr.yaml` est dans le `.gitignore` ; tu peux y mettre tes intents sans les versionner.
+- **Template** : `config/intents_ivr.example.yaml` est versionne et contient un jeu d'intents type (accueil, rendez-vous, devis, facture, infos). Si `intents_ivr.yaml` est absent, le chargeur utilise automatiquement l'exemple. Pour personnaliser, copie l'exemple vers `intents_ivr.yaml` puis modifie.
+
 ## Structure
 
 - **intents** : liste d'intents, chacun avec `name`, `keywords`, `response`, `filename`, optionnellement `priority` et `exact_match`.

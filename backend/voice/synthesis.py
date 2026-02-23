@@ -1,6 +1,6 @@
 """
-Module de synthèse vocale
-Supporte pyttsx3 et gTTS
+Module de synthèse vocale.
+Supporte pyttsx3, gTTS et edge-tts (Microsoft, nombreuses voix).
 """
 
 import asyncio
@@ -43,6 +43,9 @@ class VoiceSynthesis:
                 self.engine = "gtts"
         elif self.engine == "gtts":
             # gTTS n'a pas besoin d'initialisation
+            pass
+        elif self.engine == "edgetts":
+            # edge-tts n'a pas besoin d'init; la voix est dans config.edge_tts_voice
             pass
         else:
             raise ValueError(f"Moteur de synthèse non supporté: {self.engine}")
@@ -101,6 +104,8 @@ class VoiceSynthesis:
             return await self._speak_pyttsx3(text, save_to_file)
         elif self.engine == "gtts":
             return await self._speak_gtts(text, save_to_file)
+        elif self.engine == "edgetts":
+            return await self._speak_edgetts(text, save_to_file)
         else:
             raise ValueError(f"Moteur non supporté: {self.engine}")
     
@@ -146,7 +151,22 @@ class VoiceSynthesis:
         except Exception as e:
             logger.exception(f"Erreur lors de la synthèse gTTS: {e}")
             return None
-    
+
+    async def _speak_edgetts(self, text: str, save_to_file: Optional[Path] = None) -> Optional[Path]:
+        """Synthétise avec edge-tts (Microsoft, nombreuses voix)."""
+        try:
+            import edge_tts
+            voice = getattr(self.config, "edge_tts_voice", None) or "fr-FR-DeniseNeural"
+            if not save_to_file:
+                save_to_file = self.cache_dir / f"temp_{hash(text)}.mp3"
+            communicate = edge_tts.Communicate(text, voice)
+            await communicate.save(str(save_to_file))
+            logger.debug(f"Audio généré avec edge-tts: {save_to_file}")
+            return save_to_file
+        except Exception as e:
+            logger.exception(f"Erreur lors de la synthèse edge-tts: {e}")
+            return None
+
     async def play_audio(self, audio_file: Path):
         """
         Joue un fichier audio (via le modem ou le système)

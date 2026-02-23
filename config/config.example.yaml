@@ -24,7 +24,10 @@ whisper_device: "cpu"  # cpu ou cuda
 vosk_model_path: null  # Chemin vers le modèle VOSK
 
 # Voice - Synthèse
-voice_synthesis_engine: "pyttsx3"  # pyttsx3 ou gtts
+voice_synthesis_engine: "pyttsx3"  # pyttsx3, gtts ou edgetts
+# Pour edgetts: choisir une voix (ex. fr-FR-DeniseNeural, fr-FR-HenriNeural)
+# Liste des voix: python -m edge_tts --list-voices
+edge_tts_voice: "fr-FR-DeniseNeural"
 
 # Appels
 rings_before_answer: 2
