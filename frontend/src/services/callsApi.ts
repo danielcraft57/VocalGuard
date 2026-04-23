@@ -10,6 +10,8 @@ export interface Call {
   end_time?: string | null;
   status: string;
   duration?: number | null;
+  transcription?: string | null;
+  extra_data?: Record<string, unknown> | null;
 }
 
 export interface CallListResponse {

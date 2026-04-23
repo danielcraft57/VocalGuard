@@ -1,149 +1,135 @@
-# Script de déploiement de VocalGuard sur Raspberry Pi
-# PowerShell version
+# Script de deploiement de VocalGuard sur Raspberry Pi (PowerShell)
+# Synchronise le code sans detruire venv, .env, logs ni recordings.
 
 $ErrorActionPreference = "Stop"
 
-# Configuration
-# Remarque: pour éviter de stocker des hôtes ou mots de passe sensibles
-# dans le dépôt git, on lit d'abord la variable d'environnement RPI_HOST.
-# Si elle n'est pas définie, on demande la valeur à l'utilisateur.
 if (-not $env:RPI_HOST -or $env:RPI_HOST.Trim() -eq "") {
-    $RPI_HOST = Read-Host "Entrez l'utilisateur et l'hôte du Raspberry Pi (ex: pi@raspberrypi.local)"
+    $RPI_HOST = Read-Host "Entrez l'utilisateur et l'hote du Raspberry Pi (ex: pi@raspberrypi.local)"
 } else {
     $RPI_HOST = $env:RPI_HOST
 }
 
 $RPI_DIR = "~/VocalGuard"
-# Obtenir le répertoire du projet VocalGuard (parent du dossier scripts)
 $PROJECT_DIR = (Get-Item (Split-Path -Parent $PSScriptRoot)).FullName
 
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "Déploiement de VocalGuard sur Raspberry Pi" -ForegroundColor Cyan
-Write-Host "Hôte: $RPI_HOST" -ForegroundColor Cyan
+Write-Host "Deploiement VocalGuard sur Raspberry Pi" -ForegroundColor Cyan
+Write-Host "Hote: $RPI_HOST" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Vérifier la connexion SSH
-Write-Host "[1/8] Vérification de la connexion SSH..." -ForegroundColor Yellow
-try {
-    $result = ssh -o ConnectTimeout=5 "$RPI_HOST" "echo 'Connexion OK'" 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        throw "Connexion échouée"
-    }
-    Write-Host "✅ Connexion SSH OK" -ForegroundColor Green
-} catch {
-    Write-Host "❌ Impossible de se connecter à $RPI_HOST" -ForegroundColor Red
-    Write-Host "   Vérifiez que:" -ForegroundColor Yellow
-    Write-Host "   - Le Raspberry Pi est allumé" -ForegroundColor Yellow
-    Write-Host "   - SSH est activé" -ForegroundColor Yellow
-    Write-Host "   - La clé SSH est configurée" -ForegroundColor Yellow
-    exit 1
-}
-Write-Host ""
-
-# Supprimer et recréer le répertoire sur le RPi
-Write-Host "[2/8] Nettoyage et création du répertoire sur le Raspberry Pi..." -ForegroundColor Yellow
-Write-Host "   Suppression de l'ancien répertoire (s'il existe)..." -ForegroundColor Gray
-# Supprimer le contenu avec sudo si nécessaire, puis le dossier
-ssh "$RPI_HOST" "sudo rm -rf $RPI_DIR/* $RPI_DIR/.* 2>/dev/null || true; rm -rf $RPI_DIR 2>/dev/null || true" | Out-Null
-ssh "$RPI_HOST" "mkdir -p $RPI_DIR" | Out-Null
-Write-Host "✅ Répertoire créé: $RPI_DIR" -ForegroundColor Green
-Write-Host ""
-
-# Vérifier Python
-Write-Host "[3/8] Vérification de Python..." -ForegroundColor Yellow
-$pythonVersion = ssh "$RPI_HOST" "python3 --version 2>&1" | Select-Object -First 1
-if (-not $pythonVersion) {
-    Write-Host "❌ Python3 n'est pas installé sur le Raspberry Pi" -ForegroundColor Red
-    exit 1
-}
-Write-Host "✅ $pythonVersion détecté" -ForegroundColor Green
-Write-Host ""
-
-# Vérifier pip
-Write-Host "[4/8] Vérification de pip..." -ForegroundColor Yellow
-$pipCheck = ssh "$RPI_HOST" "python3 -m pip --version 2>&1"
+# [1] Connexion SSH
+Write-Host "[1/6] Verification de la connexion SSH..." -ForegroundColor Yellow
+$sshTest = ssh -o ConnectTimeout=5 "$RPI_HOST" "echo OK" 2>&1
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "⚠️ pip n'est pas installé, installation..." -ForegroundColor Yellow
-    ssh "$RPI_HOST" "sudo apt-get update && sudo apt-get install -y python3-pip" | Out-Null
+    Write-Host "Impossible de se connecter a $RPI_HOST" -ForegroundColor Red
+    Write-Host "  Verifiez: Pi allume, SSH active, cle SSH (ssh-copy-id $RPI_HOST)" -ForegroundColor Yellow
+    exit 1
 }
-Write-Host "✅ pip disponible" -ForegroundColor Green
+Write-Host "Connexion SSH OK" -ForegroundColor Green
 Write-Host ""
 
-# Créer l'environnement virtuel
-Write-Host "[5/8] Création de l'environnement virtuel..." -ForegroundColor Yellow
-$venvExists = ssh "$RPI_HOST" "test -d $RPI_DIR/venv && echo 'exists' || echo 'not exists'"
-if ($venvExists -eq "not exists") {
-    ssh "$RPI_HOST" "cd $RPI_DIR && python3 -m venv venv" | Out-Null
-    Write-Host "✅ Environnement virtuel créé" -ForegroundColor Green
+# [2] Creer le repertoire distant sans rien supprimer (preserve venv, .env, logs)
+Write-Host "[2/6] Repertoire distant..." -ForegroundColor Yellow
+ssh "$RPI_HOST" "mkdir -p $RPI_DIR"
+$venvExists = ssh "$RPI_HOST" "test -d $RPI_DIR/venv && echo yes || echo no"
+if ($venvExists -eq "yes") {
+    Write-Host "  $RPI_DIR existe, venv conserve" -ForegroundColor Gray
 } else {
-    Write-Host "✅ Environnement virtuel existe déjà" -ForegroundColor Green
+    Write-Host "  $RPI_DIR cree (premier deploiement)" -ForegroundColor Gray
 }
+Write-Host "OK" -ForegroundColor Green
 Write-Host ""
 
-# Synchronisation des fichiers : sous Windows rsync echoue (chemins C:\ vs remote), on utilise tar+scp
-Write-Host "[6/8] Synchronisation des fichiers..." -ForegroundColor Yellow
-Write-Host "   (Cela peut prendre quelques minutes...)" -ForegroundColor Gray
+# [3] Python / pip (verification rapide, pas d'install si deja la)
+Write-Host "[3/6] Python et pip..." -ForegroundColor Yellow
+$pyVer = ssh "$RPI_HOST" "python3 --version 2>&1"
+if (-not $pyVer) {
+    Write-Host "Python3 absent sur le Pi" -ForegroundColor Red
+    exit 1
+}
+$pipOk = ssh "$RPI_HOST" "python3 -m pip --version 2>&1"
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "  Installation de pip..." -ForegroundColor Gray
+    ssh "$RPI_HOST" "sudo apt-get update -qq && sudo apt-get install -y python3-pip" | Out-Null
+}
+Write-Host "  $pyVer, pip OK" -ForegroundColor Gray
+Write-Host "OK" -ForegroundColor Green
+Write-Host ""
 
+# [4] Venv : creer uniquement s'il n'existe pas
+Write-Host "[4/6] Environnement virtuel..." -ForegroundColor Yellow
+if ($venvExists -eq "no") {
+    ssh "$RPI_HOST" "cd $RPI_DIR && python3 -m venv venv"
+    Write-Host "  venv cree" -ForegroundColor Gray
+} else {
+    Write-Host "  venv existant conserve" -ForegroundColor Gray
+}
+Write-Host "OK" -ForegroundColor Green
+Write-Host ""
+
+# [5] Sync fichiers (tar + scp) en excluant ce qu'on preserve
+Write-Host "[5/6] Synchronisation des fichiers..." -ForegroundColor Yellow
 $tempArchive = "$env:TEMP\vocalguard_deploy.tar.gz"
 $tarCmd = Get-Command tar -ErrorAction SilentlyContinue
 if (-not $tarCmd) {
-    Write-Host "   Erreur: tar est requis (Git pour Windows ou WSL)." -ForegroundColor Red
+    Write-Host "  tar requis (Git pour Windows ou WSL)" -ForegroundColor Red
     exit 1
 }
 
 Push-Location $PROJECT_DIR
 try {
-    Write-Host "   Creation de l'archive..." -ForegroundColor Gray
-    tar -czf $tempArchive --exclude=venv --exclude=__pycache__ --exclude=.git --exclude=node_modules --exclude=frontend/.next --exclude=frontend/out --exclude=audio_cache --exclude=logs --exclude=*.db .
+    tar -czf $tempArchive `
+        --exclude=venv `
+        --exclude=__pycache__ `
+        --exclude=.git `
+        --exclude=node_modules `
+        --exclude=frontend/.next `
+        --exclude=frontend/out `
+        --exclude=audio_cache `
+        --exclude=logs `
+        --exclude=recordings `
+        --exclude=*.db `
+        --exclude=.env `
+        .
 } finally {
     Pop-Location
 }
 
 if (-not (Test-Path $tempArchive)) {
-    Write-Host "   Erreur: archive non creee." -ForegroundColor Red
+    Write-Host "  Echec creation archive" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "   Transfert vers $RPI_HOST ..." -ForegroundColor Gray
-scp $tempArchive "${RPI_HOST}:${RPI_DIR}/vocalguard_deploy.tar.gz"
+scp -q $tempArchive "${RPI_HOST}:${RPI_DIR}/vocalguard_deploy.tar.gz"
 if ($LASTEXITCODE -ne 0) {
     Remove-Item $tempArchive -ErrorAction SilentlyContinue
-    Write-Host "   Erreur: transfert scp a echoue." -ForegroundColor Red
+    Write-Host "  Echec transfert scp" -ForegroundColor Red
     exit 1
 }
 
-Write-Host "   Extraction sur le RPi..." -ForegroundColor Gray
 ssh "$RPI_HOST" "cd $RPI_DIR && tar -xzf vocalguard_deploy.tar.gz && rm -f vocalguard_deploy.tar.gz"
 Remove-Item $tempArchive -ErrorAction SilentlyContinue
-Write-Host "✅ Fichiers synchronisés" -ForegroundColor Green
+Write-Host "  Fichiers mis a jour (venv, .env, logs non ecrases)" -ForegroundColor Gray
+Write-Host "OK" -ForegroundColor Green
 Write-Host ""
 
-# Installer les dépendances
-Write-Host "[7/8] Installation des dépendances..." -ForegroundColor Yellow
-Write-Host "   (Cela peut prendre plusieurs minutes...)" -ForegroundColor Gray
-ssh "$RPI_HOST" "cd $RPI_DIR && source venv/bin/activate && pip install --upgrade pip && pip install -r requirements.txt"
-Write-Host "✅ Dépendances installées" -ForegroundColor Green
-Write-Host ""
-
-# Creer le fichier .env si env.example existe
-Write-Host "[8/8] Configuration de l'environnement..." -ForegroundColor Yellow
+# [6] Deps et config
+Write-Host "[6/6] Dependances et configuration..." -ForegroundColor Yellow
+ssh "$RPI_HOST" "cd $RPI_DIR && source venv/bin/activate && pip install -q --upgrade pip && pip install -q -r requirements.txt"
+Write-Host "  pip install -r requirements.txt (incrementale)" -ForegroundColor Gray
 ssh "$RPI_HOST" "cd $RPI_DIR && if [ -f env.example ] && [ ! -f .env ]; then cp env.example .env; fi; if [ -f .env ]; then sed -i 's|OLLAMA_BASE_URL=.*|OLLAMA_BASE_URL=http://127.0.0.1:11434|' .env; fi"
-
-Write-Host "✅ Configuration créée" -ForegroundColor Green
+Write-Host "  .env conserve ou cree depuis env.example" -ForegroundColor Gray
+Write-Host "OK" -ForegroundColor Green
 Write-Host ""
 
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "✅ Déploiement terminé avec succès!" -ForegroundColor Green
+Write-Host "Deploiement termine" -ForegroundColor Green
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "Pour tester le système:" -ForegroundColor Yellow
+Write-Host "Sur le Pi:" -ForegroundColor Yellow
 Write-Host "  ssh $RPI_HOST" -ForegroundColor White
-Write-Host "  cd $RPI_DIR" -ForegroundColor White
-Write-Host "  source venv/bin/activate" -ForegroundColor White
-Write-Host "  python scripts/test_ollama_voice.py" -ForegroundColor White
-Write-Host ""
-Write-Host "Ou lancer VocalGuard complet:" -ForegroundColor Yellow
-Write-Host "  ./run_backend.sh" -ForegroundColor White
-Write-Host "  (ou: ./scripts/install_service_rpi.sh pour la mise en prod)" -ForegroundColor White
+Write-Host "  cd $RPI_DIR && source venv/bin/activate" -ForegroundColor White
+Write-Host "  python scripts/test_modem_answer_play_record.py   # test modem" -ForegroundColor White
+Write-Host "  ./run_backend.sh                                   # backend complet" -ForegroundColor White
 Write-Host ""

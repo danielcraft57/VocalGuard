@@ -29,7 +29,7 @@ L'API Sirene a changé de localisation. Elle est maintenant accessible via le **
 2. Aller dans l'onglet **"Souscriptions"** de votre application
 3. Sélectionner votre souscription à "API Sirene 3.11"
 4. Dans la section **"Clés d'API"**, vous verrez votre clé API générée automatiquement
-5. Copier cette clé API (format UUID, ex: `85214a73-69e8-46f8-a14a-736...`)
+5. Copier cette clé API (format UUID, ex: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`)
 6. Cette clé est nécessaire pour authentifier les requêtes
 
 ## Informations importantes

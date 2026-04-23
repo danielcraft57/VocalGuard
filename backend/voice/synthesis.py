@@ -32,13 +32,11 @@ class VoiceSynthesis:
         logger.info(f"Initialisation de la synthèse vocale ({self.engine})...")
         
         if self.engine == "pyttsx3":
-            try:
-                await self._init_pyttsx3()
-            except (ImportError, Exception) as e:
+            ok = await self._init_pyttsx3()
+            if not ok:
                 logger.warning(
-                    "pyttsx3 indisponible (%s). Passage à gTTS. "
-                    "Pour éviter ce message, définir VOICE_SYNTHESIS_ENGINE=gtts dans .env",
-                    e,
+                    "pyttsx3 indisponible (libespeak manquant sur RPi?). Passage à gTTS. "
+                    "Pour éviter: VOICE_SYNTHESIS_ENGINE=gtts dans .env ou sudo apt install espeak."
                 )
                 self.engine = "gtts"
         elif self.engine == "gtts":
@@ -52,37 +50,29 @@ class VoiceSynthesis:
         
         logger.info("Synthèse vocale initialisée")
     
-    async def _init_pyttsx3(self):
-        """Initialise pyttsx3"""
+    async def _init_pyttsx3(self) -> bool:
+        """Initialise pyttsx3. Retourne True si OK, False si indisponible (ex. libespeak manquant sur RPi)."""
         try:
             import pyttsx3
-            
+
             self.pyttsx3_engine = pyttsx3.init()
-            
-            # Configurer la voix selon la langue
-            voices = self.pyttsx3_engine.getProperty('voices')
+
+            voices = self.pyttsx3_engine.getProperty("voices")
             if voices:
-                # Chercher une voix dans la langue configurée
                 lang_code = self.config.voice_language[:2]
                 for voice in voices:
                     if lang_code in voice.id.lower() or lang_code in voice.name.lower():
-                        self.pyttsx3_engine.setProperty('voice', voice.id)
-                        logger.info(f"Voix sélectionnée: {voice.name}")
+                        self.pyttsx3_engine.setProperty("voice", voice.id)
+                        logger.info("Voix sélectionnée: %s", voice.name)
                         break
-            
-            # Configurer la vitesse et le volume
-            self.pyttsx3_engine.setProperty('rate', 150)  # Vitesse de parole
-            self.pyttsx3_engine.setProperty('volume', 0.9)  # Volume
-            
-        except ImportError as e:
-            raise ImportError(
-                "pyttsx3 n'est pas installé ou pywin32 manque. "
-                "Installez avec: pip install pyttsx3 pywin32. "
-                "Sinon utilisez gTTS: VOICE_SYNTHESIS_ENGINE=gtts dans .env"
-            ) from e
-        except Exception as e:
-            logger.exception(f"Erreur lors de l'initialisation de pyttsx3: {e}")
-            raise
+
+            self.pyttsx3_engine.setProperty("rate", 150)
+            self.pyttsx3_engine.setProperty("volume", 0.9)
+            return True
+        except (ImportError, OSError, Exception) as e:
+            logger.debug("pyttsx3 init échoué: %s", e)
+            self.pyttsx3_engine = None
+            return False
     
     async def speak(self, text: str, save_to_file: Optional[Path] = None) -> Optional[Path]:
         """

@@ -73,6 +73,14 @@ function renderRow(call: CallWithOsint): React.ReactNode {
   });
   const phone = call.phone_number ?? "Inconnu";
   const { label: statusLabel, className: statusClass } = formatStatus(call.status);
+  const intent =
+    (call.extra_data && typeof call.extra_data === "object" && "ivr_intent" in call.extra_data
+      ? (call.extra_data as { ivr_intent?: string | null }).ivr_intent
+      : null) || null;
+  const shortTranscript =
+    (call.transcription && call.transcription.length > 80
+      ? `${call.transcription.slice(0, 77)}...`
+      : call.transcription) || null;
 
   const lieu = call.osint
     ? [call.osint.city, call.osint.region].filter(Boolean).join(", ") || "-"
@@ -93,9 +101,43 @@ function renderRow(call: CallWithOsint): React.ReactNode {
         <span>{phone}</span>
       </td>
       <td style={{ padding: "0.5rem 0.75rem" }}>
-        <span className={statusClass}>{statusLabel}</span>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
+          <span className={statusClass}>{statusLabel}</span>
+          {intent && (
+            <span
+              style={{
+                fontSize: "0.7rem",
+                padding: "0.1rem 0.4rem",
+                borderRadius: "999px",
+                border: "1px solid #4b5563",
+                color: "#e5e7eb",
+                alignSelf: "flex-start"
+              }}
+            >
+              Intent: {intent}
+            </span>
+          )}
+        </div>
       </td>
-      <td style={{ padding: "0.5rem 0.75rem" }}>{formatReputation(call.osint)}</td>
+      <td style={{ padding: "0.5rem 0.75rem" }}>
+        {formatReputation(call.osint)}
+        {shortTranscript && (
+          <div
+            style={{
+              marginTop: "0.25rem",
+              fontSize: "0.7rem",
+              color: "#9ca3af",
+              maxWidth: "14rem",
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis"
+            }}
+            title={call.transcription ?? undefined}
+          >
+            “{shortTranscript}”
+          </div>
+        )}
+      </td>
       <td style={{ padding: "0.5rem 0.75rem" }}>{lieu}</td>
       <td style={{ padding: "0.5rem 0.75rem" }}>{operateur}</td>
     </tr>
@@ -544,11 +586,132 @@ export default function CallsPage() {
     </div>
   );
 
+  type LiveTag = "screened" | "permitted" | "blocked";
+
+  const [liveCall, setLiveCall] = useState<{
+    callId: number;
+    phoneNumber: string | null;
+    tag: LiveTag;
+    eventType: string;
+  } | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+    const wsUrl = `${protocol}://${window.location.host}/ws/events`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data as string) as {
+          type?: string;
+          data?: { call_id?: number; phone_number?: string | null };
+        };
+        if (!msg || !msg.type || !msg.data || !msg.data.call_id) return;
+
+        const t = msg.type;
+        let tag: LiveTag | null = null;
+        if (t === "call.incoming") tag = "screened";
+        else if (t === "call.blocked") tag = "blocked";
+        else if (t === "call.answered" || t === "call.completed") tag = "permitted";
+
+        if (!tag) return;
+
+        setLiveCall({
+          callId: msg.data.call_id,
+          phoneNumber: msg.data.phone_number ?? null,
+          tag,
+          eventType: t
+        });
+
+        // Rafraichir la liste des appels pour refleter l'etat courant sans recharger la page
+        fetchCallsWithOsint()
+          .then((data) => {
+            setCalls(data);
+          })
+          .catch(() => {
+            // on garde l'erreur eventuelle geree par l'effet initial
+          });
+      } catch {
+        // Ignorer les messages invalides
+      }
+    };
+
+    ws.onerror = () => {
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+    };
+
+    return () => {
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!liveCall || typeof window === "undefined") return;
+    const id = window.setTimeout(() => {
+      setLiveCall((current) => {
+        if (!current) return null;
+        // On garde eventuellement les appels bloques un peu plus longtemps
+        if (current.tag === "blocked") return current;
+        return null;
+      });
+    }, 20000);
+    return () => {
+      window.clearTimeout(id);
+    };
+  }, [liveCall]);
+
+  function renderLiveTag(tag: LiveTag): React.ReactNode {
+    if (tag === "blocked") {
+      return <span className="vg-badge vg-badge-danger">Blocked</span>;
+    }
+    if (tag === "permitted") {
+      return <span className="vg-badge vg-badge-success">Permitted</span>;
+    }
+    return <span className="vg-badge">Screened</span>;
+  }
+
   return (
     <AppLayout
       title="Appels"
       subtitle="Historique des appels traites par VocalGuard, enrichis avec un premier score OSINT."
     >
+      {liveCall && (
+        <div
+          className="vg-card"
+          style={{
+            marginBottom: "1rem",
+            borderColor: liveCall.tag === "blocked" ? "#ef4444" : "#22c55e",
+            borderWidth: "1px",
+            borderStyle: "solid"
+          }}
+        >
+          <div
+            className="vg-card-label"
+            style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}
+          >
+            <span className="material-icons" style={{ color: "#22c55e", fontSize: "20px" }}>
+              phone_in_talk
+            </span>
+            <span>
+              {liveCall.tag === "screened"
+                ? "Nouvel appel entrant"
+                : "Appel mis a jour"}
+              {liveCall.phoneNumber ? ` depuis ${liveCall.phoneNumber}` : ""} (ID #
+              {liveCall.callId})
+            </span>
+            {renderLiveTag(liveCall.tag)}
+          </div>
+        </div>
+      )}
       {loading ? (
         <div className="vg-card">
           <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>

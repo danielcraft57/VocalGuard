@@ -2,14 +2,17 @@
 Application FastAPI principale
 """
 
+import asyncio
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
-from pathlib import Path
 from loguru import logger
 
 from backend.core.config import Config
+from backend.core.call_manager import CallManager
 from backend.api.routes import (
     calls,
     callers,
@@ -23,8 +26,9 @@ from backend.api.routes import (
     settings as settings_routes,
     stats as stats_routes,
     block_rules as block_rules_routes,
+    realtime,
 )
-from backend.database.database import init_database
+from backend.database import database as db_module
 
 
 def create_app(config: Config) -> FastAPI:
@@ -65,6 +69,8 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(settings_routes.router, prefix="/api/v1", tags=["settings"])
     app.include_router(stats_routes.router, prefix="/api/v1", tags=["stats"])
     app.include_router(block_rules_routes.router, prefix="/api/v1", tags=["block-rules"])
+    # WebSocket temps reel (evenements d'appels, modem, etc.)
+    app.include_router(realtime.router, tags=["realtime"])
     
     # Dossier qui accueille le front (build statique Next.js copié depuis `frontend/out`)
     # Resolve en absolu pour ne pas dépendre du répertoire de travail au lancement.
@@ -77,9 +83,40 @@ def create_app(config: Config) -> FastAPI:
     
     @app.on_event("startup")
     async def on_startup() -> None:
-        """Initialise la base de donnees au demarrage de l'application."""
-        await init_database(config.database_url)
-    
+        """Initialise la base de donnees et demarre la surveillance des appels (modem)."""
+        await db_module.init_database(config.database_url)
+
+        # Demarrer le gestionnaire d'appels (modem, IVR, blocage) en tache de fond
+        db = db_module.SessionLocal()
+        call_manager = CallManager(config, db)
+        await call_manager.initialize()
+        task = asyncio.create_task(call_manager.run())
+        app.state.call_manager = call_manager
+        app.state.call_manager_task = task
+        app.state.call_manager_db = db
+        logger.info("Surveillance des appels (modem) demarree")
+
+    @app.on_event("shutdown")
+    async def on_shutdown() -> None:
+        """Arrete la surveillance des appels et ferme la session DB."""
+        call_manager = getattr(app.state, "call_manager", None)
+        task = getattr(app.state, "call_manager_task", None)
+        db = getattr(app.state, "call_manager_db", None)
+        if call_manager:
+            call_manager.stop()
+            logger.info("Gestionnaire d'appels arrete")
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        if db:
+            try:
+                db.close()
+            except Exception:
+                pass
+
     def _serve_html(rel_path: str):
         """Sert un fichier HTML du build front s'il existe (sécurisé: sous web_root uniquement)."""
         web_abs = web_root.resolve()

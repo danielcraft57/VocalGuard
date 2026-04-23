@@ -2,6 +2,7 @@
 Configuration de VocalGuard
 """
 
+import os
 from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings
@@ -9,11 +10,19 @@ from pydantic import Field
 import yaml
 
 
+def _default_base_path() -> Path:
+    """Racine du projet : cwd si config/ existe (run depuis VocalGuard), sinon ~/.vocalguard."""
+    cwd = Path.cwd()
+    if (cwd / "config").exists() or (cwd / "backend").exists():
+        return cwd
+    return Path.home() / ".vocalguard"
+
+
 class Config(BaseSettings):
     """Configuration de l'application"""
-    
-    # Chemins
-    base_path: Path = Path.home() / ".vocalguard"
+
+    # Chemins (BASE_PATH en env pour forcer, sinon auto = repertoire projet si config/ ou backend/ present)
+    base_path: Path = Field(default_factory=_default_base_path)
     config_path: Optional[Path] = None
     
     # Base de données
@@ -81,18 +90,38 @@ class Config(BaseSettings):
         extra = "ignore"  # Ignorer les champs supplémentaires au lieu de les rejeter
     
     def __init__(self, config_path: Optional[Path] = None, **kwargs):
-        """Initialise la configuration"""
+        """Initialise la configuration. Le .env est chargé depuis la racine du projet (base_path)."""
+        base = _default_base_path()
+        env_file = base / ".env"
+        if env_file.exists():
+            kwargs.setdefault("_env_file", str(env_file))
         super().__init__(**kwargs)
-        
+
         if config_path:
             self.config_path = Path(config_path)
         elif not self.config_path:
-            self.config_path = self.base_path / "config.yaml"
-        
-        # Charger la configuration depuis le fichier YAML si il existe
+            for candidate in (self.base_path / "config" / "config.yaml", self.base_path / "config.yaml"):
+                if candidate.exists():
+                    self.config_path = candidate
+                    break
+            if not self.config_path:
+                self.config_path = self.base_path / "config.yaml"
+
         if self.config_path and self.config_path.exists():
             self.load_from_yaml(self.config_path)
+
+        # Priorité .env / variables d'environnement sur le YAML pour la voix
+        self._apply_env_overrides()
     
+    def _apply_env_overrides(self) -> None:
+        """Réapplique les variables d'environnement (.env) pour que .env prime sur le YAML."""
+        if os.environ.get("VOICE_RECOGNITION_ENGINE"):
+            self.voice_recognition_engine = os.environ.get("VOICE_RECOGNITION_ENGINE", "").strip().lower()
+        if os.environ.get("VOICE_SYNTHESIS_ENGINE"):
+            self.voice_synthesis_engine = os.environ.get("VOICE_SYNTHESIS_ENGINE", "").strip().lower()
+        if os.environ.get("VOSK_MODEL_PATH"):
+            self.vosk_model_path = os.environ.get("VOSK_MODEL_PATH", "").strip() or None
+
     def load_from_yaml(self, path: Path):
         """
         Charge la configuration depuis un fichier YAML

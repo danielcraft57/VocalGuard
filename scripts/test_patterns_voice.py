@@ -15,6 +15,7 @@ from loguru import logger
 # Ajouter la racine du projet au path pour importer backend
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from backend.core.config import Config
 from backend.voice.recognition import VoiceRecognition
@@ -123,13 +124,11 @@ async def generate_ivr_wav(
         return None
 
     try:
+        from audio_utils import export_wav_8k_8bit
         audio = AudioSegment.from_file(str(temp_audio))
-        # Telephone fixe: 8 kHz, mono
-        audio = audio.set_frame_rate(8000).set_channels(1)
-
         out_path = ivr_dir / filename
-        audio.export(out_path, format="wav")
-        logger.info(f"Fichier IVR genere: {out_path}")
+        export_wav_8k_8bit(audio, out_path)
+        logger.info(f"Fichier IVR genere: {out_path} (8 kHz, 8-bit, Conexant)")
         return out_path
     except Exception as e:
         logger.exception(f"Erreur lors de la conversion en WAV IVR: {e}")

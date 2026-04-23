@@ -57,6 +57,55 @@ python scripts/generate_intents_tts_examples.py
 
 Prérequis : `pip install edge-tts`. Optionnel : pydub + ffmpeg pour la conversion en WAV téléphone.
 
+### test_modem_answer_play_record.py – Test modem (décrocher, WAV, enregistrer)
+
+À lancer sur le Raspberry Pi avec modem et carte audio (ex. pi@raspberrypi.local). Décroche un appel entrant, joue un fichier WAV (ex. `ivr_wav/ivr_message.wav`), enregistre un message répondeur dans `recordings/voicemail_*.wav`, puis raccroche. Voir [scripts/transfer_and_test_modem_node14.md](transfer_and_test_modem_node14.md) pour le transfert vers le Pi et le lancement avec le venv.
+
+```bash
+# Sur le Pi, après transfert
+cd ~/VocalGuard && source venv/bin/activate
+python scripts/test_modem_answer_play_record.py
+```
+
+- **Prérequis sur le Pi** : `alsa-utils` (aplay, arecord), modem détecté (port série).
+- **Test pratique** : lancer un appel de test depuis un autre téléphone et vérifier :
+  - que le modem décroche,
+  - que le message joué (WAV) est bien entendu côté appelant,
+  - que le message répondeur est bien enregistré dans `recordings/`.
+
+#### Lancer le test modem en mode démon (service systemd)
+
+Pour avoir le test modem qui tourne en tâche de fond avec un fichier de log dédié :
+
+1. Copier le service sur le Pi :
+
+   ```bash
+   scp vocalguard-test-modem.service pi@raspberrypi.local:/tmp/
+   ssh pi@raspberrypi.local "sudo mv /tmp/vocalguard-test-modem.service /etc/systemd/system/"
+   ssh pi@raspberrypi.local "sudo systemctl daemon-reload && sudo systemctl enable vocalguard-test-modem.service"
+   ssh pi@raspberrypi.local "sudo systemctl start vocalguard-test-modem.service"
+   ```
+
+2. Le service exécute en boucle :
+
+   ```bash
+   cd /home/pi/VocalGuard
+   source venv/bin/activate
+   python scripts/test_modem_answer_play_record.py
+   ```
+
+3. Les logs sont disponibles :
+
+   - dans le journal systemd : `journalctl -u vocalguard-test-modem.service -f`
+   - dans le fichier : `/home/pi/VocalGuard/logs/test_modem_answer_play_record.log`
+
+Pour arrêter/redémarrer le démon :
+
+```bash
+sudo systemctl stop vocalguard-test-modem.service
+sudo systemctl restart vocalguard-test-modem.service
+```
+
 ### test_voice_conversation.py
 
 ```bash

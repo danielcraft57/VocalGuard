@@ -6,6 +6,7 @@ des fichiers MP3 (ou WAV 8 kHz si pydub/ffmpeg dispo) pour chaque intent.
 """
 
 import asyncio
+import shutil
 import sys
 from pathlib import Path
 from typing import List, Optional
@@ -13,6 +14,7 @@ from typing import List, Optional
 # Racine du projet
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 from backend.voice.intents_loader import load_intents_ivr
 
@@ -70,10 +72,17 @@ async def generate_for_intents(voice_name: str, out_dir: Path, as_wav_8k: bool =
     use_mp3 = not as_wav_8k
     try:
         from pydub import AudioSegment
+        from audio_utils import export_wav_8k_8bit
         has_pydub = True
     except ImportError:
         has_pydub = False
         use_mp3 = True
+    if has_pydub and not use_mp3 and not shutil.which("ffprobe"):
+        use_mp3 = True
+        print("ffprobe/ffmpeg absent : les fichiers seront en MP3.")
+        print("  Pour generer des WAV 8 kHz 8-bit (modem Conexant), installez ffmpeg :")
+        print("    sudo apt-get install ffmpeg")
+        print()
     generated = 0
     for filename, text in to_generate:
         if not text:
@@ -89,12 +98,11 @@ async def generate_for_intents(voice_name: str, out_dir: Path, as_wav_8k: bool =
         else:
             try:
                 audio = AudioSegment.from_file(str(out_path))
-                audio = audio.set_frame_rate(8000).set_channels(1)
                 wav_path = out_dir / f"{base}.wav"
-                audio.export(str(wav_path), format="wav")
+                export_wav_8k_8bit(audio, wav_path)
                 out_path.unlink(missing_ok=True)
                 out_path = wav_path
-                print(f"  {out_path}")
+                print(f"  {out_path} (8 kHz, 8-bit, Conexant)")
             except Exception as e:
                 print(f"  {out_path} (conversion WAV ignoree: {e})")
     return generated

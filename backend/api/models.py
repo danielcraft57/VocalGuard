@@ -20,6 +20,7 @@ class CallResponse(BaseModel):
     duration: Optional[int] = None
     transcription: Optional[str] = None
     audio_file: Optional[str] = None
+    extra_data: Optional[Dict[str, Any]] = None
     osint: Optional["OsintReputationResponse"] = None
 
     class Config:

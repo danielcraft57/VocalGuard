@@ -217,3 +217,53 @@ class CallService:
         
         return call
 
+    async def set_transcription_and_intent(
+        self,
+        call_id: int,
+        transcription: Optional[str] = None,
+        intent_name: Optional[str] = None,
+    ) -> Optional[Call]:
+        """
+        Met a jour la transcription et/ou l'intent IVR associe a un appel.
+
+        - transcription est stockee dans Call.transcription
+        - intent_name est stocke dans Call.extra_data["ivr_intent"]
+        """
+        call = self.call_repo.get_by_id(call_id)
+        if not call:
+            return None
+
+        update_data: dict = {}
+        if transcription is not None:
+            update_data["transcription"] = transcription
+
+        if intent_name:
+            meta = dict(call.extra_data or {})
+            meta["ivr_intent"] = intent_name
+            update_data["extra_data"] = meta
+
+        if not update_data:
+            return call
+
+        call = self.call_repo.update(call_id, **update_data)
+        return call
+
+    async def set_call_caller_info(
+        self,
+        call_id: int,
+        phone_number: Optional[str] = None,
+        caller_name: Optional[str] = None,
+    ) -> Optional[Call]:
+        """Met a jour le numero et/ou le nom de l'appelant pour un appel (ex. Caller ID recu apres ATA)."""
+        call = self.call_repo.get_by_id(call_id)
+        if not call:
+            return None
+        update_data = {}
+        if phone_number is not None:
+            update_data["phone_number"] = phone_number
+        if caller_name is not None:
+            update_data["caller_name"] = caller_name
+        if not update_data:
+            return call
+        return self.call_repo.update(call_id, **update_data)
+

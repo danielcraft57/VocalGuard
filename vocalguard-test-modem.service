@@ -1,0 +1,20 @@
+[Unit]
+Description=VocalGuard - Test modem (decrocher, jouer WAV, enregistrer message)
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/VocalGuard
+Environment=PYTHONUNBUFFERED=1
+Environment=USE_MODEM_VOICE_MODE=1
+ExecStart=/home/pi/VocalGuard/venv/bin/python /home/pi/VocalGuard/scripts/test_modem_answer_play_record.py
+Restart=on-failure
+
+# Logs : journalctl et fichier dedie
+StandardOutput=append:/home/pi/VocalGuard/logs/test_modem_answer_play_record.log
+StandardError=append:/home/pi/VocalGuard/logs/test_modem_answer_play_record.log
+
+[Install]
+WantedBy=multi-user.target
+

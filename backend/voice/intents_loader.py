@@ -49,18 +49,28 @@ def load_intents_ivr(config_path: Optional[Path] = None, base_path: Optional[Pat
     if config_path is None and base_path is not None:
         config_path = base_path / "config" / "intents_ivr.yaml"
     if config_path is None:
-        # Fallback: chemin relatif au package backend/voice
         config_path = Path(__file__).resolve().parent.parent.parent / "config" / "intents_ivr.yaml"
 
+    # Chercher d'abord dans le repertoire du projet (cwd) si le fichier n'existe pas dans base_path
     if not config_path.exists():
-        # Secours: fichier d'exemple (template versionne, intents_ivr.yaml ignore par git)
+        cwd_config = Path.cwd() / "config" / "intents_ivr.yaml"
+        if cwd_config.exists():
+            config_path = cwd_config
+            logger.debug("Intents IVR trouves dans le projet: %s", config_path)
+    if not config_path.exists():
         example_path = config_path.parent / "intents_ivr.example.yaml"
-        if example_path.exists():
+        cwd_example = Path.cwd() / "config" / "intents_ivr.example.yaml"
+        if cwd_example.exists():
+            config_path = cwd_example
+            logger.debug("Utilisation du fichier exemple projet: %s", config_path)
+        elif example_path.exists():
             config_path = example_path
-            logger.debug(f"Utilisation du fichier exemple: {config_path}")
-        else:
-            logger.warning(f"Fichier intents IVR non trouve: {config_path}. Utilisation des intents par defaut.")
-            return _default_intents_in_memory(), _default_intent(), _default_exit_intent()
+            logger.debug("Utilisation du fichier exemple: %s", config_path)
+    if not config_path.exists():
+        logger.warning(
+            "Fichier intents IVR non trouve (config/intents_ivr.yaml dans projet ou base_path). Utilisation des intents par defaut."
+        )
+        return _default_intents_in_memory(), _default_intent(), _default_exit_intent()
 
     try:
         with open(config_path, "r", encoding="utf-8") as f:

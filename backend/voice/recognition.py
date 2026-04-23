@@ -41,89 +41,82 @@ class VoiceRecognition:
             self.engine = "vosk"
         
         if self.engine == "whisper":
-            try:
-                await self._init_whisper()
-            except (ImportError, OSError) as e:
+            ok = await self._init_whisper()
+            if not ok:
                 logger.warning(
-                    "Whisper indisponible (%s). Passage à Vosk. "
-                    "Pour éviter ce message, définir VOICE_RECOGNITION_ENGINE=vosk dans .env",
-                    e,
+                    "Whisper indisponible. Passage à Vosk. "
+                    "Pour éviter: VOICE_RECOGNITION_ENGINE=vosk dans .env"
                 )
                 self.engine = "vosk"
-                await self._init_vosk()
-        elif self.engine == "vosk":
-            await self._init_vosk()
-        else:
+        if self.engine == "vosk":
+            ok = await self._init_vosk()
+            if not ok:
+                logger.warning(
+                    "VOSK indisponible (modèle non trouvé). "
+                    "Appels sans transcription. Télécharger un modèle: https://alphacephei.com/vosk/models "
+                    "ou définir VOSK_MODEL_PATH dans .env"
+                )
+                self.engine = None
+        if self.engine not in ("whisper", "vosk"):
+            if self.engine is None:
+                logger.info("Reconnaissance vocale désactivée (aucun moteur disponible)")
+                return
             raise ValueError(
                 f"Moteur de reconnaissance non supporté: {self.engine}. "
                 "Utiliser 'whisper' ou 'vosk'. (gtts est pour VOICE_SYNTHESIS_ENGINE.)"
             )
-        
         logger.info("Reconnaissance vocale initialisée")
     
-    async def _init_whisper(self):
-        """Initialise Whisper"""
+    async def _init_whisper(self) -> bool:
+        """Initialise Whisper. Retourne True si OK, False si indisponible."""
         try:
             import whisper
             import warnings
-            
-            # Supprimer le warning FP16/FP32 sur CPU (c'est normal, Whisper utilise FP32 automatiquement)
+
             warnings.filterwarnings("ignore", message="FP16 is not supported on CPU; using FP32 instead")
-            
-            logger.info(f"Chargement du modèle Whisper: {self.config.whisper_model}")
+            logger.info("Chargement du modèle Whisper: %s", self.config.whisper_model)
             self.whisper_model = whisper.load_model(
                 self.config.whisper_model,
-                device=self.config.whisper_device
+                device=self.config.whisper_device,
             )
             logger.info("Modèle Whisper chargé")
-        except ImportError:
-            raise ImportError("Whisper n'est pas installé. Installez-le avec: pip install openai-whisper")
-        except Exception as e:
-            logger.exception(f"Erreur lors du chargement de Whisper: {e}")
-            raise
+            return True
+        except (ImportError, OSError, Exception) as e:
+            logger.debug("Whisper init échoué: %s", e)
+            self.whisper_model = None
+            return False
     
-    async def _init_vosk(self):
-        """Initialise VOSK"""
+    async def _init_vosk(self) -> bool:
+        """Initialise VOSK. Retourne True si OK, False si modèle absent ou erreur."""
         try:
             from vosk import Model, KaldiRecognizer
-            import json
-            
-            # Trouver le modèle VOSK
+
             model_path = self.config.vosk_model_path
             if not model_path:
-                # Chercher dans les emplacements communs
                 common_paths = [
                     Path.home() / "vosk-models" / f"vosk-model-{self.config.voice_language}",
                     Path.home() / "vosk-models" / f"vosk-model-{self.config.voice_language}-0.22",
                     Path("/usr/share/vosk-models") / f"vosk-model-{self.config.voice_language}",
                 ]
-                
                 for path in common_paths:
                     if path.exists():
                         model_path = str(path)
                         break
-                
                 if not model_path:
-                    raise FileNotFoundError(
-                        f"Modèle VOSK non trouvé. Téléchargez-le depuis https://alphacephei.com/vosk/models"
-                    )
-            
-            logger.info(f"Chargement du modèle VOSK: {model_path}")
+                    logger.debug("Modèle VOSK non trouvé dans les emplacements par défaut")
+                    return False
+
+            logger.info("Chargement du modèle VOSK: %s", model_path)
             self.vosk_model = Model(model_path)
             self.vosk_recognizer = KaldiRecognizer(self.vosk_model, 16000)
             self.vosk_recognizer.SetWords(True)
             logger.info("Modèle VOSK chargé")
-            
-        except ImportError as e:
-            if "_cffi_backend" in str(e):
-                raise ImportError(
-                    "VOSK dépend de cffi ; le module _cffi_backend est manquant. "
-                    "Réinstaller avec : pip install --force-reinstall cffi"
-                ) from e
-            raise ImportError("VOSK n'est pas installé. Installez-le avec: pip install vosk") from e
-        except Exception as e:
-            logger.exception(f"Erreur lors du chargement de VOSK: {e}")
-            raise
+            return True
+        except (ImportError, FileNotFoundError, OSError, Exception) as e:
+            logger.debug("VOSK init échoué: %s", e)
+            self.vosk_model = None
+            self.vosk_recognizer = None
+            return False
     
     async def transcribe(self, audio_data: bytes, sample_rate: int = 16000) -> str:
         """
@@ -138,15 +131,15 @@ class VoiceRecognition:
         """
         if not audio_data:
             return ""
-        
-        logger.debug(f"Transcription de {len(audio_data)} octets d'audio")
-        
+        if self.engine is None:
+            return ""
+
+        logger.debug("Transcription de %s octets d'audio", len(audio_data))
         if self.engine == "whisper":
             return await self._transcribe_whisper(audio_data)
-        elif self.engine == "vosk":
+        if self.engine == "vosk":
             return await self._transcribe_vosk(audio_data, sample_rate)
-        else:
-            raise ValueError(f"Moteur non supporté: {self.engine}")
+        return ""
     
     async def _transcribe_whisper(self, audio_data: bytes) -> str:
         """Transcrit avec Whisper"""

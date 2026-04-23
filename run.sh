@@ -4,6 +4,10 @@
 
 set -e
 
+# Se placer a la racine du projet (ou run.sh est situe)
+cd "$(dirname "$0")"
+export PYTHONPATH="${PYTHONPATH:+$PYTHONPATH:}$(pwd)"
+
 # Couleurs pour les messages
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -73,7 +77,7 @@ if [ ! -f "config/config.yaml" ]; then
     exit 1
 fi
 
-# Lancer l'application
+# Lancer l'application (FastAPI via uvicorn)
 echo -e "${GREEN}Lancement de VocalGuard...${NC}"
-python -m vocalguard.main
+exec python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
