@@ -5,7 +5,7 @@ On utilise un engine SQLAlchemy classique et une seule factory de sessions.
 L'initialisation est déclenchée au démarrage de l'application FastAPI.
 """
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session
 from loguru import logger
 
@@ -29,6 +29,12 @@ async def init_database(database_url: str) -> None:
 
     # Engine synchrone
     engine = create_engine(database_url, echo=False)
+    if database_url.startswith("sqlite"):
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragma(dbapi_connection, connection_record):  # type: ignore[unused-argument]
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
 
     # Factory de sessions
     SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)

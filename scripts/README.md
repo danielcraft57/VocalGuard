@@ -19,4 +19,4 @@ Configurer l'hote via une variable d'environnement permet d'eviter de stocker de
 - **init_french_phone_db.py** : initialisation des prefixes francais en base.
 - **install_osint_tools.sh** / **install_osint_tools.ps1** : installation des outils OSINT (phoneinfoga, etc.).
 - **setup_audio_rpi.sh**, **fix_asoundrc.py** : configuration audio sur RPi.
-- **test_*.py** : scripts de test (audio, Ollama, enregistrement, etc.). Ne pas inclure de numeros ou donnees reelles dans les tests commits.
+- **test_*.py** : scripts de test (audio, patterns, enregistrement, etc.). Ne pas inclure de numeros ou donnees reelles dans les tests commits.

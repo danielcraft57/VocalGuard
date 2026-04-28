@@ -4,10 +4,17 @@ Modèles de base de données SQLAlchemy
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, JSON
+from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, JSON, Float, Table
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
+
+entreprise_category_links = Table(
+    "entreprise_category_links",
+    Base.metadata,
+    Column("entreprise_id", Integer, ForeignKey("entreprises.id", ondelete="CASCADE"), primary_key=True),
+    Column("category_id", Integer, ForeignKey("entreprise_categories.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class Caller(Base):
@@ -195,6 +202,145 @@ class Customer(Base):
     voicemails = relationship("Voicemail", back_populates="customer")
     appointments = relationship("Appointment", back_populates="customer")
     quotes = relationship("Quote", back_populates="customer")
+
+
+class Entreprise(Base):
+    """Modele pour les entreprises importees (prospection)."""
+
+    __tablename__ = "entreprises"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    name = Column(String(255), nullable=False, index=True)
+
+    # Website present dans les sources, mais par regle metier on importera surtout celles sans site.
+    website = Column(String(500), nullable=True)
+
+    phone_number = Column(String(64), nullable=True)
+    phone_digits = Column(String(64), nullable=True, index=True)  # Pour dedup/lookup tolerant
+
+    country = Column(String(128), nullable=True)
+    city = Column(String(128), nullable=True, index=True)
+    address_1 = Column(String(500), nullable=True)
+    address_2 = Column(String(500), nullable=True)
+
+    longitude = Column(Float, nullable=True)
+    latitude = Column(Float, nullable=True)
+
+    rating = Column(Float, nullable=True)
+    reviews_count = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relations techniques
+    import_rows = relationship("EntrepriseImportRow", back_populates="entreprise")
+    phone_analyses = relationship("EntreprisePhoneAnalysis", back_populates="entreprise")
+    categories = relationship(
+        "EntrepriseCategory",
+        secondary=entreprise_category_links,
+        back_populates="entreprises",
+        collection_class=set,
+    )
+
+
+class EntrepriseCategory(Base):
+    """Categorie normalisee d'entreprise (M2M)."""
+
+    __tablename__ = "entreprise_categories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), unique=True, nullable=False, index=True)
+    slug = Column(String(255), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    entreprises = relationship(
+        "Entreprise",
+        secondary=entreprise_category_links,
+        back_populates="categories",
+        collection_class=set,
+    )
+
+
+class EntrepriseImportBatch(Base):
+    """Lot d'import (un fichier) et son resume."""
+
+    __tablename__ = "entreprise_import_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    original_filename = Column(String(500), nullable=True)
+    source = Column(String(64), nullable=False, default="excel")
+
+    total_rows = Column(Integer, nullable=False, default=0)
+    imported_rows = Column(Integer, nullable=False, default=0)
+    skipped_with_website = Column(Integer, nullable=False, default=0)
+    skipped_invalid = Column(Integer, nullable=False, default=0)
+    skipped_duplicates = Column(Integer, nullable=False, default=0)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    rows = relationship(
+        "EntrepriseImportRow",
+        back_populates="batch",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
+
+class EntrepriseImportRow(Base):
+    """Ligne d'import (traçabilité et erreurs)."""
+
+    __tablename__ = "entreprise_import_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    batch_id = Column(Integer, ForeignKey("entreprise_import_batches.id", ondelete="CASCADE"), nullable=False, index=True)
+    row_number = Column(Integer, nullable=False)
+
+    # Ligne source normalisee (colonnes pertinentes)
+    name = Column(String(255), nullable=True)
+    website = Column(String(500), nullable=True)
+    phone_number = Column(String(64), nullable=True)
+    country = Column(String(128), nullable=True)
+    address_1 = Column(String(500), nullable=True)
+    address_2 = Column(String(500), nullable=True)
+    category = Column(String(255), nullable=True)
+
+    status = Column(String(32), nullable=False, default="pending")  # imported, skipped_website, skipped_invalid, skipped_duplicate
+    reason = Column(String(500), nullable=True)
+
+    entreprise_id = Column(Integer, ForeignKey("entreprises.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    batch = relationship("EntrepriseImportBatch", back_populates="rows")
+    entreprise = relationship("Entreprise", back_populates="import_rows")
+
+
+class EntreprisePhoneAnalysis(Base):
+    """Lien technique entre une entreprise et une analyse OSINT de numero."""
+
+    __tablename__ = "entreprise_phone_analyses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    entreprise_id = Column(Integer, ForeignKey("entreprises.id", ondelete="CASCADE"), nullable=False, index=True)
+
+    phone_number = Column(String(64), nullable=False)
+    phone_digits = Column(String(64), nullable=True, index=True)
+
+    # Lien vers le profil OSINT persiste (existant dans VocalGuard)
+    # On ne cascade PAS la suppression du profil (peut être partagé par d'autres usages: appels, autres entreprises).
+    # En revanche, si un profil est supprimé, on nettoie la référence.
+    phone_profile_id = Column(Integer, ForeignKey("phone_number_profiles.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    status = Column(String(32), nullable=False, default="queued")  # queued, done, failed
+    error_message = Column(String(500), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    entreprise = relationship("Entreprise", back_populates="phone_analyses")
+    phone_profile = relationship("PhoneNumberProfile")
 
 
 class Appointment(Base):

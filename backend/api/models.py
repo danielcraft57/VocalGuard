@@ -3,7 +3,7 @@ Modèles Pydantic pour l'API
 """
 
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel, Field
 
 
@@ -261,6 +261,99 @@ class CustomerResponse(CustomerBase):
     created_at: datetime
     updated_at: datetime
     
+    class Config:
+        from_attributes = True
+
+
+class EntrepriseBase(BaseModel):
+    """Entreprise (modele metier) - champs principaux."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    website: Optional[str] = Field(None, max_length=500)
+    phone_number: Optional[str] = Field(None, max_length=64)
+    country: Optional[str] = Field(None, max_length=128)
+    city: Optional[str] = Field(None, max_length=128)
+    address_1: Optional[str] = Field(None, max_length=500)
+    address_2: Optional[str] = Field(None, max_length=500)
+    longitude: Optional[float] = None
+    latitude: Optional[float] = None
+    rating: Optional[float] = None
+    reviews_count: Optional[int] = None
+
+
+class EntrepriseCreate(EntrepriseBase):
+    """Creation manuelle d'une entreprise."""
+
+
+class EntrepriseResponse(EntrepriseBase):
+    """Entreprise retournee par l'API."""
+
+    id: int
+    phone_digits: Optional[str] = None
+    categories: List[str] = []
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class EntrepriseListResponse(BaseModel):
+    """Liste paginée d'entreprises (pour UI)."""
+
+    total: int
+    skip: int
+    limit: int
+    items: List[EntrepriseResponse]
+
+
+class EntrepriseImportSummary(BaseModel):
+    """Resume d'un import (Excel)."""
+
+    batch_id: int
+    original_filename: Optional[str] = None
+    total_rows: int = 0
+    imported_rows: int = 0
+    skipped_with_website: int = 0
+    skipped_invalid: int = 0
+    skipped_duplicates: int = 0
+
+
+class EntrepriseImportRowResponse(BaseModel):
+    """Ligne d'import (traçabilite)."""
+
+    id: int
+    batch_id: int
+    row_number: int
+    name: Optional[str] = None
+    website: Optional[str] = None
+    phone_number: Optional[str] = None
+    country: Optional[str] = None
+    address_1: Optional[str] = None
+    address_2: Optional[str] = None
+    category: Optional[str] = None
+    status: Literal["pending", "imported", "skipped_website", "skipped_invalid", "skipped_duplicate"]
+    reason: Optional[str] = None
+    entreprise_id: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class EntreprisePhoneAnalysisResponse(BaseModel):
+    """Etat d'analyse OSINT d'un numero pour une entreprise."""
+
+    id: int
+    entreprise_id: int
+    phone_number: str
+    phone_digits: Optional[str] = None
+    phone_profile_id: Optional[int] = None
+    status: Literal["queued", "done", "failed"]
+    error_message: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
     class Config:
         from_attributes = True
 

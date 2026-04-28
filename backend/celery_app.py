@@ -31,16 +31,10 @@ def create_celery_app() -> Celery:
         accept_content=["json"],
         timezone="Europe/Paris",
         enable_utc=True,
+        # Enregistrement explicite des modules de tasks (fiable, même sans backend.workers.tasks)
+        imports=("backend.workers.osint_tasks",),
     )
-    
-    # Auto-detection des modules de taches
-    app.autodiscover_tasks(
-        packages=[
-            "backend.workers",
-        ],
-        related_name="tasks",
-    )
-    
+
     return app
 
 

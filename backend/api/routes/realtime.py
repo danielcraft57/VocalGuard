@@ -6,11 +6,12 @@ vers les clients frontend afin d'afficher les appels en cours en temps réel.
 """
 
 from typing import List
+from datetime import datetime
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Body
 from loguru import logger
 
-from backend.core.events import Event, event_bus
+from backend.core.events import Event, EventType, event_bus
 
 
 router = APIRouter()
@@ -91,4 +92,29 @@ async def websocket_events(websocket: WebSocket) -> None:
     except Exception as exc:
         logger.warning("Erreur sur la connexion WebSocket: {}", exc)
         manager.disconnect(websocket)
+
+
+@router.post("/events/osint", status_code=202)
+async def publish_osint_event(payload: dict = Body(...)) -> dict:
+    """
+    Permet à Celery (process séparé) de publier un événement temps réel.
+    Le WS `/ws/events` relaie ensuite cet event aux clients.
+    """
+    event_type_raw = str(payload.get("type") or "").strip()
+    if event_type_raw not in (
+        EventType.OSINT_PROFILE_COMPLETED.value,
+        EventType.OSINT_PROFILE_FAILED.value,
+    ):
+        return {"accepted": False, "reason": "unknown_type"}
+
+    logger.info("Event OSINT reçu: {}", event_type_raw)
+    await event_bus.publish(
+        Event(
+            event_type=EventType(event_type_raw),
+            timestamp=datetime.utcnow(),
+            data=dict(payload.get("data") or {}),
+            source="CeleryOSINT",
+        )
+    )
+    return {"accepted": True}
 

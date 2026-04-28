@@ -2,15 +2,13 @@
 Service de conversation pour les appels VocalGuard.
 
 Ce service centralise la logique de generation de reponses
-en fonction d'une transcription, en s'appuyant eventuellement
-sur un modele de langue externe (Ollama, LLM, etc.).
+en fonction d'une transcription, en s'appuyant sur
+des patterns metier et un fallback deterministic.
 """
 
 from typing import Optional
 
-from loguru import logger
-
-from backend.ai.ollama_client import OllamaClient
+from backend.core.response_patterns import ResponsePatternManager
 
 
 class ConversationService:
@@ -19,21 +17,18 @@ class ConversationService:
     en reponse textuelle destinee a etre lue a l'appelant.
     """
 
-    def __init__(self, ollama_client: Optional[OllamaClient] = None) -> None:
+    def __init__(self) -> None:
         """
         Initialise le service de conversation.
-        
-        Args:
-            ollama_client: Client Ollama optionnel pour les reponses naturelles.
         """
-        self._ollama_client = ollama_client
+        self._pattern_manager = ResponsePatternManager()
 
     async def generate_reply(self, transcription: str) -> Optional[str]:
         """
         Genere une reponse a partir de la transcription.
         
-        Cette premiere version se contente d'appeler Ollama si disponible,
-        avec un fallback simple.
+        Cette version utilise des patterns et garde un fallback simple
+        pour les transcriptions ambiguës.
         
         Args:
             transcription: Texte reconnu lors de l'appel.
@@ -44,16 +39,12 @@ class ConversationService:
         if not transcription:
             return None
 
-        if not self._ollama_client:
-            # Fallback simple pour les premiers essais.
-            return "Je n'ai pas bien compris. Voulez-vous laisser un message?"
-
         try:
-            response = self._ollama_client.generate(transcription, use_history=True)
+            response = self._pattern_manager.generate_response(transcription)
             if response:
                 return response
-        except Exception as exc:
-            logger.warning(f"Erreur lors de la generation de reponse avec Ollama: {exc}")
+        except Exception:
+            return "Je n'ai pas bien compris. Voulez-vous laisser un message?"
 
         return "Je n'ai pas bien compris. Voulez-vous laisser un message?"
 

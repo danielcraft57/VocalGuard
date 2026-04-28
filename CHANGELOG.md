@@ -8,17 +8,17 @@ Toutes les modifications notables de ce projet seront documentées dans ce fichi
 
 - **Capture micro** : remplacement de PyAudio par **sounddevice** pour une installation plus fiable (notamment sous Windows).
 - **Reconnaissance VOSK en temps réel** : nouvelle méthode `stream_vosk()` dans `backend/voice/recognition.py` ; détection de fin de phrase (pause) via `AcceptWaveform()` / `PartialResult()` / `FinalResult()`.
-- **Script test_patterns_voice.py** : boucle vocale basée sur des intents (sans Ollama), génération de WAV 8 kHz pour téléphone, lecture micro en flux.
+- **Script test_patterns_voice.py** : boucle vocale basée sur des intents, génération de WAV 8 kHz pour téléphone, lecture micro en flux.
 - **Fichier d'intents IVR** : `config/intents_ivr.yaml` pour définir les stratégies question-réponse (keywords, response, filename WAV) ; chargeur dans `backend/voice/intents_loader.py`.
 - **Documentation** : `config/README_INTENTS_IVR.md` (structure des intents, mention des packages NLU/ML Rasa/Snips et quand le ML est utile).
 
 ### Modifié
 
 - **backend/voice/recognition.py** : `_transcribe_vosk` réinitialise le recognizer avec `Reset()` à chaque transcription ; compatibilité avec les versions de VOSK sans `SetSampleRate`.
-- **scripts/test_ollama_voice.py** : utilisation de `microphone_stream` + `stream_vosk` lorsque le moteur est VOSK ; sinon fallback enregistrement bloc 5 s + `transcribe()`.
+- **scripts/voice_test_utils.py** : utilitaires communs pour les tests vocaux (logging, vérifs audio, lecture locale).
 - **scripts/test_patterns_voice.py** : charge les intents depuis `config/intents_ivr.yaml`, utilise `find_intent()` et génère les WAV IVR (pydub + ffmpeg si disponible).
 - **requirements.txt** : `sounddevice` et `pydub` ; note d'installation ffmpeg (conda-forge) pour la conversion WAV téléphone.
-- **Documentation** : README, scripts/README_VOICE_TEST.md, docs/INSTALLATION.md, docs/OLLAMA_VOICE_INTEGRATION.md mis à jour (sounddevice, ffmpeg Windows, scripts vocaux, intents IVR).
+- **Documentation** : README, scripts/README_VOICE_TEST.md, docs/INSTALLATION.md mis à jour (sounddevice, ffmpeg Windows, scripts vocaux, intents IVR).
 
 ## [1.1.0] - 2026-01-26
 

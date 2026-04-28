@@ -7,6 +7,7 @@ Système moderne de gestion d'appels avec interface vocale intelligente, basé s
 - Interface vocale moderne avec reconnaissance et synthèse vocale
 - Blocage intelligent des appels indésirables avec OSINT
 - Enrichissement OSINT des numéros (réputation, lieu, opérateur) via `phone_number_profiles`
+- Prospection **Entreprises** : import Excel `.xlsx` (uniquement sans website), catégories normalisées (M2M), pagination/filtres/suppression, modale de détails (onglets).
 - Services de réputation externes (NOMOROBO pour USA, SHOULDIANSWER pour hors USA)
 - Page Appels avec recherche intelligente et filtres avancés (statut, réputation)
 - Messagerie vocale avancée
@@ -25,13 +26,12 @@ Système moderne de gestion d'appels avec interface vocale intelligente, basé s
 - Whisper/VOSK pour la reconnaissance vocale
 - pyttsx3/gTTS pour la synthèse vocale
 - Next.js + React (TypeScript) pour l'interface web
-- Docker pour le déploiement
 
 ## Installation
 
 ### Prérequis
 
-- Python 3.9 ou supérieur (3.13 recommandé)
+- Python 3.13 (production)
 - Modem USB compatible (US Robotics 5637, Zoom 3095, ou autres modems Conexant)
 - Raspberry Pi 3B+ ou mieux (ou système Linux compatible)
 
@@ -48,6 +48,21 @@ chmod +x run.sh
 
 ```powershell
 .\run.ps1
+```
+
+Options utiles :
+
+```powershell
+# Mode une seule fenêtre (backend + celery en arrière-plan + logs dans logs/)
+.\run.ps1 -SingleWindow
+```
+
+### Environnement conda conseillé (prod Python 3.13)
+
+```powershell
+conda create -n vocalguard python=3.13 -y
+conda activate vocalguard
+pip install -r requirements.txt
 ```
 
 ### Installation manuelle
@@ -97,7 +112,7 @@ VocalGuard/
     database/                # Modèles + initialisation DB
     osint/                   # Service OSINT persistant (PhoneNumberProfile)
     workers/                 # Tâches Celery (OSINT, futurs jobs)
-    ai/                      # Intégration Ollama/IA
+    ai/                      # Intégration IA locale (patterns + ML)
     web/                     # Ancienne interface statique (optionnelle)
     domain/                  # Espace pour les services métier plus hauts niveaux
     settings/                # Surcouche de configuration si besoin
@@ -132,7 +147,7 @@ VocalGuard/
 - [Mise en production (RPi)](docs/DEPLOYMENT_PROD.md) - Service systemd, demarrage au boot, logs
 - [Résumé des améliorations](docs/IMPROVEMENTS_SUMMARY.md)
 - [Améliorations par rapport à callattendant](docs/IMPROVEMENTS.md)
-- [Test vocal (micro, Ollama, patterns)](scripts/README_VOICE_TEST.md)
+- [Test vocal (micro, patterns, intents)](scripts/README_VOICE_TEST.md)
 - [Intents IVR (strategies question-reponse)](config/README_INTENTS_IVR.md)
 
 ## API
@@ -141,6 +156,18 @@ Une fois l'application lancée, accédez à :
 - **API Documentation** : http://localhost:8000/docs
 - **API Alternative** : http://localhost:8000/redoc
 - **Health Check** : http://localhost:8000/health
+
+## Entreprises (prospection)
+
+- **Import** : `POST /api/v1/entreprises/import` (fichier `.xlsx`, filtre automatique: conserve uniquement les lignes sans `website`)
+- **Suivi temps réel** : WebSocket `GET /ws/events` avec events:
+  - `entreprise.import.started`
+  - `entreprise.import.progress`
+  - `entreprise.import.completed`
+  - `osint.profile.completed` / `osint.profile.failed` (fin de tâches Celery, relayées via l’API)
+- **Liste** : `GET /api/v1/entreprises` (pagination + filtres `q`, `city`, `category`, `has_phone`)
+
+UI : page `Entreprises` (frontend) avec jauge de progression, liste compacte, filtres, suppression en masse et modale de détails multi-onglets.
 
 ## Exemples d'utilisation
 
@@ -199,12 +226,6 @@ pytest tests/
 ### Tests vocaux (micro + TTS)
 
 Deux scripts permettent de tester la voix en local sans modem :
-
-- **Conversation avec Ollama** (reco + IA + TTS) :
-  ```bash
-  python scripts/test_ollama_voice.py
-  ```
-  Utilise VOSK en temps reel (detection de fin de phrase) si `VOICE_RECOGNITION_ENGINE=vosk`.
 
 - **Conversation par intents** (reco + patterns + WAV telephonique 8 kHz) :
   ```bash

@@ -22,8 +22,8 @@ from backend.voice.recognition import VoiceRecognition
 from backend.voice.synthesis import VoiceSynthesis
 from backend.voice.intents_loader import load_intents_ivr, find_intent
 
-# On reutilise les fonctions de test_ollama_voice pour le logging et la lecture audio
-from scripts.test_ollama_voice import (
+# Utilitaires partages pour le logging et la lecture audio
+from scripts.voice_test_utils import (
     setup_logging,
     check_rpi_voice_engine,
     check_sounddevice,
@@ -136,7 +136,7 @@ async def generate_ivr_wav(
 
 
 async def conversation_patterns_loop():
-    """Boucle de conversation basee sur des intents (fichier config/intents_ivr.yaml), sans Ollama."""
+    """Boucle de conversation basee sur des intents (fichier config/intents_ivr.yaml)."""
     config = Config()
 
     intents, default_intent, exit_intent = _load_intents(config)
@@ -150,7 +150,7 @@ async def conversation_patterns_loop():
     ivr_dir = Path(config.base_path) / "ivr_wav"
 
     logger.info("=" * 60)
-    logger.info("Conversation vocale basee sur intents (sans Ollama)")
+    logger.info("Conversation vocale basee sur intents")
     logger.info("=" * 60)
     logger.info("Strategies: config/intents_ivr.yaml. WAV 8 kHz dans ivr_wav.")
     logger.info("Dites 'au revoir' ou 'quitter' pour terminer.")

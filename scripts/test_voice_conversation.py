@@ -16,7 +16,6 @@ from backend.core.config import Config
 from backend.core.response_patterns import ResponsePatternManager
 from backend.voice.recognition import VoiceRecognition
 from backend.voice.synthesis import VoiceSynthesis
-from backend.ai.ollama_client import OllamaClient
 
 
 def setup_logging():
@@ -119,45 +118,28 @@ async def play_audio_file(audio_file: Path):
         logger.exception(f"Erreur lors de la lecture audio: {e}")
 
 
-async def conversation_loop(config: Config, use_ollama: bool = True):
+async def conversation_loop(config: Config):
     """
-    Boucle de conversation interactive avec Ollama
+    Boucle de conversation interactive basée sur patterns.
     
     Args:
         config: Configuration de l'application
-        use_ollama: Si True, utilise Ollama pour les réponses (sinon utilise les patterns)
     """
     recognition = VoiceRecognition(config)
     synthesis = VoiceSynthesis(config)
     
-    # Initialiser Ollama si demandé
-    ollama_client = None
-    if use_ollama:
-        ollama_client = OllamaClient()
-        if not ollama_client.test_connection():
-            logger.warning("Ollama non disponible, utilisation des patterns par défaut")
-            use_ollama = False
-        else:
-            logger.info(f"Ollama connecté - Modèle: {ollama_client.model}")
-    
-    # Fallback vers les patterns si Ollama n'est pas disponible
-    pattern_manager = None
-    if not use_ollama:
-        config_path = None
-        if config.config_path:
-            config_path = config.config_path.parent / "responses.yaml"
-        elif config.base_path:
-            config_path = config.base_path / "responses.yaml"
-        pattern_manager = ResponsePatternManager(config_path)
+    config_path = None
+    if config.config_path:
+        config_path = config.config_path.parent / "responses.yaml"
+    elif config.base_path:
+        config_path = config.base_path / "responses.yaml"
+    pattern_manager = ResponsePatternManager(config_path)
     
     await recognition.initialize()
     await synthesis.initialize()
     
     logger.info("=== Test de conversation vocale ===")
-    if use_ollama:
-        logger.info("Mode: Ollama (conversation naturelle avec historique)")
-    else:
-        logger.info("Mode: Patterns (réponses prédéfinies)")
+    logger.info("Mode: Patterns + ML local (réponses prédéfinies)")
     logger.info("Dites 'au revoir' pour quitter")
     logger.info("")
     
@@ -196,15 +178,8 @@ async def conversation_loop(config: Config, use_ollama: bool = True):
                         await play_audio_file(response_audio)
                     break
                 
-                # Générer la réponse avec Ollama ou patterns
-                if use_ollama and ollama_client:
-                    logger.info("Génération de la réponse avec Ollama...")
-                    response_text = ollama_client.generate(user_text, use_history=True)
-                    if not response_text:
-                        response_text = "Désolé, je n'ai pas pu générer de réponse. Pouvez-vous répéter ?"
-                else:
-                    # Fallback vers les patterns
-                    response_text = pattern_manager.generate_response(user_text)
+                # Générer la réponse via patterns
+                response_text = pattern_manager.generate_response(user_text)
             
             # Synthétiser et jouer la réponse
             logger.info(f"VocalGuard: {response_text}")
@@ -230,11 +205,8 @@ async def main():
     
     config = Config()
     
-    # Vérifier si on veut utiliser Ollama (par défaut: oui si configuré)
-    use_ollama = os.getenv("OLLAMA_BASE_URL") is not None
-    
     try:
-        await conversation_loop(config, use_ollama=use_ollama)
+        await conversation_loop(config)
     except Exception as e:
         logger.exception(f"Erreur fatale: {e}")
         sys.exit(1)

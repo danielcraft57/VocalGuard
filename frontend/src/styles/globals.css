@@ -440,6 +440,21 @@ html.vg-theme-dark body {
   color: var(--vg-neutral-100);
 }
 
+/* Variables sémantiques en mode sombre (utilisées aussi par composants MUI via sx). */
+html.vg-theme-dark {
+  --vg-color-bg: var(--vg-neutral-900);
+  --vg-color-bg-soft: var(--vg-neutral-800);
+  --vg-color-bg-elevated: var(--vg-neutral-800);
+  --vg-color-surface: var(--vg-neutral-800);
+  --vg-color-surface-elevated: var(--vg-neutral-700);
+  --vg-color-border-subtle: var(--vg-neutral-700);
+  --vg-color-border: var(--vg-neutral-600);
+  --vg-color-text: var(--vg-neutral-100);
+  --vg-color-text-muted: var(--vg-neutral-400);
+  --vg-shadow-subtle: 0 4px 12px rgba(2, 6, 23, 0.45);
+  --vg-shadow-soft: 0 10px 30px rgba(2, 6, 23, 0.55);
+}
+
 html.vg-theme-dark .vg-main {
   background: var(--vg-neutral-900);
 }
@@ -589,6 +604,78 @@ html.vg-theme-dark .vg-list-item:hover {
 html.vg-theme-dark .vg-list-item--active {
   background: var(--vg-neutral-800);
   border-left-color: var(--vg-color-primary);
+}
+
+/* Harmonisation visuelle des composants MUI en dark mode */
+html.vg-theme-dark .MuiPaper-root,
+html.vg-theme-dark .MuiCard-root,
+html.vg-theme-dark .MuiDialog-paper {
+  background-color: var(--vg-color-bg-soft) !important;
+  color: var(--vg-color-text) !important;
+  border-color: var(--vg-color-border-subtle) !important;
+}
+
+html.vg-theme-dark .MuiTableCell-root {
+  color: var(--vg-color-text) !important;
+  border-bottom-color: var(--vg-color-border-subtle) !important;
+}
+
+html.vg-theme-dark .MuiTableHead-root .MuiTableCell-root {
+  background-color: var(--vg-neutral-800) !important;
+  color: var(--vg-neutral-200) !important;
+}
+
+html.vg-theme-dark .MuiInputBase-root,
+html.vg-theme-dark .MuiOutlinedInput-root {
+  background-color: var(--vg-color-surface) !important;
+  color: var(--vg-color-text) !important;
+}
+
+html.vg-theme-dark .MuiOutlinedInput-notchedOutline {
+  border-color: var(--vg-color-border) !important;
+}
+
+html.vg-theme-dark .MuiFormLabel-root,
+html.vg-theme-dark .MuiInputBase-input::placeholder {
+  color: var(--vg-color-text-muted) !important;
+}
+
+html.vg-theme-dark .MuiChip-root {
+  color: var(--vg-color-text) !important;
+  border-color: var(--vg-color-border) !important;
+  background-color: var(--vg-color-surface) !important;
+}
+
+html.vg-theme-dark .MuiChip-root .MuiChip-label {
+  color: var(--vg-color-text) !important;
+}
+
+html.vg-theme-dark .MuiChip-clickable:hover {
+  background-color: var(--vg-color-surface-elevated) !important;
+}
+
+html.vg-theme-dark .MuiChip-outlinedPrimary {
+  color: var(--vg-accent-300) !important;
+  border-color: var(--vg-accent-600) !important;
+  background-color: rgba(14, 165, 233, 0.12) !important;
+}
+
+html.vg-theme-dark .MuiChip-outlinedSecondary {
+  color: var(--vg-primary-300) !important;
+  border-color: var(--vg-primary-700) !important;
+  background-color: rgba(34, 197, 94, 0.12) !important;
+}
+
+html.vg-theme-dark .MuiChip-outlinedSuccess {
+  color: var(--vg-primary-300) !important;
+  border-color: var(--vg-primary-700) !important;
+  background-color: rgba(34, 197, 94, 0.12) !important;
+}
+
+html.vg-theme-dark .MuiChip-outlinedWarning {
+  color: var(--vg-warn-300) !important;
+  border-color: var(--vg-warn-700) !important;
+  background-color: rgba(245, 158, 11, 0.14) !important;
 }
 
 .vg-list {

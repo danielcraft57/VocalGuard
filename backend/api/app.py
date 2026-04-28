@@ -23,6 +23,7 @@ from backend.api.routes import (
     appointments,
     quotes,
     customers,
+    entreprises,
     settings as settings_routes,
     stats as stats_routes,
     block_rules as block_rules_routes,
@@ -66,6 +67,7 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(appointments.router, prefix="/api/v1", tags=["appointments"])
     app.include_router(quotes.router, prefix="/api/v1", tags=["quotes"])
     app.include_router(customers.router, prefix="/api/v1", tags=["customers"])
+    app.include_router(entreprises.router, prefix="/api/v1", tags=["entreprises"])
     app.include_router(settings_routes.router, prefix="/api/v1", tags=["settings"])
     app.include_router(stats_routes.router, prefix="/api/v1", tags=["stats"])
     app.include_router(block_rules_routes.router, prefix="/api/v1", tags=["block-rules"])

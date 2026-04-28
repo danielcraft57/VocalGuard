@@ -121,6 +121,18 @@ La page **Appels** affiche pour chaque appel la reputation OSINT, le lieu et l'o
 - Les profils sont remplis par la migration avec `--run-osint` ou par les taches Celery d'enrichissement. Si un profil a un lieu/operateur (détection française) mais aucune reputation fournie par NumLookup/phoneinfoga, le service pose `reputation: "neutral"` (affichée "Non evaluee" en UI).
 - Voir aussi [APPELS_OSINT_UI.md](APPELS_OSINT_UI.md) pour les détails (filtres, recherche, colonnes).
 
+## OSINT + Entreprises (prospection)
+
+Les imports d’entreprises (page **Entreprises**) peuvent déclencher des tâches Celery OSINT pour chaque numéro importé.
+
+- Les analyses sont tracées dans `entreprise_phone_analyses` (statut: `queued` / `done` / `failed`).
+- Les profils persistants sont stockés dans `phone_number_profiles`.
+- À chaque fin de tâche Celery, le worker notifie l’API (`POST /events/osint`), puis le backend relaie un événement temps réel sur le WebSocket `/ws/events` :
+  - `osint.profile.completed`
+  - `osint.profile.failed`
+
+Le frontend utilise ces événements pour rafraîchir automatiquement la liste et afficher les informations du profil OSINT dans la modale (onglet **OSINT**).
+
 ## Utilisation dans VocalGuard
 
 ### Via l'API

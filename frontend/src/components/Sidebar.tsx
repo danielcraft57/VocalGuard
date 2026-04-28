@@ -40,6 +40,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen = false, onNavigate }) 
     { href: "/filtering", label: "Filtrage d'appels", icon: "phonelink_erase" },
     { href: "/appointments", label: "RDV", icon: "event" },
     { href: "/quotes", label: "Devis", icon: "description" },
+    { href: "/entreprises", label: "Entreprises", icon: "business" },
     { href: "/customers", label: "Clients", icon: "groups" },
     { href: "/kb", label: "Base de connaissances", icon: "help_outline" },
     { href: "/simulator", label: "Simulateur d'appel", icon: "mic" },

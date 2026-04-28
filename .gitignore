@@ -17,6 +17,9 @@ frontend/node_modules/
 vocalguard.db
 *.sqlite
 *.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
 
 # Logs
 logs/
@@ -92,11 +95,15 @@ recordings/
 .DS_Store
 Thumbs.db
 
-# Docker
-.dockerignore
-
 # Build frontend (export statique)
 frontend/out/
 backend/web/
 vosk-models/
 ivr_wav/
+
+# Données de référence téléphonie FR (générées/locales)
+french_phone_data/
+
+# Turbopack / Next caches
+.turbo/
+frontend/.turbo/

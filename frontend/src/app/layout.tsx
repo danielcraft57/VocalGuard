@@ -17,8 +17,9 @@ export interface RootLayoutProps {
  */
 const RootLayout: React.FC<RootLayoutProps> = ({ children }) => {
   return (
-    <html lang="fr">
+    <html lang="fr" className="vg-theme-dark" suppressHydrationWarning>
       <head>
+        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
         <link
           rel="stylesheet"
           href="https://fonts.googleapis.com/icon?family=Material+Icons"
@@ -31,7 +32,7 @@ const RootLayout: React.FC<RootLayoutProps> = ({ children }) => {
           referrerPolicy="no-referrer"
         />
       </head>
-      <body>
+      <body suppressHydrationWarning>
         <ThemeProviderWrapper>{children}</ThemeProviderWrapper>
       </body>
     </html>

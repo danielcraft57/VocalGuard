@@ -118,7 +118,7 @@ Write-Host ""
 Write-Host "[6/6] Dependances et configuration..." -ForegroundColor Yellow
 ssh "$RPI_HOST" "cd $RPI_DIR && source venv/bin/activate && pip install -q --upgrade pip && pip install -q -r requirements.txt"
 Write-Host "  pip install -r requirements.txt (incrementale)" -ForegroundColor Gray
-ssh "$RPI_HOST" "cd $RPI_DIR && if [ -f env.example ] && [ ! -f .env ]; then cp env.example .env; fi; if [ -f .env ]; then sed -i 's|OLLAMA_BASE_URL=.*|OLLAMA_BASE_URL=http://127.0.0.1:11434|' .env; fi"
+ssh "$RPI_HOST" "cd $RPI_DIR && if [ -f env.example ] && [ ! -f .env ]; then cp env.example .env; fi"
 Write-Host "  .env conserve ou cree depuis env.example" -ForegroundColor Gray
 Write-Host "OK" -ForegroundColor Green
 Write-Host ""

@@ -68,7 +68,7 @@ pulseaudio --check -v
 
 ### 5. Utiliser avec VocalGuard
 
-Le script `test_ollama_voice.py` essaie automatiquement :
+Le script `test_patterns_voice.py` essaie automatiquement :
 1. `aplay` avec le périphérique par défaut (`-D default`)
 2. `paplay` (PulseAudio) en fallback
 

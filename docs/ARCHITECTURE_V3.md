@@ -23,7 +23,7 @@ VocalGuard/
     database/                # Modèles SQLAlchemy + initialisation (SQLite en dev)
     osint/                   # Service OSINT persistant (PhoneOsintService)
     workers/                 # Tâches Celery (OSINT, futurs emails/PDF...)
-    ai/                      # Intégration Ollama / IA locale
+    ai/                      # Intégration IA locale (patterns + ML)
     web/                     # Ancienne interface statique (peut être conservée comme fallback)
     domain/                  # Espace pour les services métier plus hauts niveaux (RDV, devis, CRM)
     settings/                # Surcouche de configuration si besoin
@@ -100,8 +100,8 @@ Services métier principaux:
 - `osint_service.py` : intégration détaillée des outils OSINT (phoneinfoga, NumLookup, OpenCNAM, etc.).
 - `french_phone_detector.py` / `french_phone_db.py` : enrichissement des numéros FR (préfixes, zones, opérateurs).
 - `conversation_service.py` :
-  - encapsule la génération de réponses vocales (via Ollama ou fallback simple),
-  - utilisé par `CallManager` pour répondre naturellement aux transcriptions.
+  - encapsule la génération de réponses vocales (patterns + fallback),
+  - utilisé par `CallManager` pour répondre aux transcriptions.
 - `person_lookup.py`, `commercial_detector.py`, `french_phone_data.py` : briques complémentaires OSINT / détection commerciale.
 
 ### 6. `backend/osint/` + `backend/workers/`

@@ -32,6 +32,16 @@ class EventType(str, Enum):
     MODEM_DISCONNECTED = "modem.disconnected"
     MODEM_ERROR = "modem.error"
 
+    # Import entreprises (prospection)
+    ENTREPRISE_IMPORT_STARTED = "entreprise.import.started"
+    ENTREPRISE_IMPORT_PROGRESS = "entreprise.import.progress"
+    ENTREPRISE_IMPORT_COMPLETED = "entreprise.import.completed"
+    ENTREPRISE_IMPORT_FAILED = "entreprise.import.failed"
+
+    # OSINT (tâches Celery)
+    OSINT_PROFILE_COMPLETED = "osint.profile.completed"
+    OSINT_PROFILE_FAILED = "osint.profile.failed"
+
 
 @dataclass
 class Event:

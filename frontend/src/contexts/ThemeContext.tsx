@@ -13,16 +13,9 @@ export interface ThemeContextValue {
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 function readStoredTheme(): boolean {
-  if (typeof window === "undefined") return true;
-  try {
-    let stored = localStorage.getItem(STORAGE_KEY);
-    if (stored === null) {
-      stored = localStorage.getItem("vg-sidebar-theme");
-    }
-    return stored !== "light";
-  } catch {
-    return true;
-  }
+  // Demande produit: dark mode par défaut global.
+  // On force sombre au chargement (l'utilisateur peut toujours basculer à la volée).
+  return true;
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {

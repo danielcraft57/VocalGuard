@@ -93,9 +93,6 @@ echo ""
 echo "[8/8] Configuration de l'environnement..."
 ssh "$RPI_HOST" "cd $RPI_DIR && if [ ! -f .env ]; then cp env.example .env; fi"
 
-# Configurer Ollama pour utiliser localhost (puisque Ollama est sur le même RPi)
-ssh "$RPI_HOST" "cd $RPI_DIR && sed -i 's|OLLAMA_BASE_URL=.*|OLLAMA_BASE_URL=http://127.0.0.1:11434|' .env"
-
 echo "✅ Configuration créée"
 echo ""
 
@@ -107,7 +104,7 @@ echo "Pour tester le système:"
 echo "  ssh $RPI_HOST"
 echo "  cd $RPI_DIR"
 echo "  source venv/bin/activate"
-echo "  python scripts/test_ollama_voice.py"
+echo "  python scripts/test_patterns_voice.py"
 echo ""
 echo "Ou lancer VocalGuard complet:"
 echo "  ./run_backend.sh"

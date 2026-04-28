@@ -23,7 +23,6 @@ from backend.services.call_service import CallService
 from backend.services.block_service import BlockService
 from backend.services.conversation_service import ConversationService
 from backend.database.database import get_db
-from backend.ai.ollama_client import OllamaClient
 
 
 class CallManager:
@@ -48,21 +47,8 @@ class CallManager:
         self.call_service = CallService(db)
         self.block_service = BlockService(config, db)
 
-        # Client Ollama (optionnel)
-        self.ollama_client = None
-        try:
-            self.ollama_client = OllamaClient()
-            if self.ollama_client.test_connection():
-                logger.info(f"Ollama activé - Modèle: {self.ollama_client.model}")
-            else:
-                logger.warning("Ollama configuré mais non disponible")
-                self.ollama_client = None
-        except Exception as e:
-            logger.warning(f"Ollama non disponible: {e}")
-            self.ollama_client = None
-        
-        # Service de conversation (LLM) base sur Ollama si disponible
-        self.conversation_service = ConversationService(self.ollama_client)
+        # Service de conversation base sur patterns metier
+        self.conversation_service = ConversationService()
         
         self.is_running = False
         self.current_call_id: Optional[int] = None
@@ -323,7 +309,7 @@ class CallManager:
     
     async def _process_voice_command(self, transcription: str) -> Optional[str]:
         """
-        Traite une commande vocale avec Ollama si disponible
+        Traite une commande vocale via patterns metier
         
         Args:
             transcription: Texte transcrit
@@ -342,8 +328,6 @@ class CallManager:
             return "Très bien, vous pouvez laisser votre message maintenant."
         
         if "raccrocher" in transcription_lower or "au revoir" in transcription_lower:
-            if self.ollama_client:
-                self.ollama_client.clear_history()  # Effacer l'historique à la fin de l'appel
             return "Au revoir, bonne journée!"
 
         # 1) Essayer le moteur d'intents IVR (patterns) en priorité
@@ -361,14 +345,11 @@ class CallManager:
                         )
                     except Exception as e:
                         logger.warning("Impossible de mettre a jour l'appel avec l'intent IVR: {}", e)
-                # Si c'est un intent de sortie, on nettoie aussi l'historique LLM
-                if self.ivr_engine.is_exit_intent(intent) and self.ollama_client:
-                    self.ollama_client.clear_history()
                 return response_text
         except Exception as e:
-            logger.warning(f"Erreur dans le moteur IVR patterns, on continue avec le LLM: {e}")
+            logger.warning(f"Erreur dans le moteur IVR patterns: {e}")
         
-        # 2) Sinon, deleguer la generation de reponse au service de conversation (LLM)
+        # 2) Sinon, deleguer la generation de reponse au service de conversation
         try:
             reply = await self.conversation_service.generate_reply(transcription)
             if reply:

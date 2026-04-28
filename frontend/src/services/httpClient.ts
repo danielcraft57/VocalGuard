@@ -8,10 +8,20 @@
  * @returns URL de base de l'API.
  */
 export function getApiBaseUrl(): string {
-  if (typeof window !== "undefined") {
-    return (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").trim() || "/api/v1";
+  const envBase = (process.env.NEXT_PUBLIC_API_BASE_URL ?? "").trim();
+  if (envBase) {
+    return envBase;
   }
-  return process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api/v1";
+
+  if (typeof window !== "undefined") {
+    // En dev Next.js (localhost:3000), l'API FastAPI tourne sur :8000.
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      return `${window.location.protocol}//${window.location.hostname}:8000/api/v1`;
+    }
+    // En mode "front servi par le backend", on garde le same-origin.
+    return "/api/v1";
+  }
+  return "http://localhost:8000/api/v1";
 }
 
 /**

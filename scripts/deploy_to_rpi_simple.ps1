@@ -37,7 +37,6 @@ $toSync = @(
     "README.md",
     "CHANGELOG.md",
     "env.example",
-    "ollama_shell.py",
     "run.sh",
     "run_backend.sh",
     ".gitignore",
@@ -45,7 +44,7 @@ $toSync = @(
 )
 
 # Fichiers optionnels
-$optional = @("Dockerfile", "docker-compose.yml", "ollama-preload.sh", "ollama-preload.service")
+$optional = @("Dockerfile", "docker-compose.yml")
 
 Write-Host "Transfert des fichiers..." -ForegroundColor Yellow
 foreach ($item in $toSync) {
@@ -70,6 +69,6 @@ Write-Host "Dependances (pip)..." -ForegroundColor Yellow
 ssh "$RPI_HOST" "cd $RPI_DIR && source venv/bin/activate && pip install -q --upgrade pip && pip install -q -r requirements.txt"
 
 Write-Host "Configuration (.env)..." -ForegroundColor Yellow
-ssh "$RPI_HOST" "cd $RPI_DIR && if [ ! -f .env ]; then cp env.example .env; fi && sed -i 's|OLLAMA_BASE_URL=.*|OLLAMA_BASE_URL=http://127.0.0.1:11434|' .env 2>/dev/null || true"
+ssh "$RPI_HOST" "cd $RPI_DIR && if [ ! -f .env ]; then cp env.example .env; fi"
 
 Write-Host "Termine. ssh $RPI_HOST -> cd $RPI_DIR && source venv/bin/activate" -ForegroundColor Green

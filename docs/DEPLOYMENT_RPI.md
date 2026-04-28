@@ -3,7 +3,7 @@
 ## Résumé
 
 Exemple de déploiement sur un Raspberry Pi (ex. votre-serveur.lan) :
-- ✅ Ollama installé et configuré (`gemma-2b-chat`)
+- ✅ Moteur vocal patterns/ML configuré
 - ✅ Environnement virtuel Python créé
 - ✅ Toutes les dépendances installées
 - ✅ Configuration audio USB configurée
@@ -54,15 +54,14 @@ ctl.!default {
 ssh pi@votre-serveur
 cd ~/VocalGuard
 source venv/bin/activate
-python scripts/test_ollama_voice.py
+python scripts/test_patterns_voice.py
 ```
 
 Le script va :
-1. Charger Whisper pour la transcription
+1. Charger VOSK/Whisper pour la transcription
 2. Initialiser pyttsx3 pour la synthèse vocale
-3. Se connecter à Ollama (localhost)
-4. Attendre que tu parles dans le micro USB
-5. Transcrire, envoyer à Ollama, et répondre vocalement
+3. Attendre que tu parles dans le micro USB
+4. Transcrire, matcher des intents/patterns, et répondre vocalement
 
 ### Commandes de test
 
@@ -107,7 +106,7 @@ Les warnings ALSA concernant des périphériques virtuels inexistants sont norma
 ├── venv/              # Environnement virtuel Python
 ├── vocalguard/        # Code source VocalGuard
 ├── scripts/           # Scripts de test et utilitaires
-│   ├── test_ollama_voice.py
+│   ├── test_patterns_voice.py
 │   ├── test_pyaudio.py
 │   ├── test_record.py
 │   └── fix_asoundrc.py
@@ -116,12 +115,11 @@ Les warnings ALSA concernant des périphériques virtuels inexistants sont norma
 └── .env              # Variables d'environnement
 ```
 
-## Configuration Ollama
+## Configuration conversation
 
-- **URL** : `http://127.0.0.1:11434` (localhost)
-- **Modèle** : `gemma-2b-chat`
-- **Timeout** : 60 secondes
-- **Préchargement** : Activé via `ollama-preload.service`
+- **Moteur** : patterns + intents
+- **Fichier** : `config/intents_ivr.yaml`
+- **Synthèse** : pyttsx3/gTTS
 
 ## Prochaines étapes
 

@@ -20,19 +20,7 @@ pip install sounddevice pygame pydub
 
 ## Scripts disponibles
 
-### test_ollama_voice.py – Conversation avec Ollama
-
-```bash
-python scripts/test_ollama_voice.py
-```
-
-- Reconnaissance vocale (VOSK en temps réel avec détection de fin de phrase, ou Whisper en bloc)
-- Réponse générée par Ollama (IA locale)
-- Synthèse et lecture de la réponse
-
-Avec `VOICE_RECOGNITION_ENGINE=vosk`, le micro est écouté en continu jusqu'à une pause (fin de phrase), puis la phrase est envoyée à Ollama.
-
-### test_patterns_voice.py – Conversation par intents (sans Ollama)
+### test_patterns_voice.py – Conversation par intents
 
 ```bash
 python scripts/test_patterns_voice.py
@@ -42,7 +30,7 @@ python scripts/test_patterns_voice.py
 - Réponse choisie selon des **intents** définis dans `config/intents_ivr.yaml`
 - Génération de WAV 8 kHz (téléphone) dans `ivr_wav/` et lecture locale
 
-Idéal pour tester un IVR type téléphone fixe sans dépendance à un modèle IA. Voir [config/README_INTENTS_IVR.md](../config/README_INTENTS_IVR.md).
+Idéal pour tester un IVR type téléphone fixe basé sur des patterns et intents. Voir [config/README_INTENTS_IVR.md](../config/README_INTENTS_IVR.md).
 
 ### generate_intents_tts_examples.py – Exemples TTS à partir des intents (edge-tts)
 
