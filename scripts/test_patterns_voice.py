@@ -148,6 +148,19 @@ async def conversation_patterns_loop():
     await synthesis.initialize()
 
     ivr_dir = Path(config.base_path) / "ivr_wav"
+    try:
+        import sounddevice as sd
+
+        devices = sd.query_devices()
+        has_input = any((d.get("max_input_channels", 0) or 0) > 0 for d in devices)
+        if not has_input:
+            logger.error(
+                "Aucun peripherique de capture detecte sur ce systeme. "
+                "Branchez un micro USB puis relancez le test."
+            )
+            return
+    except Exception as e:
+        logger.warning(f"Impossible de verifier les peripheriques audio: {e}")
 
     logger.info("=" * 60)
     logger.info("Conversation vocale basee sur intents")
@@ -157,6 +170,7 @@ async def conversation_patterns_loop():
     logger.info("=" * 60)
     logger.info("")
 
+    consecutive_input_errors = 0
     while True:
         try:
             logger.info("Transcription en temps reel (VOSK)...")
@@ -193,12 +207,21 @@ async def conversation_patterns_loop():
 
             logger.info("")
             await asyncio.sleep(0.5)
+            consecutive_input_errors = 0
 
         except KeyboardInterrupt:
             logger.info("\nArret demande par l utilisateur")
             break
         except Exception as e:
             logger.exception(f"Erreur dans la boucle de conversation patterns: {e}")
+            if "Error querying device" in str(e):
+                consecutive_input_errors += 1
+                if consecutive_input_errors >= 3:
+                    logger.error(
+                        "Aucun peripherique de capture micro detecte (3 echecs consecutifs). "
+                        "Branchez un micro USB puis relancez le script."
+                    )
+                    break
             await asyncio.sleep(1)
 
 

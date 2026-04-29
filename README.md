@@ -143,6 +143,7 @@ VocalGuard/
 - [Architecture originale](docs/ARCHITECTURE.md) - historique
 - [Module OSINT](docs/OSINT.md) - Enrichissement des numéros de téléphone
 - [Page Appels et OSINT](docs/APPELS_OSINT_UI.md) - Liste des appels, filtres, recherche intelligente
+- [API Agenda](docs/AGENDA_API.md) - Endpoints agenda, settings et jours non travaillés
 - [Services de réputation](docs/REPUTATION_SERVICES.md) - NOMOROBO / SHOULDIANSWER (type callattendant)
 - [Mise en production (RPi)](docs/DEPLOYMENT_PROD.md) - Service systemd, demarrage au boot, logs
 - [Résumé des améliorations](docs/IMPROVEMENTS_SUMMARY.md)
@@ -201,6 +202,13 @@ curl http://localhost:8000/api/v1/osint/phone/+33123456789
 
 ```bash
 curl http://localhost:8000/api/v1/osint/reputation/+33123456789
+```
+
+### Agenda (nouveaux endpoints)
+
+```bash
+curl http://localhost:8000/api/v1/agenda
+curl http://localhost:8000/api/v1/agenda/settings
 ```
 
 ## Développement

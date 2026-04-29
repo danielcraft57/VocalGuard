@@ -2,7 +2,7 @@
 Modèles Pydantic pour l'API
 """
 
-from datetime import datetime
+from datetime import datetime, date, time
 from typing import Optional, List, Dict, Any, Literal
 from pydantic import BaseModel, Field
 
@@ -181,6 +181,8 @@ class AppointmentBase(BaseModel):
     """Champs communs pour un rendez-vous."""
     
     customer_id: Optional[int] = None
+    source_call_id: Optional[int] = None
+    entreprise_id: Optional[int] = None
     phone_number: Optional[str] = None
     title: str
     start_time: datetime
@@ -188,6 +190,10 @@ class AppointmentBase(BaseModel):
     location: Optional[str] = None
     status: str = "scheduled"
     service_type: Optional[str] = None
+    agenda_tag: Optional[str] = None
+    display_icon: Optional[str] = None
+    display_color: Optional[str] = None
+    is_all_day: bool = False
     notes: Optional[str] = None
 
 
@@ -201,6 +207,69 @@ class AppointmentResponse(AppointmentBase):
     id: int
     created_at: datetime
     
+    class Config:
+        from_attributes = True
+
+
+class AppointmentUpdate(BaseModel):
+    """Mise a jour partielle d'un rendez-vous."""
+
+    customer_id: Optional[int] = None
+    entreprise_id: Optional[int] = None
+    phone_number: Optional[str] = None
+    title: Optional[str] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    location: Optional[str] = None
+    status: Optional[str] = None
+    service_type: Optional[str] = None
+    agenda_tag: Optional[str] = None
+    display_icon: Optional[str] = None
+    display_color: Optional[str] = None
+    is_all_day: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class AppointmentSettingsBase(BaseModel):
+    """Configuration de disponibilite agenda."""
+
+    timezone: str = "Europe/Paris"
+    work_day_start: time = Field(default=time(hour=8, minute=30))
+    work_day_end: time = Field(default=time(hour=18, minute=0))
+    slot_minutes: int = Field(default=60, ge=15, le=480)
+    monday_enabled: bool = True
+    tuesday_enabled: bool = True
+    wednesday_enabled: bool = True
+    thursday_enabled: bool = True
+    friday_enabled: bool = True
+    saturday_enabled: bool = False
+    sunday_enabled: bool = False
+
+
+class AppointmentSettingsResponse(AppointmentSettingsBase):
+    """Parametres agenda retournes par l'API."""
+
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AppointmentNonWorkingDayCreate(BaseModel):
+    """Creation d'un jour non travaille."""
+
+    date: date
+    label: str = Field(..., min_length=1, max_length=255)
+
+
+class AppointmentNonWorkingDayResponse(AppointmentNonWorkingDayCreate):
+    """Jour non travaille retourne par l'API."""
+
+    id: int
+    created_at: datetime
+
     class Config:
         from_attributes = True
 

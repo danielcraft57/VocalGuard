@@ -1,0 +1,95 @@
+intents:
+  - name: salutation
+    keywords: ["bonjour", "salut", "allo", "hello", "bonsoir"]
+    response: "Bonjour, ici DanielCraft. Je vous appelle pour voir si votre entreprise peut gagner en visibilite et en demandes de contact."
+    filename: ivr_dc_bonjour.wav
+    priority: 30
+
+  - name: presentation
+    keywords: ["vous etes qui", "qui est a l appareil", "c est pour quoi", "qui appelle"]
+    response: "Je suis developpeur full-stack chez DanielCraft. J accompagne les entreprises sur site vitrine, SEO Google et SEO pour ChatGPT."
+    filename: ivr_dc_presentation.wav
+    priority: 29
+
+  - name: besoin
+    keywords: ["que proposez vous", "vous proposez quoi", "de quoi vous parlez", "objectif"]
+    response: "L idee est simple: verifier en deux minutes si vous pouvez obtenir plus de contacts avec un site plus clair et une meilleure visibilite."
+    filename: ivr_dc_besoin.wav
+    priority: 28
+
+  - name: offre_site_vitrine
+    keywords: ["site vitrine", "site web", "landing page", "refonte"]
+    response: "Le pack site vitrine commence a 490 euros, responsive, clair et oriente conversion, avec 14 jours de support."
+    filename: ivr_dc_site_vitrine.wav
+    priority: 27
+
+  - name: offre_identite
+    keywords: ["identite", "charte", "reseaux sociaux", "image de marque"]
+    response: "Le pack identite et visibilite est a 990 euros, pour une image coherente sur site, reseaux et documents."
+    filename: ivr_dc_identite.wav
+    priority: 26
+
+  - name: offre_seo
+    keywords: ["seo", "google", "chatgpt", "assistant ia", "referencement"]
+    response: "Le pack SEO Google plus ChatGPT est a 699 euros, avec audit, corrections et optimisation de contenu."
+    filename: ivr_dc_seo.wav
+    priority: 25
+
+  - name: delai
+    keywords: ["delai", "combien de temps", "livraison", "quand c est pret"]
+    response: "Pour un site vitrine, le delai habituel est de cinq a huit jours selon les contenus disponibles."
+    filename: ivr_dc_delai.wav
+    priority: 24
+
+  - name: devis
+    keywords: ["devis", "chiffrage", "estimation", "prix"]
+    response: "Je peux vous faire un devis gratuit sous vingt-quatre heures, sans engagement."
+    filename: ivr_dc_devis.wav
+    priority: 23
+
+  - name: objection_pas_temps
+    keywords: ["pas le temps", "occupe", "rappelez plus tard", "pas maintenant"]
+    response: "Je comprends. Quel est le meilleur moment pour un rappel de dix minutes: ce soir ou demain matin ?"
+    filename: ivr_dc_objection_temps.wav
+    priority: 35
+
+  - name: objection_pas_interesse
+    keywords: ["pas interesse", "non merci", "inutile", "pas besoin"]
+    response: "Je comprends. Avant de vous laisser, est-ce que gagner plus de demandes clients en ligne est un sujet pour vous cette annee ?"
+    filename: ivr_dc_objection_interet.wav
+    priority: 34
+
+  - name: objection_deja_equipe
+    keywords: ["deja une agence", "deja un prestataire", "deja accompagne", "deja un freelance"]
+    response: "Tres bien, je ne remets pas votre existant en cause. Je peux juste faire un regard externe rapide pour identifier des gains simples."
+    filename: ivr_dc_objection_equipe.wav
+    priority: 33
+
+  - name: objection_budget
+    keywords: ["pas de budget", "trop cher", "budget serre", "pas possible maintenant"]
+    response: "Compris. On peut avancer par etapes avec les actions les plus rentables en premier."
+    filename: ivr_dc_objection_budget.wav
+    priority: 32
+
+  - name: prise_rdv
+    keywords: ["ok pour rendez vous", "on peut en parler", "envoyez un creneau", "rendez vous"]
+    response: "Parfait. Je vous propose un echange de quinze minutes pour cadrer besoin, budget et priorites."
+    filename: ivr_dc_rdv.wav
+    priority: 22
+
+  - name: contact
+    keywords: ["telephone", "email", "comment vous joindre", "ou etes vous", "metz"]
+    response: "DanielCraft est base a Metz et travaille aussi a distance. Je peux vous envoyer un recap par email et proposer un creneau."
+    filename: ivr_dc_contact.wav
+    priority: 20
+
+default_intent:
+  name: incompris
+  response: "Je n ai pas bien compris. Vous pouvez parler de site vitrine, SEO, budget, delai, devis ou rendez vous."
+  filename: ivr_dc_incompris.wav
+
+exit_intent:
+  name: fin
+  keywords: ["au revoir", "bye", "quitter", "terminer", "c est tout"]
+  response: "Merci pour votre temps. Bonne journee."
+  filename: ivr_dc_fin.wav

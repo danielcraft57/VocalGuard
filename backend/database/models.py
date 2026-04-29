@@ -4,7 +4,7 @@ Modèles de base de données SQLAlchemy
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, JSON, Float, Table
+from sqlalchemy import Column, Integer, String, DateTime, Date, Boolean, Text, ForeignKey, JSON, Float, Table, Time, UniqueConstraint
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -351,6 +351,8 @@ class Appointment(Base):
     id = Column(Integer, primary_key=True, index=True)
     
     customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    source_call_id = Column(Integer, ForeignKey("calls.id"), nullable=True)
+    entreprise_id = Column(Integer, ForeignKey("entreprises.id", ondelete="CASCADE"), nullable=True, index=True)
     phone_number = Column(String(20), index=True, nullable=True)
     
     title = Column(String(255), nullable=False)
@@ -359,11 +361,52 @@ class Appointment(Base):
     location = Column(String(255), nullable=True)
     status = Column(String(50), default="scheduled")
     service_type = Column(String(100), nullable=True)
+    agenda_tag = Column(String(50), nullable=True)
+    display_icon = Column(String(50), nullable=True)
+    display_color = Column(String(20), nullable=True)
+    is_all_day = Column(Boolean, nullable=False, default=False)
     notes = Column(Text, nullable=True)
     
     created_at = Column(DateTime, default=datetime.utcnow)
     
     customer = relationship("Customer", back_populates="appointments")
+    source_call = relationship("Call")
+    entreprise = relationship("Entreprise")
+
+
+class AppointmentSettings(Base):
+    """Parametres globaux d'agenda (horaires de travail et duree par defaut)."""
+
+    __tablename__ = "appointment_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timezone = Column(String(64), nullable=False, default="Europe/Paris")
+    work_day_start = Column(Time, nullable=False)
+    work_day_end = Column(Time, nullable=False)
+    slot_minutes = Column(Integer, nullable=False, default=60)
+    monday_enabled = Column(Boolean, nullable=False, default=True)
+    tuesday_enabled = Column(Boolean, nullable=False, default=True)
+    wednesday_enabled = Column(Boolean, nullable=False, default=True)
+    thursday_enabled = Column(Boolean, nullable=False, default=True)
+    friday_enabled = Column(Boolean, nullable=False, default=True)
+    saturday_enabled = Column(Boolean, nullable=False, default=False)
+    sunday_enabled = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AppointmentNonWorkingDay(Base):
+    """Journee indisponible (ferie, conge, fermeture exceptionnelle)."""
+
+    __tablename__ = "appointment_non_working_days"
+    __table_args__ = (
+        UniqueConstraint("date", name="uq_appointment_non_working_day_date"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, nullable=False, index=True)
+    label = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Quote(Base):

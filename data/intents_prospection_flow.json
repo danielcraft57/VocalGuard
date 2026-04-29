@@ -1,0 +1,108 @@
+{
+  "intents": [
+    {
+      "tag": "greeting",
+      "patterns": [
+        "bonjour",
+        "salut",
+        "allo",
+        "hello"
+      ],
+      "responses": [
+        "Bonjour, ici {{agent_name}} de {{company_name}}. Est-ce que je vous appelle au bon moment ?",
+        "Bonjour, je me permets de vous appeler de la part de {{company_name}}. Vous avez une minute ?"
+      ]
+    },
+    {
+      "tag": "ask_identity",
+      "patterns": [
+        "qui est a l appareil",
+        "vous etes qui",
+        "c est pour quoi",
+        "de quel service appelez vous"
+      ],
+      "responses": [
+        "Je suis {{agent_name}} de {{company_name}}, on aide les entreprises a {{value_prop_short}}.",
+        "Je vous appelle de {{company_name}}, specialise dans {{domain}} pour les professionnels."
+      ]
+    },
+    {
+      "tag": "qualification_need",
+      "patterns": [
+        "de quoi avez vous besoin",
+        "quel est votre besoin",
+        "pourquoi vous m appelez",
+        "qu est ce que vous proposez"
+      ],
+      "responses": [
+        "L idee est simple: voir en 2 questions si notre solution peut vous faire gagner du temps sur {{pain_point}}.",
+        "Je souhaite juste verifier rapidement si vous rencontrez ce sujet: {{pain_point}}."
+      ]
+    },
+    {
+      "tag": "budget_question",
+      "patterns": [
+        "combien ca coute",
+        "quel est le prix",
+        "c est payant",
+        "quel tarif"
+      ],
+      "responses": [
+        "Le tarif depend surtout de votre volume et de vos besoins. Le plus utile est un court echange pour vous donner un chiffrage juste.",
+        "On a plusieurs formules selon votre usage. Je peux vous proposer une estimation apres 10 minutes d audit."
+      ]
+    },
+    {
+      "tag": "decision_maker",
+      "patterns": [
+        "je ne suis pas decideur",
+        "ce n est pas moi qui decide",
+        "il faut voir avec mon responsable",
+        "je dois demander a mon associe"
+      ],
+      "responses": [
+        "Merci pour l info. Qui serait la meilleure personne a contacter pour ce sujet ?",
+        "Compris. Pouvez-vous me partager le bon contact ou me confirmer a quel moment le joindre ?"
+      ]
+    },
+    {
+      "tag": "book_appointment",
+      "patterns": [
+        "ok pour un rendez vous",
+        "on peut planifier",
+        "je suis disponible",
+        "envoyez moi un creneau"
+      ],
+      "responses": [
+        "Parfait, je vous propose un echange de 15 minutes. Vous preferez plutot ce matin ou cet apres-midi ?",
+        "Super, on bloque un creneau. Quel jour vous convient le mieux cette semaine ?"
+      ]
+    },
+    {
+      "tag": "send_email",
+      "patterns": [
+        "envoyez moi un mail",
+        "envoyez la doc",
+        "je veux plus d informations par email",
+        "partagez une presentation"
+      ],
+      "responses": [
+        "Avec plaisir. Je vous envoie un email clair avec les points cles et je vous propose un creneau pour en parler.",
+        "Bien sur, je vous transmets une synthese par email. Quelle est la meilleure adresse pour vous ?"
+      ]
+    },
+    {
+      "tag": "closing_polite",
+      "patterns": [
+        "merci au revoir",
+        "bonne journee",
+        "bonne soiree",
+        "on s arrete la"
+      ],
+      "responses": [
+        "Merci pour votre temps, bonne journee a vous.",
+        "Merci beaucoup, je reste disponible si besoin. Excellente journee."
+      ]
+    }
+  ]
+}

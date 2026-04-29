@@ -5,31 +5,54 @@ param(
 
 Write-Host "Démarrage de VocalGuard..." -ForegroundColor Green
 
-# Nettoyage préventif: tuer les anciens backend/celery résiduels
-try {
-    $stale = Get-CimInstance Win32_Process | Where-Object {
-        ($_.Name -match "python|python.exe|conda.exe|cmd.exe|powershell.exe") -and
-        $_.CommandLine -and
-        (
-            $_.CommandLine -match "backend\.main:app" -or
-            $_.CommandLine -match "celery\s+-A\s+backend\.celery_app\.celery_app\s+worker"
-        )
-    }
+$PROJECT_ROOT = (Get-Location).Path
 
-    if ($stale -and $stale.Count -gt 0) {
-        Write-Host "Arrêt des anciens processus backend/celery..." -ForegroundColor Yellow
-        foreach ($p in $stale) {
-            try {
-                Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
-                Write-Host (" - PID {0} stoppé" -f $p.ProcessId) -ForegroundColor DarkGray
-            } catch {
-                # ignorer
+function Stop-VocalGuardProcesses {
+    param(
+        [string]$Reason = "Nettoyage des processus"
+    )
+
+    try {
+        $stale = Get-CimInstance Win32_Process | Where-Object {
+            $_.CommandLine -and (
+                (
+                    $_.Name -match "python|python.exe|pythonw.exe|celery.exe|conda.exe" -and
+                    (
+                        $_.CommandLine -match [regex]::Escape($PROJECT_ROOT) -or
+                        $_.CommandLine -match "backend\.main:app" -or
+                        $_.CommandLine -match "celery\s+-A\s+backend\.celery_app\.celery_app\s+worker" -or
+                        $_.CommandLine -match "conda\s+run\s+-n\s+vocalguard"
+                    )
+                ) -or
+                (
+                    $_.Name -match "cmd.exe|powershell.exe|pwsh.exe" -and
+                    (
+                        $_.CommandLine -match "backend\.main:app" -or
+                        $_.CommandLine -match "celery\s+-A\s+backend\.celery_app\.celery_app\s+worker" -or
+                        $_.CommandLine -match "conda\s+activate\s+vocalguard"
+                    )
+                )
+            )
+        }
+
+        if ($stale -and $stale.Count -gt 0) {
+            Write-Host "$Reason..." -ForegroundColor Yellow
+            foreach ($p in $stale) {
+                try {
+                    Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+                    Write-Host (" - PID {0} stoppé ({1})" -f $p.ProcessId, $p.Name) -ForegroundColor DarkGray
+                } catch {
+                    # ignorer
+                }
             }
         }
+    } catch {
+        Write-Host "Impossible de nettoyer automatiquement les processus (continuation)." -ForegroundColor Yellow
     }
-} catch {
-    Write-Host "Impossible de nettoyer automatiquement les anciens processus (continuation)." -ForegroundColor Yellow
 }
+
+# Nettoyage préventif: tuer les anciens processus Python/Celery/Conda liés à VocalGuard
+Stop-VocalGuardProcesses -Reason "Arrêt des anciens processus Python/Celery/Conda"
 
 # Détecter et utiliser conda si disponible, sinon utiliser venv
 $USE_CONDA = $false
@@ -218,7 +241,6 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
 }
 
 # Lancer backend + frontend dans 2 fenêtres PowerShell
-$PROJECT_ROOT = (Get-Location).Path
 $FRONTEND_DIR = Join-Path $PROJECT_ROOT "frontend"
 
 if (-not (Test-Path $FRONTEND_DIR)) {
@@ -276,6 +298,7 @@ if ($SingleWindow) {
                 Stop-Process -Id $celeryProc.Id -Force -ErrorAction SilentlyContinue
             }
         } catch {}
+        Stop-VocalGuardProcesses -Reason "Nettoyage final (Ctrl+C)"
     }
 } else {
     Start-Process -FilePath "powershell" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", $backendLaunch)
@@ -286,5 +309,14 @@ if ($SingleWindow) {
     Write-Host "Frontend: http://localhost:3000" -ForegroundColor Cyan
     Write-Host "Celery: worker OSINT actif (pool=solo)" -ForegroundColor Cyan
     Write-Host "Trois fenêtres ont été ouvertes (backend + frontend + celery)." -ForegroundColor Green
+    Write-Host "Appuie sur Ctrl+C dans cette fenêtre pour tout nettoyer." -ForegroundColor Yellow
+
+    try {
+        while ($true) {
+            Start-Sleep -Seconds 1
+        }
+    } finally {
+        Stop-VocalGuardProcesses -Reason "Nettoyage final (Ctrl+C)"
+    }
 }
 

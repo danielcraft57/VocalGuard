@@ -64,7 +64,7 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(config_routes.router, prefix="/api/v1", tags=["config"])
     app.include_router(osint.router, prefix="/api/v1", tags=["osint"])
     app.include_router(voice_test.router, prefix="/api/v1", tags=["voice-test"])
-    app.include_router(appointments.router, prefix="/api/v1", tags=["appointments"])
+    app.include_router(appointments.router, prefix="/api/v1", tags=["agenda"])
     app.include_router(quotes.router, prefix="/api/v1", tags=["quotes"])
     app.include_router(customers.router, prefix="/api/v1", tags=["customers"])
     app.include_router(entreprises.router, prefix="/api/v1", tags=["entreprises"])
