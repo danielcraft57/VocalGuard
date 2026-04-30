@@ -50,7 +50,7 @@ async def create_quote(
     total_ht, total_ttc = _compute_totals(payload.lines)
     
     quote = Quote(
-        customer_id=payload.customer_id,
+        client_id=payload.client_id,
         phone_number=payload.phone_number,
         title=payload.title,
         lines=[line.model_dump() for line in payload.lines],

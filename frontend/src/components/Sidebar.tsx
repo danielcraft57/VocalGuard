@@ -39,9 +39,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen = false, onNavigate }) 
     { href: "/calls", label: "Appels", icon: "call" },
     { href: "/filtering", label: "Filtrage d'appels", icon: "phonelink_erase" },
     { href: "/agenda", label: "Agenda", icon: "calendar_month" },
+    { href: "/api", label: "API publique", icon: "api" },
     { href: "/quotes", label: "Devis", icon: "description" },
     { href: "/entreprises", label: "Entreprises", icon: "business" },
-    { href: "/customers", label: "Clients", icon: "groups" },
+    { href: "/clients", label: "Clients", icon: "groups" },
     { href: "/kb", label: "Base de connaissances", icon: "help_outline" },
     { href: "/simulator", label: "Simulateur d'appel", icon: "mic" },
     { href: "/settings", label: "Parametres", icon: "settings" }

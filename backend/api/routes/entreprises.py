@@ -18,6 +18,7 @@ from sqlalchemy import delete as sa_delete
 
 from backend.api.models import (
     EntrepriseCreate,
+    EntrepriseUpdate,
     EntrepriseResponse,
     EntrepriseListResponse,
     EntrepriseImportSummary,
@@ -27,6 +28,7 @@ from backend.api.models import (
 from backend.database.database import get_db
 from backend.database.models import (
     Entreprise,
+    EntrepriseEmail,
     EntrepriseImportBatch,
     EntrepriseImportRow,
     EntreprisePhoneAnalysis,
@@ -63,10 +65,38 @@ def _to_entreprise_response(e: Entreprise) -> EntrepriseResponse:
         "rating": e.rating,
         "reviews_count": e.reviews_count,
         "categories": [c.name for c in (e.categories or [])],
+        "emails": sorted([(x.email or "").strip() for x in (e.emails or []) if (x.email or "").strip()]),
         "created_at": e.created_at,
         "updated_at": e.updated_at,
     }
     return EntrepriseResponse.model_validate(payload)
+
+
+def _normalize_emails(values: List[str]) -> List[str]:
+    unique = set()
+    for item in values:
+        raw = (item or "").strip().lower()
+        if raw and "@" in raw:
+            unique.add(raw)
+    return sorted(unique)
+
+
+def _attach_entreprise_emails(db: Session, entreprise: Entreprise, emails: List[str]) -> None:
+    normalized = _normalize_emails(emails)
+    if not normalized:
+        entreprise.emails = set()
+        return
+    rows = db.query(EntrepriseEmail).filter(EntrepriseEmail.email.in_(normalized)).all()
+    existing_by_email = {row.email: row for row in rows}
+    linked = set(rows)
+    for email in normalized:
+        if email in existing_by_email:
+            continue
+        created = EntrepriseEmail(email=email)
+        db.add(created)
+        db.flush()
+        linked.add(created)
+    entreprise.emails = linked
 
 
 @router.get("/entreprises", response_model=EntrepriseListResponse)
@@ -212,8 +242,31 @@ async def create_entreprise(
     payload: EntrepriseCreate,
     db: Session = Depends(get_db),
 ) -> EntrepriseResponse:
-    e = Entreprise(**payload.model_dump())
+    data = payload.model_dump()
+    emails = data.pop("emails", [])
+    e = Entreprise(**data)
     db.add(e)
+    _attach_entreprise_emails(db, e, emails)
+    db.commit()
+    db.refresh(e)
+    return _to_entreprise_response(e)
+
+
+@router.patch("/entreprises/{entreprise_id}", response_model=EntrepriseResponse)
+async def update_entreprise(
+    entreprise_id: int,
+    payload: EntrepriseUpdate,
+    db: Session = Depends(get_db),
+) -> EntrepriseResponse:
+    e = db.get(Entreprise, entreprise_id)  # type: ignore[arg-type]
+    if not e:
+        raise HTTPException(status_code=404, detail="Entreprise introuvable")
+    updates = payload.model_dump(exclude_unset=True)
+    emails = updates.pop("emails", None)
+    for key, value in updates.items():
+        setattr(e, key, value)
+    if emails is not None:
+        _attach_entreprise_emails(db, e, emails)
     db.commit()
     db.refresh(e)
     return _to_entreprise_response(e)

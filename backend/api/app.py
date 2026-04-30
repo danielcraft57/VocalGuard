@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from loguru import logger
 
 from backend.core.config import Config
@@ -22,13 +22,15 @@ from backend.api.routes import (
     voice_test,
     appointments,
     quotes,
-    customers,
+    clients,
     entreprises,
     settings as settings_routes,
     stats as stats_routes,
     block_rules as block_rules_routes,
     realtime,
     agenda_public,
+    public_api,
+    tokens,
 )
 from backend.database import database as db_module
 
@@ -67,7 +69,7 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(voice_test.router, prefix="/api/v1", tags=["voice-test"])
     app.include_router(appointments.router, prefix="/api/v1", tags=["agenda"])
     app.include_router(quotes.router, prefix="/api/v1", tags=["quotes"])
-    app.include_router(customers.router, prefix="/api/v1", tags=["customers"])
+    app.include_router(clients.router, prefix="/api/v1", tags=["clients"])
     app.include_router(entreprises.router, prefix="/api/v1", tags=["entreprises"])
     app.include_router(settings_routes.router, prefix="/api/v1", tags=["settings"])
     app.include_router(stats_routes.router, prefix="/api/v1", tags=["stats"])
@@ -75,6 +77,8 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(agenda_public.router, prefix="/api/v1", tags=["agenda-public"])
     # WebSocket temps reel (evenements d'appels, modem, etc.)
     app.include_router(realtime.router, tags=["realtime"])
+    app.include_router(public_api.router, prefix="/api/v1")
+    app.include_router(tokens.router, prefix="/api/v1")
     
     # Dossier qui accueille le front (build statique Next.js copié depuis `frontend/out`)
     # Resolve en absolu pour ne pas dépendre du répertoire de travail au lancement.
@@ -144,6 +148,11 @@ def create_app(config: Config) -> FastAPI:
     async def health():
         """Endpoint de santé"""
         return {"status": "healthy"}
+
+    @app.get("/api_doc", include_in_schema=False)
+    async def api_doc_redirect():
+        """Raccourci vers la documentation API."""
+        return RedirectResponse(url="/api/v1/tokens/docs")
 
     @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
     async def root():

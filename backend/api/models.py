@@ -180,7 +180,7 @@ CallResponse.model_rebuild()
 class AppointmentBase(BaseModel):
     """Champs communs pour un rendez-vous."""
     
-    customer_id: Optional[int] = None
+    client_id: Optional[int] = None
     source_call_id: Optional[int] = None
     entreprise_id: Optional[int] = None
     phone_number: Optional[str] = None
@@ -214,7 +214,7 @@ class AppointmentResponse(AppointmentBase):
 class AppointmentUpdate(BaseModel):
     """Mise a jour partielle d'un rendez-vous."""
 
-    customer_id: Optional[int] = None
+    client_id: Optional[int] = None
     entreprise_id: Optional[int] = None
     phone_number: Optional[str] = None
     title: Optional[str] = None
@@ -285,7 +285,7 @@ class QuoteLine(BaseModel):
 class QuoteBase(BaseModel):
     """Champs communs pour un devis."""
     
-    customer_id: Optional[int] = None
+    client_id: Optional[int] = None
     phone_number: Optional[str] = None
     title: str
     lines: List[QuoteLine]
@@ -309,21 +309,25 @@ class QuoteResponse(QuoteBase):
         from_attributes = True
 
 
-class CustomerBase(BaseModel):
-    """Informations de base sur un client."""
-    
+# (Rebuild pydantic model refs)
+QuoteResponse.model_rebuild()
+
+
+class ClientBase(BaseModel):
+    """Informations de base sur un client (personne)."""
+
+    entreprise_id: Optional[int] = None
     phone_number: str
     email: Optional[str] = None
     name: Optional[str] = None
-    company_name: Optional[str] = None
     notes: Optional[str] = None
 
 
-class CustomerCreate(CustomerBase):
+class ClientCreate(ClientBase):
     """Creation d'un client."""
 
 
-class CustomerResponse(CustomerBase):
+class ClientResponse(ClientBase):
     """Client retourne par l'API."""
     
     id: int
@@ -332,6 +336,12 @@ class CustomerResponse(CustomerBase):
     
     class Config:
         from_attributes = True
+
+
+# Backward compatibility (ancien nom)
+CustomerBase = ClientBase
+CustomerCreate = ClientCreate
+CustomerResponse = ClientResponse
 
 
 class EntrepriseBase(BaseModel):
@@ -348,10 +358,28 @@ class EntrepriseBase(BaseModel):
     latitude: Optional[float] = None
     rating: Optional[float] = None
     reviews_count: Optional[int] = None
+    emails: List[str] = []
 
 
 class EntrepriseCreate(EntrepriseBase):
     """Creation manuelle d'une entreprise."""
+
+
+class EntrepriseUpdate(BaseModel):
+    """Mise a jour d'une entreprise."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    website: Optional[str] = Field(None, max_length=500)
+    phone_number: Optional[str] = Field(None, max_length=64)
+    country: Optional[str] = Field(None, max_length=128)
+    city: Optional[str] = Field(None, max_length=128)
+    address_1: Optional[str] = Field(None, max_length=500)
+    address_2: Optional[str] = Field(None, max_length=500)
+    longitude: Optional[float] = None
+    latitude: Optional[float] = None
+    rating: Optional[float] = None
+    reviews_count: Optional[int] = None
+    emails: Optional[List[str]] = None
 
 
 class EntrepriseResponse(EntrepriseBase):
@@ -425,6 +453,84 @@ class EntreprisePhoneAnalysisResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class PublicApiTokenCreate(BaseModel):
+    """Creation d'un token API public."""
+
+    app_url: str = Field(..., min_length=3, max_length=500)
+    name: Optional[str] = Field(default=None, max_length=255)
+    can_read_agenda: bool = True
+    can_write_agenda: bool = True
+    can_write_entreprises: bool = True
+    can_manage_tokens: bool = False
+    can_read_customers: bool = False
+    can_write_customers: bool = False
+    can_read_quotes: bool = False
+    can_write_quotes: bool = False
+    can_read_calls: bool = False
+
+
+class PublicApiTokenResponse(BaseModel):
+    """Token API public retourne par l'API."""
+
+    id: int
+    name: str
+    app_url: Optional[str] = None
+    token: Optional[str] = None
+    token_preview: Optional[str] = None
+    is_active: bool
+    can_read_agenda: bool
+    can_write_agenda: bool
+    can_write_entreprises: bool
+    can_manage_tokens: bool
+    can_read_customers: bool = False
+    can_write_customers: bool = False
+    can_read_quotes: bool = False
+    can_write_quotes: bool = False
+    can_read_calls: bool = False
+    created_at: datetime
+    last_used_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class PublicApiTokenUpdate(BaseModel):
+    """Mise a jour d'un token API public (merge)."""
+
+    name: Optional[str] = Field(default=None, max_length=255)
+    app_url: Optional[str] = Field(default=None, max_length=500)
+    is_active: Optional[bool] = None
+    can_read_agenda: Optional[bool] = None
+    can_write_agenda: Optional[bool] = None
+    can_write_entreprises: Optional[bool] = None
+    can_manage_tokens: Optional[bool] = None
+    can_read_customers: Optional[bool] = None
+    can_write_customers: Optional[bool] = None
+    can_read_quotes: Optional[bool] = None
+    can_write_quotes: Optional[bool] = None
+    can_read_calls: Optional[bool] = None
+
+
+class PublicAgendaBookingCreate(BaseModel):
+    """Payload formulaire public pour reserver un creneau agenda."""
+
+    preferred_date: date
+    preferred_time: str = Field(..., min_length=4, max_length=5, pattern=r"^\d{2}:\d{2}$")
+    service: Optional[str] = None
+    budget: Optional[str] = None
+    project_type: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=255)
+    company_name: Optional[str] = Field(None, max_length=255)
+    website: Optional[str] = Field(None, max_length=500)
+    city: Optional[str] = Field(None, max_length=128)
+    country: Optional[str] = Field(None, max_length=128)
+    address_1: Optional[str] = Field(None, max_length=500)
+    email: Optional[str] = Field(None, max_length=255)
+    emails: List[str] = []
+    phone: Optional[str] = Field(None, max_length=64)
+    message: Optional[str] = None
 
 
 class SettingsResponse(BaseModel):

@@ -37,6 +37,7 @@ class Config(BaseSettings):
     api_host: str = Field(default="0.0.0.0")
     api_port: int = Field(default=8000)
     api_debug: bool = Field(default=False)
+    api_public_admin_token: Optional[str] = Field(default=None)
     public_base_url: str = Field(default="http://localhost:8000")
     agenda_public_secret: str = Field(default="change-me")
 

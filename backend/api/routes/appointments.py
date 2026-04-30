@@ -120,7 +120,7 @@ async def create_appointment(payload: AppointmentCreate, db: Session = Depends(g
     settings = _get_or_create_settings(db)
     _assert_appointment_allowed(db, settings, payload.start_time, payload.end_time)
     appointment = Appointment(
-        customer_id=payload.customer_id,
+        client_id=payload.client_id,
         source_call_id=payload.source_call_id,
         entreprise_id=payload.entreprise_id,
         phone_number=payload.phone_number,
