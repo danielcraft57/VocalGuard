@@ -32,6 +32,25 @@ python scripts/test_patterns_voice.py
 
 Idéal pour tester un IVR type téléphone fixe basé sur des patterns et intents. Voir [config/README_INTENTS_IVR.md](../config/README_INTENTS_IVR.md).
 
+### benchmark_intent_vocal.py – Benchmark latence (micro/casque)
+
+Mesure les latences de bout en bout:
+micro → STT → ML intents → choix réponse → TTS → lecture audio.
+
+```bash
+python scripts/benchmark_intent_vocal.py --log-jsonl
+```
+
+Options utiles:
+
+- `--stt vosk|whisper` : forcer le moteur STT
+- `--tts pyttsx3|gtts|edgetts` : forcer le moteur TTS
+- `--device <index>` : choisir le micro (sounddevice)
+- `--turns 20` : nombre de tours
+- `--max-seconds 8` : durée max d'écoute par tour
+
+Astuce: pour de bons résultats de latence, privilégier `--stt vosk`.
+
 ### generate_intents_tts_examples.py – Exemples TTS à partir des intents (edge-tts)
 
 ```bash

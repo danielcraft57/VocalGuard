@@ -99,6 +99,18 @@ uvicorn backend.main:app --reload
 Le backend utilise par défaut une base SQLite locale `vocalguard.db` à la racine.  
 En production, vous pouvez passer sur PostgreSQL en ajustant `database_url` dans la configuration.
 
+### Profils d'environnement (`.env` et `.env.prod`)
+
+- Mode standard: `Config` charge `.env`
+- Mode production-like local: `Config` charge `.env.prod` si `VG_ENV=prod`
+
+Exemple PowerShell:
+
+```powershell
+$env:VG_ENV="prod"
+python -m backend.main
+```
+
 ## Structure du projet
 
 ```text

@@ -51,6 +51,7 @@ logs/
 
 # Config sensibles / locales
 .env
+.env.prod
 env.example
 config/.env
 config/config.yaml

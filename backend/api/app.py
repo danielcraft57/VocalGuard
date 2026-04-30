@@ -28,6 +28,7 @@ from backend.api.routes import (
     stats as stats_routes,
     block_rules as block_rules_routes,
     realtime,
+    agenda_public,
 )
 from backend.database import database as db_module
 
@@ -71,6 +72,7 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(settings_routes.router, prefix="/api/v1", tags=["settings"])
     app.include_router(stats_routes.router, prefix="/api/v1", tags=["stats"])
     app.include_router(block_rules_routes.router, prefix="/api/v1", tags=["block-rules"])
+    app.include_router(agenda_public.router, prefix="/api/v1", tags=["agenda-public"])
     # WebSocket temps reel (evenements d'appels, modem, etc.)
     app.include_router(realtime.router, tags=["realtime"])
     

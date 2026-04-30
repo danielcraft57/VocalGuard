@@ -39,6 +39,19 @@ Réglages disponibles:
   - tag -> couleur (`display_color`)
 - La couleur par défaut côté modale est `Bleu primaire` (`#38bdf8`).
 
+## API publique (email HTML)
+
+- `POST /api/v1/agenda/public/{appointment_id}/send-email`
+  - envoie un email HTML avec 3 liens sécurisés: valider / annuler / supprimer
+- `GET /api/v1/agenda/public/action?action=confirm|cancel|delete&token=...`
+  - exécute l'action publique selon le token signé
+
+Variables d'environnement utiles:
+
+- `PUBLIC_BASE_URL`
+- `AGENDA_PUBLIC_SECRET`
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_USE_TLS`, `SMTP_SENDER`
+
 ## Compatibilité
 
 Les anciens endpoints `"/api/v1/appointments"` restent temporairement supportés côté backend (hors schéma OpenAPI) pour éviter de casser les clients existants.

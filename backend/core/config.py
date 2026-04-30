@@ -24,6 +24,7 @@ class Config(BaseSettings):
     # Chemins (BASE_PATH en env pour forcer, sinon auto = repertoire projet si config/ ou backend/ present)
     base_path: Path = Field(default_factory=_default_base_path)
     config_path: Optional[Path] = None
+    vg_env: str = Field(default="dev")
     
     # Base de données
     database_url: str = Field(default="sqlite:///vocalguard.db")
@@ -36,6 +37,16 @@ class Config(BaseSettings):
     api_host: str = Field(default="0.0.0.0")
     api_port: int = Field(default=8000)
     api_debug: bool = Field(default=False)
+    public_base_url: str = Field(default="http://localhost:8000")
+    agenda_public_secret: str = Field(default="change-me")
+
+    # Email SMTP (notifications agenda)
+    smtp_host: Optional[str] = Field(default=None)
+    smtp_port: int = Field(default=587)
+    smtp_user: Optional[str] = Field(default=None)
+    smtp_password: Optional[str] = Field(default=None)
+    smtp_use_tls: bool = Field(default=True)
+    smtp_sender: Optional[str] = Field(default=None)
     
     # Modem
     modem_port: Optional[str] = Field(default=None)  # Auto-détection si None
@@ -92,9 +103,13 @@ class Config(BaseSettings):
     def __init__(self, config_path: Optional[Path] = None, **kwargs):
         """Initialise la configuration. Le .env est chargé depuis la racine du projet (base_path)."""
         base = _default_base_path()
-        env_file = base / ".env"
-        if env_file.exists():
-            kwargs.setdefault("_env_file", str(env_file))
+        requested_env = os.environ.get("VG_ENV", kwargs.get("vg_env", "dev")).strip().lower()
+        # Priorité: .env.<env> (ex: .env.prod), sinon fallback sur .env
+        candidate_files = [base / f".env.{requested_env}", base / ".env"]
+        for env_file in candidate_files:
+            if env_file.exists():
+                kwargs.setdefault("_env_file", str(env_file))
+                break
         super().__init__(**kwargs)
 
         if config_path:

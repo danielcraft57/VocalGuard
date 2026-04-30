@@ -27,8 +27,12 @@ async def init_database(database_url: str) -> None:
 
     logger.info(f"Initialisation de la base de données: {database_url}")
 
-    # Engine synchrone
-    engine = create_engine(database_url, echo=False)
+    # Engine synchrone (compatible SQLite et PostgreSQL)
+    engine_kwargs = {"echo": False, "pool_pre_ping": True}
+    if database_url.startswith("sqlite"):
+        # SQLite: same-thread off pour usage API + workers locaux
+        engine_kwargs["connect_args"] = {"check_same_thread": False}
+    engine = create_engine(database_url, **engine_kwargs)
     if database_url.startswith("sqlite"):
         @event.listens_for(engine, "connect")
         def _set_sqlite_pragma(dbapi_connection, connection_record):  # type: ignore[unused-argument]
@@ -54,6 +58,12 @@ def _apply_lightweight_migrations(engine) -> None:
     Cette étape complète le schéma quand des colonnes ont été ajoutées
     après la première création de la base locale.
     """
+    # Migrations runtime limitées à SQLite dev.
+    # En PostgreSQL, préférer des migrations versionnées (Alembic) pour éviter
+    # les divergences de syntaxe et garder un schéma maîtrisé.
+    if engine.dialect.name != "sqlite":
+        return
+
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
     if "appointments" not in table_names:
@@ -77,7 +87,7 @@ def _apply_lightweight_migrations(engine) -> None:
             conn.execute(text("ALTER TABLE appointments ADD COLUMN display_color VARCHAR(20)"))
             logger.info("Migration légère appliquée: appointments.display_color ajouté")
         if "is_all_day" not in columns:
-            conn.execute(text("ALTER TABLE appointments ADD COLUMN is_all_day BOOLEAN NOT NULL DEFAULT 0"))
+            conn.execute(text("ALTER TABLE appointments ADD COLUMN is_all_day BOOLEAN NOT NULL DEFAULT false"))
             logger.info("Migration légère appliquée: appointments.is_all_day ajouté")
 
 
