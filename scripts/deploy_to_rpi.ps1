@@ -416,16 +416,15 @@ server {
 
     if ($FixNginxLegacyWarnings) {
         Info "Applying optional cleanup on legacy nginx vhosts (safe best-effort)"
-        $cleanupCmd = @'
-if [ -f /etc/nginx/sites-enabled/danielcraft.fr ]; then
-  sudo sed -i -E 's/listen ([0-9]+) ssl http2;/listen \1 ssl;/g' /etc/nginx/sites-enabled/danielcraft.fr
-  sudo sed -i -E 's/listen \[::\]:([0-9]+) ssl http2;/listen [::]:\1 ssl;/g' /etc/nginx/sites-enabled/danielcraft.fr
-  grep -q "http2 on;" /etc/nginx/sites-enabled/danielcraft.fr || sudo sed -i '/listen \[::\]:443 ssl;/a\    http2 on;' /etc/nginx/sites-enabled/danielcraft.fr
-  sudo sed -i -E 's/^\s*ssl_stapling\s+on;/    # ssl_stapling on; # disabled by deploy script (no OCSP in cert)/' /etc/nginx/sites-enabled/danielcraft.fr
-  sudo sed -i -E 's/^\s*ssl_stapling_verify\s+on;/    # ssl_stapling_verify on; # disabled by deploy script (no OCSP in cert)/' /etc/nginx/sites-enabled/danielcraft.fr
-fi
-'@
-        Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command "$cleanupCmd`n`nsudo nginx -t && sudo systemctl reload nginx"
+        $cleanupCmd = "if [ -f /etc/nginx/sites-enabled/danielcraft.fr ]; then " +
+            "sudo sed -i -E 's/listen ([0-9]+) ssl http2;/listen \1 ssl;/g' /etc/nginx/sites-enabled/danielcraft.fr; " +
+            "sudo sed -i -E 's/listen \[::\]:([0-9]+) ssl http2;/listen [::]:\1 ssl;/g' /etc/nginx/sites-enabled/danielcraft.fr; " +
+            "grep -q 'http2 on;' /etc/nginx/sites-enabled/danielcraft.fr || sudo sed -i '/listen \[::\]:443 ssl;/a\    http2 on;' /etc/nginx/sites-enabled/danielcraft.fr; " +
+            "sudo sed -i -E 's/^\s*ssl_stapling\s+on;/    # ssl_stapling on; # disabled by deploy script (no OCSP in cert)/' /etc/nginx/sites-enabled/danielcraft.fr; " +
+            "sudo sed -i -E 's/^\s*ssl_stapling_verify\s+on;/    # ssl_stapling_verify on; # disabled by deploy script (no OCSP in cert)/' /etc/nginx/sites-enabled/danielcraft.fr; " +
+            "fi; " +
+            "sudo nginx -t && sudo systemctl reload nginx"
+        Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command $cleanupCmd
     }
 
     if ($EnableHttps) {
