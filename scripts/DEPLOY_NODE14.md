@@ -31,7 +31,16 @@ Options utiles :
 .\scripts\deploy_to_rpi.ps1 -NoSystemDeps
 .\scripts\deploy_to_rpi.ps1 -ConfigureNginx -RestartService -HealthCheck
 .\scripts\deploy_to_rpi.ps1 -RemoteDir "/opt/vocalguard"
+.\scripts\deploy_to_rpi.ps1 -ConfigureNginx -EnableHttps -CertbotEmail "admin@exemple.fr" -HealthCheck
+.\scripts\deploy_to_rpi.ps1 -ConfigureNginx -FixNginxLegacyWarnings -HealthCheck
 ```
+
+Par défaut, le script publie aussi les alias de domaine suivants côté Nginx:
+- `vocalguard.danielcraft.fr`
+- `phone.danielcraft.fr`
+- `repondeur.danielcraft.fr`
+
+Tu peux surcharger avec `RPI_DOMAIN_ALIASES` (liste CSV) ou `-DomainAliases`.
 
 ## Ce que fait le script
 

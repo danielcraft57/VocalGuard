@@ -12,6 +12,10 @@ param(
     [bool]$EnableModemTestService = $false,
     [switch]$NoSystemDeps,
     [switch]$ConfigureNginx,
+    [switch]$EnableHttps,
+    [switch]$FixNginxLegacyWarnings,
+    [string]$CertbotEmail = "",
+    [string]$CertbotCertName = "vocalguard-multidomain",
     [switch]$HealthCheck
 )
 
@@ -27,7 +31,7 @@ if (-not $AppServerName -or $AppServerName.Trim() -eq "") {
         # compat legacy
         $AppServerName = $env:RPI_SERVER.Trim()
     } else {
-        $AppServerName = "app-node.lan"
+        $AppServerName = "node11.lan"
     }
 }
 if (-not $AppServerUser -or $AppServerUser.Trim() -eq "") {
@@ -44,7 +48,7 @@ if (-not $NginxServerName -or $NginxServerName.Trim() -eq "") {
     if ($env:RPI_NGINX_SERVER -and $env:RPI_NGINX_SERVER.Trim() -ne "") {
         $NginxServerName = $env:RPI_NGINX_SERVER.Trim()
     } else {
-        $NginxServerName = "edge-node.lan"
+        $NginxServerName = "node12.lan"
     }
 }
 if (-not $NginxServerUser -or $NginxServerUser.Trim() -eq "") {
@@ -54,6 +58,19 @@ if (-not $NginxServerUser -or $NginxServerUser.Trim() -eq "") {
         $NginxServerUser = "pi"
     }
 }
+
+# Domain aliases: paramètres > variable d'env > defaults historiques
+if (($DomainAliases | Measure-Object).Count -eq 0) {
+    if ($env:RPI_DOMAIN_ALIASES -and $env:RPI_DOMAIN_ALIASES.Trim() -ne "") {
+        $DomainAliases = $env:RPI_DOMAIN_ALIASES.Split(",") | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
+    } else {
+        $DomainAliases = @(
+            "vocalguard.danielcraft.fr",
+            "phone.danielcraft.fr",
+            "repondeur.danielcraft.fr"
+        )
+    }
+}
 $AppRemoteHost = "$AppServerUser@$AppServerName"
 $NginxRemoteHost = "$NginxServerUser@$NginxServerName"
 
@@ -61,6 +78,36 @@ function Step([string]$text) { Write-Host $text -ForegroundColor Yellow }
 function Ok([string]$text) { Write-Host $text -ForegroundColor Green }
 function Info([string]$text) { Write-Host $text -ForegroundColor DarkGray }
 function Warn([string]$text) { Write-Host $text -ForegroundColor Red }
+
+function Invoke-SshStrict {
+    param(
+        [string]$RemoteHost,
+        [string]$Command,
+        [switch]$CaptureOutput
+    )
+    if ($CaptureOutput) {
+        $output = ssh "$RemoteHost" "$Command"
+        if ($LASTEXITCODE -ne 0) {
+            throw "Remote command failed on ${RemoteHost}: $Command"
+        }
+        return $output
+    }
+    ssh "$RemoteHost" "$Command"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Remote command failed on ${RemoteHost}: $Command"
+    }
+}
+
+function Copy-ScpStrict {
+    param(
+        [string]$Source,
+        [string]$Destination
+    )
+    scp -q "$Source" "$Destination"
+    if ($LASTEXITCODE -ne 0) {
+        throw "SCP failed: $Source -> $Destination"
+    }
+}
 
 function Install-RemoteService {
     param(
@@ -173,7 +220,7 @@ ssh "$AppRemoteHost" "cd $RemoteDir && grep -q '^DATABASE_URL=postgresql' .env |
 Ok "Production env synced"
 
 Step "[7/8] Install Python dependencies (venv)"
-ssh "$AppRemoteHost" "cd $RemoteDir && source venv/bin/activate && pip install -q --upgrade pip && pip install -q -r requirements.txt" | Out-Null
+Invoke-SshStrict -RemoteHost $AppRemoteHost -Command "cd $RemoteDir && source venv/bin/activate && python -m pip install -q --upgrade pip && python -m pip install -q -r requirements.txt"
 Ok "Dependencies installed"
 
 Step "[8/9] PostgreSQL readiness and service"
@@ -312,11 +359,125 @@ if ($ConfigureNginx) {
     $serverNameLine = ($serverNames -join " ")
     $proxyTarget = if ($AppServerName -and $AppServerName.Trim() -ne "") { "${AppServerName}:8000" } else { "127.0.0.1:8000" }
 
-    $nginxConfig = @"
+    $nginxConfigHttp = @"
 server {
     listen 80;
     listen [::]:80;
     server_name $serverNameLine;
+
+    client_max_body_size 25m;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location /_next/ {
+        proxy_pass http://$proxyTarget;
+        proxy_http_version 1.1;
+        proxy_set_header Host `$host;
+        proxy_set_header X-Real-IP `$remote_addr;
+        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto `$scheme;
+        expires 1h;
+        add_header Cache-Control "public, max-age=3600";
+    }
+
+    location /ws/ {
+        proxy_pass http://$proxyTarget;
+        proxy_http_version 1.1;
+        proxy_set_header Host `$host;
+        proxy_set_header X-Real-IP `$remote_addr;
+        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto `$scheme;
+        proxy_set_header Upgrade `$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    location / {
+        proxy_pass http://$proxyTarget;
+        proxy_http_version 1.1;
+        proxy_set_header Host `$host;
+        proxy_set_header X-Real-IP `$remote_addr;
+        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto `$scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 120s;
+        proxy_read_timeout 120s;
+    }
+}
+"@
+    $tmpNginx = Join-Path $env:TEMP "vocalguard_nginx.conf"
+    Set-Content -Path $tmpNginx -Value $nginxConfigHttp -Encoding UTF8
+    Copy-ScpStrict -Source $tmpNginx -Destination "${NginxRemoteHost}:/tmp/vocalguard_nginx.conf"
+    Remove-Item $tmpNginx -Force -ErrorAction SilentlyContinue
+    Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command "sudo mv /tmp/vocalguard_nginx.conf /etc/nginx/sites-available/vocalguard && sudo ln -sf /etc/nginx/sites-available/vocalguard /etc/nginx/sites-enabled/vocalguard && sudo nginx -t && sudo systemctl reload nginx"
+
+    if ($FixNginxLegacyWarnings) {
+        Info "Applying optional cleanup on legacy nginx vhosts (safe best-effort)"
+        $cleanupCmd = @'
+if [ -f /etc/nginx/sites-enabled/danielcraft.fr ]; then
+  sudo sed -i -E 's/listen ([0-9]+) ssl http2;/listen \1 ssl;/g' /etc/nginx/sites-enabled/danielcraft.fr
+  sudo sed -i -E 's/listen \[::\]:([0-9]+) ssl http2;/listen [::]:\1 ssl;/g' /etc/nginx/sites-enabled/danielcraft.fr
+  grep -q "http2 on;" /etc/nginx/sites-enabled/danielcraft.fr || sudo sed -i '/listen \[::\]:443 ssl;/a\    http2 on;' /etc/nginx/sites-enabled/danielcraft.fr
+  sudo sed -i -E 's/^\s*ssl_stapling\s+on;/    # ssl_stapling on; # disabled by deploy script (no OCSP in cert)/' /etc/nginx/sites-enabled/danielcraft.fr
+  sudo sed -i -E 's/^\s*ssl_stapling_verify\s+on;/    # ssl_stapling_verify on; # disabled by deploy script (no OCSP in cert)/' /etc/nginx/sites-enabled/danielcraft.fr
+fi
+'@
+        Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command "$cleanupCmd`n`nsudo nginx -t && sudo systemctl reload nginx"
+    }
+
+    if ($EnableHttps) {
+        if (-not $CertbotEmail -or $CertbotEmail.Trim() -eq "") {
+            if ($env:CERTBOT_EMAIL -and $env:CERTBOT_EMAIL.Trim() -ne "") {
+                $CertbotEmail = $env:CERTBOT_EMAIL.Trim()
+            } else {
+                throw "EnableHttps requires -CertbotEmail or env CERTBOT_EMAIL."
+            }
+        }
+        $certbotDomains = @(
+            $serverNames | Where-Object {
+                $_ -match "^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$" -and
+                $_ -notmatch "\.(lan|local|home|internal)$"
+            }
+        )
+        if (($certbotDomains | Measure-Object).Count -eq 0) {
+            throw "EnableHttps: no public domain available for certbot (current server names: $serverNameLine)"
+        }
+        if (-not $NoSystemDeps) {
+            Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command "sudo apt-get update -qq && sudo apt-get install -y certbot"
+        }
+        $domainArgs = ($certbotDomains | ForEach-Object { "-d $_" }) -join " "
+        Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command "sudo mkdir -p /var/www/html/.well-known/acme-challenge && sudo certbot certonly --webroot -w /var/www/html --non-interactive --agree-tos --email '$CertbotEmail' --cert-name '$CertbotCertName' --expand $domainArgs"
+
+        $nginxConfigHttps = @"
+server {
+    listen 80;
+    listen [::]:80;
+    server_name $serverNameLine;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://`$host`$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name $serverNameLine;
+
+    ssl_certificate /etc/letsencrypt/live/$CertbotCertName/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$CertbotCertName/privkey.pem;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_tickets off;
+    ssl_protocols TLSv1.2 TLSv1.3;
 
     client_max_body_size 25m;
 
@@ -357,21 +518,23 @@ server {
     }
 }
 "@
-    $tmpNginx = Join-Path $env:TEMP "vocalguard_nginx.conf"
-    Set-Content -Path $tmpNginx -Value $nginxConfig -Encoding UTF8
-    scp -q $tmpNginx "${NginxRemoteHost}:/tmp/vocalguard_nginx.conf"
-    Remove-Item $tmpNginx -Force -ErrorAction SilentlyContinue
-    ssh "$NginxRemoteHost" "sudo mv /tmp/vocalguard_nginx.conf /etc/nginx/sites-available/vocalguard && sudo ln -sf /etc/nginx/sites-available/vocalguard /etc/nginx/sites-enabled/vocalguard && sudo nginx -t && sudo systemctl reload nginx"
+        Set-Content -Path $tmpNginx -Value $nginxConfigHttps -Encoding UTF8
+        Copy-ScpStrict -Source $tmpNginx -Destination "${NginxRemoteHost}:/tmp/vocalguard_nginx.conf"
+        Remove-Item $tmpNginx -Force -ErrorAction SilentlyContinue
+        Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command "sudo mv /tmp/vocalguard_nginx.conf /etc/nginx/sites-available/vocalguard && sudo ln -sf /etc/nginx/sites-available/vocalguard /etc/nginx/sites-enabled/vocalguard && sudo nginx -t && sudo systemctl reload nginx"
+        Ok "HTTPS configured with certbot cert '$CertbotCertName'"
+    }
     Ok "Nginx configured on $NginxServerName -> $proxyTarget"
 }
 
 if ($HealthCheck) {
     Step "[health] End-to-end checks"
     $checks = @()
+    $primaryPublicDomain = if ($DomainAliases.Count -gt 0) { $DomainAliases[0] } else { $NginxServerName }
 
     # 1) backend direct
     try {
-        $raw = ssh "$AppRemoteHost" "curl -fsS http://127.0.0.1:8000/health"
+        $raw = Invoke-SshStrict -RemoteHost $AppRemoteHost -Command "curl -fsS http://127.0.0.1:8000/health" -CaptureOutput
         $checks += [pscustomobject]@{
             Name = "Backend direct ($AppServerName)"
             Ok = $true
@@ -388,7 +551,12 @@ if ($HealthCheck) {
     # 2) nginx local (edge -> app)
     if ($ConfigureNginx) {
         try {
-            $raw = ssh "$NginxRemoteHost" "curl -fsS http://127.0.0.1/health"
+            $localHealthCommand = if ($EnableHttps) {
+                "curl -fsS -k -H 'Host: $primaryPublicDomain' https://127.0.0.1/health"
+            } else {
+                "curl -fsS http://127.0.0.1/health"
+            }
+            $raw = Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command $localHealthCommand -CaptureOutput
             $checks += [pscustomobject]@{
                 Name = "Nginx local ($NginxServerName)"
                 Ok = $true
@@ -406,9 +574,14 @@ if ($HealthCheck) {
     # 3) nginx public hostname
     if ($ConfigureNginx) {
         try {
-            $raw = ssh "$NginxRemoteHost" "curl -fsS http://$NginxServerName/health"
+            $hostnameHealthCommand = if ($EnableHttps) {
+                "curl -fsS https://$primaryPublicDomain/health"
+            } else {
+                "curl -fsS http://$NginxServerName/health"
+            }
+            $raw = Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command $hostnameHealthCommand -CaptureOutput
             $checks += [pscustomobject]@{
-                Name = "Nginx hostname ($NginxServerName)"
+                Name = if ($EnableHttps) { "Nginx public https ($primaryPublicDomain)" } else { "Nginx hostname ($NginxServerName)" }
                 Ok = $true
                 Detail = ($raw | Out-String).Trim()
             }
@@ -425,9 +598,14 @@ if ($HealthCheck) {
     if ($ConfigureNginx -and $DomainAliases.Count -gt 0) {
         foreach ($domain in $DomainAliases) {
             try {
-                $raw = ssh "$NginxRemoteHost" "curl -fsS -H 'Host: $domain' http://127.0.0.1/health"
+                $aliasHealthCommand = if ($EnableHttps) {
+                    "curl -fsS -k -H 'Host: $domain' https://127.0.0.1/health"
+                } else {
+                    "curl -fsS -H 'Host: $domain' http://127.0.0.1/health"
+                }
+                $raw = Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command $aliasHealthCommand -CaptureOutput
                 $checks += [pscustomobject]@{
-                    Name = "Nginx alias ($domain)"
+                    Name = if ($EnableHttps) { "Nginx alias https ($domain)" } else { "Nginx alias ($domain)" }
                     Ok = $true
                     Detail = ($raw | Out-String).Trim()
                 }
