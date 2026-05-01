@@ -1,0 +1,82 @@
+{
+  "intents": [
+    {
+      "tag": "objection_no_time",
+      "patterns": [
+        "je n ai pas le temps",
+        "je suis occupe",
+        "rappelez plus tard",
+        "ce n est pas le bon moment"
+      ],
+      "responses": [
+        "Je comprends, je fais tres court: 20 secondes pour voir si c est pertinent, et sinon je vous laisse.",
+        "Pas de souci. Quel serait le meilleur moment pour vous rappeler: plutot fin de journee ou demain matin ?"
+      ]
+    },
+    {
+      "tag": "objection_not_interested",
+      "patterns": [
+        "pas interesse",
+        "ca ne m interesse pas",
+        "non merci",
+        "inutile pour nous"
+      ],
+      "responses": [
+        "Compris. Avant de vous laisser, est-ce que le sujet {{pain_point}} est totalement hors priorite chez vous ?",
+        "Je respecte. Beaucoup de clients disaient pareil avant de voir l impact concret sur {{benefit}}."
+      ]
+    },
+    {
+      "tag": "objection_already_equipped",
+      "patterns": [
+        "on a deja une solution",
+        "on est deja equipe",
+        "on travaille deja avec quelqu un",
+        "on a deja un prestataire"
+      ],
+      "responses": [
+        "Tres bien, c est souvent le cas. L objectif est de comparer rapidement et voir si vous pouvez gagner sur {{benefit}}.",
+        "Parfait. Je ne remets pas en cause l existant, je propose juste un benchmark rapide sans engagement."
+      ]
+    },
+    {
+      "tag": "objection_too_expensive",
+      "patterns": [
+        "c est trop cher",
+        "on n a pas le budget",
+        "ce n est pas dans nos moyens",
+        "budget serre"
+      ],
+      "responses": [
+        "Je comprends. Justement, on ajuste selon vos besoins pour rester rentable des le depart.",
+        "C est une vraie question. On peut valider ensemble en quelques minutes le retour sur investissement potentiel."
+      ]
+    },
+    {
+      "tag": "objection_send_info_only",
+      "patterns": [
+        "envoyez juste les infos",
+        "envoyez un mail et c est tout",
+        "je lirai ca plus tard",
+        "mettez moi ca par ecrit"
+      ],
+      "responses": [
+        "Bien sur, je vous envoie un resume tres court. Je peux aussi vous proposer 10 minutes pour repondre aux questions ensuite.",
+        "Aucun probleme. Je vous envoie l essentiel par email, avec un lien pour reserver si vous voyez un interet."
+      ]
+    },
+    {
+      "tag": "objection_do_not_call",
+      "patterns": [
+        "ne rappelez plus",
+        "retirez moi de la liste",
+        "arretez d appeler",
+        "je refuse tout demarchage"
+      ],
+      "responses": [
+        "Compris, je prends en compte votre demande immediatement et je vous retire de la liste d appel.",
+        "Merci pour votre retour, c est note. Vous ne serez plus contacte."
+      ]
+    }
+  ]
+}

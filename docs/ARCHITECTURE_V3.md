@@ -35,7 +35,7 @@ VocalGuard/
     src/
       app/                   # Router Next.js (pages: dashboard, appels, RDV, devis, clients, etc.)
       components/            # Layout, sidebar, topbar, cartes, tables...
-      services/              # Clients d'API (calls, osint, appointments, quotes, customers, settings)
+      services/              # Clients d'API (calls, osint, appointments, quotes, clients, settings)
       styles/                # Styles globaux
 
   docs/                      # Documentation
@@ -69,7 +69,7 @@ VocalGuard/
   - `Caller`, `Call`, `Voicemail`, `BlockRule`
   - `FrenchPhonePrefix` (données opérateurs/préfixes FR)
   - `PhoneNumberProfile` (profil OSINT structuré)
-  - `Customer` (dossier client central)
+  - `Client` (contact rattaché à une entreprise)
   - `Appointment` (RDV)
   - `Quote` (devis, totaux en centimes)
 - `database.py` : initialisation en mode synchrone:
@@ -133,7 +133,7 @@ Services métier principaux:
     - `CallResponse`, `CallListResponse`
     - `Caller*`, `VoicemailResponse`
     - `PhoneNumberProfileResponse`, `OsintReputationResponse`
-    - `Appointment*`, `Quote*`, `Customer*`, `SettingsResponse`
+    - `Appointment*`, `Quote*`, `Client*`, `SettingsResponse`
 - `api/routes/` :
   - `calls.py` : `/api/v1/calls`
   - `callers.py` : `/api/v1/callers`
@@ -141,7 +141,7 @@ Services métier principaux:
   - `osint.py` : `/api/v1/osint/...`
   - `appointments.py` : `/api/v1/appointments`
   - `quotes.py` : `/api/v1/quotes`
-  - `customers.py` : `/api/v1/customers`
+  - `clients.py` : `/api/v1/clients`
   - `settings.py` : `/api/v1/settings`
   - `config.py`, `voice_test.py` : endpoints de config/tests.
 
@@ -155,13 +155,13 @@ Exemples:
   - `fetchCallsWithOsint()` appelle `/api/v1/calls` puis `/api/v1/osint/reputation/{phone_number}`.
 - `src/services/appointmentsApi.ts` :
   - `fetchAppointments()` → `/api/v1/appointments`.
-- `src/services/quotesApi.ts`, `customersApi.ts` : devis et clients.
+- `src/services/quotesApi.ts`, `clientsApi.ts` : devis et clients.
 
 Les pages principales:
 
 - `/dashboard` : synthèse (appels, RDV, devis, OSINT).
 - `/calls` : table des appels + réputation OSINT.
-- `/appointments`, `/quotes`, `/customers` : vues CRM/rendez-vous/devis.
+- `/appointments`, `/quotes`, `/clients` : vues CRM/rendez-vous/devis.
 - `/settings`, `/kb`, `/simulator` : configuration métier, base de connaissances, simulateur d'appel.
 
 ## Flux d'un appel avec OSINT et CRM
@@ -179,7 +179,7 @@ Les pages principales:
 5. En tâche de fond, Celery enrichit `PhoneNumberProfile`.
 6. Le frontend affiche la réputation dans:
    - la liste des appels (`/calls`),
-   - la fiche client (`/customers`).
+   - la fiche client (`/clients`).
 
 ## Remarques sur l'évolution
 

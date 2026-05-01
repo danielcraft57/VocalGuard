@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from backend.api.dependencies import get_config
 from backend.core.config import Config
 from backend.services.osint_service import OSINTService
+from backend.services.external_api_metrics import external_api_metrics
 from backend.api.models import OsintReputationResponse, PhoneNumberProfileResponse
 from backend.database.database import get_db
 from backend.database.models import PhoneNumberProfile
@@ -96,6 +97,14 @@ async def get_available_tools(config: Config = Depends(get_config)):
         "available_tools": osint_service.available_tools,
         "tools_path": str(osint_service.osint_tools_path),
     }
+
+
+@router.get("/osint/external-requests-metrics", response_model=Dict[str, Any])
+async def get_external_requests_metrics() -> Dict[str, Any]:
+    """
+    Retourne un compteur simple des requêtes API externes sur la dernière minute.
+    """
+    return external_api_metrics.snapshot()
 
 
 @router.post("/osint/install/phoneinfoga")

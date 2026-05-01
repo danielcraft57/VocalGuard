@@ -13,6 +13,7 @@ Le module OSINT (Open Source Intelligence) de VocalGuard permet d'enrichir les i
 - Intégration avec des outils OSINT populaires
 - Support WSL/Kali Linux
 - Intégration avec des APIs externes (NumLookup, OpenCNAM, NumVerify, HLR Lookup)
+- Compteur simple de charge API externe (requêtes/min sur 60s)
 
 ## Outils OSINT supportés
 
@@ -175,6 +176,26 @@ curl http://localhost:8000/api/v1/osint/patterns
 curl http://localhost:8000/api/v1/osint/tools
 ```
 
+#### Voir la charge des APIs externes (requêtes/min)
+
+```bash
+curl http://localhost:8000/api/v1/osint/external-requests-metrics
+```
+
+Exemple de réponse:
+
+```json
+{
+  "window_seconds": 60,
+  "total_per_minute": 18,
+  "providers": {
+    "numlookup": {"total": 6, "ok": 5, "errors": 1},
+    "numverify": {"total": 6, "ok": 6, "errors": 0},
+    "sirene": {"total": 6, "ok": 4, "errors": 2}
+  }
+}
+```
+
 #### Installer phoneinfoga
 
 ```bash
@@ -283,6 +304,11 @@ commercial_detection:
 - **allow** : Numéro sûr, autoriser l'appel
 - **review** : Numéro à vérifier manuellement
 - **block** : Numéro suspect, bloquer l'appel
+
+## Verbosité des logs
+
+- Les traces très verbeuses liées aux appels externes OSINT sont réduites (notamment PhoneInfoga, NumLookup, NumVerify).
+- Les logs `httpx/httpcore` sont limités au niveau warning pour éviter les lignes "HTTP Request ..." en boucle.
 
 ## Installation sur WSL/Kali Linux
 

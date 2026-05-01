@@ -6,6 +6,7 @@ Ces taches tournent en arriere-plan et mettent a jour le modele
 """
 
 import asyncio
+import logging
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -18,6 +19,9 @@ from backend.core.config import Config
 from backend.database import database as db_module
 from backend.database.models import PhoneNumberProfile, EntreprisePhoneAnalysis
 from backend.services.osint_service import OSINTService
+
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 _config = Config()

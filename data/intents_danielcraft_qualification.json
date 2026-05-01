@@ -1,0 +1,110 @@
+{
+  "intents": [
+    {
+      "tag": "intro_call",
+      "patterns": [
+        "allo",
+        "bonjour",
+        "qui est a l appareil",
+        "vous etes qui",
+        "c est pour quoi"
+      ],
+      "responses": [
+        "Bonjour, ici DanielCraft. J appelle pour voir si votre entreprise a besoin de plus de visibilite et de contacts via le web.",
+        "Bonjour, je suis developpeur full-stack chez DanielCraft. Je vous contacte pour un point rapide sur votre presence en ligne."
+      ]
+    },
+    {
+      "tag": "target_business_type",
+      "patterns": [
+        "on est artisan",
+        "on est commerçant",
+        "on est une petite entreprise",
+        "on est une tpe",
+        "on est une pme"
+      ],
+      "responses": [
+        "Parfait, c est exactement le type de structure que j accompagne avec des sites vitrines clairs et orientes conversion.",
+        "Super, j accompagne souvent des artisans et commerces locaux pour gagner en visibilite et en demandes de contact."
+      ]
+    },
+    {
+      "tag": "need_diagnosis",
+      "patterns": [
+        "quel est votre objectif",
+        "vous proposez quoi",
+        "de quoi avez vous besoin",
+        "pourquoi vous m appelez"
+      ],
+      "responses": [
+        "Mon but est de verifier en 2 minutes si vous pouvez gagner des contacts avec un site plus clair, du SEO et une meilleure image pro.",
+        "L idee est simple: voir si votre activite peut beneficier d une optimisation site plus visibilite Google et ChatGPT."
+      ]
+    },
+    {
+      "tag": "current_site_status",
+      "patterns": [
+        "on a deja un site",
+        "on n a pas de site",
+        "notre site est vieux",
+        "on est seulement sur les reseaux sociaux"
+      ],
+      "responses": [
+        "Merci, c est deja une bonne base. L objectif est de transformer plus de visites en contacts avec une structure plus efficace.",
+        "Pas de souci, on peut partir d une base simple et pro pour etre trouve facilement et inspirer confiance."
+      ]
+    },
+    {
+      "tag": "availability_check",
+      "patterns": [
+        "je suis en rendez vous",
+        "pas le temps",
+        "rappelez plus tard",
+        "je suis occupe"
+      ],
+      "responses": [
+        "Compris. Je vous prends 20 secondes: est-ce que gagner plus de demandes clients en ligne est un sujet pour vous cette annee ?",
+        "Je comprends. Quel moment vous arrange pour un rappel court: ce soir ou demain matin ?"
+      ]
+    },
+    {
+      "tag": "decision_maker_identification",
+      "patterns": [
+        "ce n est pas moi qui decide",
+        "je ne suis pas la bonne personne",
+        "voyez avec le gerant",
+        "voyez avec mon associe"
+      ],
+      "responses": [
+        "Merci pour l info. Je peux contacter la bonne personne directement, vous pouvez me donner son nom et le meilleur moment ?",
+        "Parfait, je prefere gagner du temps. A qui dois-je presenter la proposition en priorite ?"
+      ]
+    },
+    {
+      "tag": "qualify_budget_window",
+      "patterns": [
+        "on a un petit budget",
+        "on veut un truc simple",
+        "on veut commencer petit",
+        "on veut faire au plus vite"
+      ],
+      "responses": [
+        "C est possible. On peut commencer sur une base site vitrine claire, puis etendre ensuite selon les resultats.",
+        "Tres bien, je peux vous proposer une approche progressive qui reste rentable des le depart."
+      ]
+    },
+    {
+      "tag": "next_step_appointment",
+      "patterns": [
+        "ok pour un rendez vous",
+        "on peut en parler",
+        "envoyez moi un creneau",
+        "appelez moi demain"
+      ],
+      "responses": [
+        "Parfait. Je vous propose un appel de 15 minutes pour cadrer besoin, budget et delais. Vous preferez matin ou apres-midi ?",
+        "Top. On bloque un court echange, et je vous envoie ensuite une proposition claire sous 24h."
+      ]
+    }
+  ]
+}

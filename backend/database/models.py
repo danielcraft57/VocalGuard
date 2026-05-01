@@ -4,7 +4,7 @@ Modèles de base de données SQLAlchemy
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, JSON, Float, Table
+from sqlalchemy import Column, Integer, String, DateTime, Date, Boolean, Text, ForeignKey, JSON, Float, Table, Time, UniqueConstraint
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -14,6 +14,13 @@ entreprise_category_links = Table(
     Base.metadata,
     Column("entreprise_id", Integer, ForeignKey("entreprises.id", ondelete="CASCADE"), primary_key=True),
     Column("category_id", Integer, ForeignKey("entreprise_categories.id", ondelete="CASCADE"), primary_key=True),
+)
+
+entreprise_email_links = Table(
+    "entreprise_email_links",
+    Base.metadata,
+    Column("entreprise_id", Integer, ForeignKey("entreprises.id", ondelete="CASCADE"), primary_key=True),
+    Column("email_id", Integer, ForeignKey("entreprise_emails.id", ondelete="CASCADE"), primary_key=True),
 )
 
 
@@ -64,7 +71,7 @@ class Call(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     caller_id = Column(Integer, ForeignKey("callers.id"), nullable=True)
-    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
     phone_number = Column(String(20), index=True, nullable=True)
     caller_name = Column(String(255), nullable=True)
     
@@ -84,7 +91,7 @@ class Call(Base):
     
     # Relations
     caller = relationship("Caller", back_populates="calls")
-    customer = relationship("Customer", back_populates="calls")
+    client = relationship("Client", back_populates="calls")
 
 
 class Voicemail(Base):
@@ -95,7 +102,7 @@ class Voicemail(Base):
     id = Column(Integer, primary_key=True, index=True)
     call_id = Column(Integer, ForeignKey("calls.id"), nullable=True)
     caller_id = Column(Integer, ForeignKey("callers.id"), nullable=True)
-    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
     
     phone_number = Column(String(20), index=True, nullable=True)
     caller_name = Column(String(255), nullable=True)
@@ -112,7 +119,7 @@ class Voicemail(Base):
     # Relations
     call = relationship("Call")
     caller = relationship("Caller")
-    customer = relationship("Customer", back_populates="voicemails")
+    client = relationship("Client", back_populates="voicemails")
 
 
 class BlockRule(Base):
@@ -181,27 +188,28 @@ class PhoneNumberProfile(Base):
     caller = relationship("Caller")
 
 
-class Customer(Base):
-    """Modele pour les clients / contacts DanielCraftFr."""
+class Client(Base):
+    """Contact / personne rattachee a une entreprise."""
     
-    __tablename__ = "customers"
+    __tablename__ = "clients"
     
     id = Column(Integer, primary_key=True, index=True)
     
+    entreprise_id = Column(Integer, ForeignKey("entreprises.id", ondelete="CASCADE"), nullable=True, index=True)
     phone_number = Column(String(20), index=True, nullable=False)
     email = Column(String(255), nullable=True)
     name = Column(String(255), nullable=True)
-    company_name = Column(String(255), nullable=True)
     notes = Column(Text, nullable=True)
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relations
-    calls = relationship("Call", back_populates="customer")
-    voicemails = relationship("Voicemail", back_populates="customer")
-    appointments = relationship("Appointment", back_populates="customer")
-    quotes = relationship("Quote", back_populates="customer")
+    entreprise = relationship("Entreprise")
+    calls = relationship("Call", back_populates="client")
+    voicemails = relationship("Voicemail", back_populates="client")
+    agenda_items = relationship("Appointment", back_populates="client")
+    quotes = relationship("Quote", back_populates="client")
 
 
 class Entreprise(Base):
@@ -240,6 +248,30 @@ class Entreprise(Base):
         "EntrepriseCategory",
         secondary=entreprise_category_links,
         back_populates="entreprises",
+        collection_class=set,
+    )
+    emails = relationship(
+        "EntrepriseEmail",
+        secondary=entreprise_email_links,
+        back_populates="entreprises",
+        collection_class=set,
+    )
+
+
+class EntrepriseEmail(Base):
+    """Email normalise reutilisable en relation M2M avec les entreprises."""
+
+    __tablename__ = "entreprise_emails"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(320), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    entreprises = relationship(
+        "Entreprise",
+        secondary=entreprise_email_links,
+        back_populates="emails",
         collection_class=set,
     )
 
@@ -346,11 +378,13 @@ class EntreprisePhoneAnalysis(Base):
 class Appointment(Base):
     """Modele pour les rendez-vous."""
     
-    __tablename__ = "appointments"
+    __tablename__ = "agenda"
     
     id = Column(Integer, primary_key=True, index=True)
     
-    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
+    source_call_id = Column(Integer, ForeignKey("calls.id"), nullable=True)
+    entreprise_id = Column(Integer, ForeignKey("entreprises.id", ondelete="CASCADE"), nullable=True, index=True)
     phone_number = Column(String(20), index=True, nullable=True)
     
     title = Column(String(255), nullable=False)
@@ -359,11 +393,52 @@ class Appointment(Base):
     location = Column(String(255), nullable=True)
     status = Column(String(50), default="scheduled")
     service_type = Column(String(100), nullable=True)
+    agenda_tag = Column(String(50), nullable=True)
+    display_icon = Column(String(50), nullable=True)
+    display_color = Column(String(20), nullable=True)
+    is_all_day = Column(Boolean, nullable=False, default=False)
     notes = Column(Text, nullable=True)
     
     created_at = Column(DateTime, default=datetime.utcnow)
     
-    customer = relationship("Customer", back_populates="appointments")
+    client = relationship("Client", back_populates="agenda_items")
+    source_call = relationship("Call")
+    entreprise = relationship("Entreprise")
+
+
+class AppointmentSettings(Base):
+    """Parametres globaux d'agenda (horaires de travail et duree par defaut)."""
+
+    __tablename__ = "appointment_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    timezone = Column(String(64), nullable=False, default="Europe/Paris")
+    work_day_start = Column(Time, nullable=False)
+    work_day_end = Column(Time, nullable=False)
+    slot_minutes = Column(Integer, nullable=False, default=60)
+    monday_enabled = Column(Boolean, nullable=False, default=True)
+    tuesday_enabled = Column(Boolean, nullable=False, default=True)
+    wednesday_enabled = Column(Boolean, nullable=False, default=True)
+    thursday_enabled = Column(Boolean, nullable=False, default=True)
+    friday_enabled = Column(Boolean, nullable=False, default=True)
+    saturday_enabled = Column(Boolean, nullable=False, default=False)
+    sunday_enabled = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class AppointmentNonWorkingDay(Base):
+    """Journee indisponible (ferie, conge, fermeture exceptionnelle)."""
+
+    __tablename__ = "appointment_non_working_days"
+    __table_args__ = (
+        UniqueConstraint("date", name="uq_appointment_non_working_day_date"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    date = Column(Date, nullable=False, index=True)
+    label = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Quote(Base):
@@ -373,7 +448,7 @@ class Quote(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     
-    customer_id = Column(Integer, ForeignKey("customers.id"), nullable=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
     phone_number = Column(String(20), index=True, nullable=True)
     
     title = Column(String(255), nullable=False)
@@ -387,5 +462,28 @@ class Quote(Base):
     
     created_at = Column(DateTime, default=datetime.utcnow)
     
-    customer = relationship("Customer", back_populates="quotes")
+    client = relationship("Client", back_populates="quotes")
+
+
+class ApiPublicToken(Base):
+    """Token d'authentification pour les endpoints publics."""
+
+    __tablename__ = "api_public_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)
+    app_url = Column(String(500), nullable=True)
+    token = Column(String(128), unique=True, nullable=False, index=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    can_read_agenda = Column(Boolean, nullable=False, default=True)
+    can_write_agenda = Column(Boolean, nullable=False, default=True)
+    can_write_entreprises = Column(Boolean, nullable=False, default=True)
+    can_manage_tokens = Column(Boolean, nullable=False, default=False)
+    can_read_customers = Column(Boolean, nullable=False, default=False)
+    can_write_customers = Column(Boolean, nullable=False, default=False)
+    can_read_quotes = Column(Boolean, nullable=False, default=False)
+    can_write_quotes = Column(Boolean, nullable=False, default=False)
+    can_read_calls = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    last_used_at = Column(DateTime, nullable=True)
 

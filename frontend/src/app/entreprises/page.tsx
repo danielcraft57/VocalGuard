@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Box, Card, CardContent, Stack, Typography } from "@mui/material";
 import { AppLayout } from "../../components/AppLayout";
 import {
@@ -23,6 +23,7 @@ import type { EntrepriseCallStats, EntrepriseDetailsTab, ImportProgressCounters,
 export default function EntreprisesPage() {
   const [entreprises, setEntreprises] = useState<Entreprise[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastImport, setLastImport] = useState<EntrepriseImportSummary | null>(null);
@@ -35,6 +36,7 @@ export default function EntreprisesPage() {
   const [limit, setLimit] = useState(50);
   const [total, setTotal] = useState(0);
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [city, setCity] = useState("");
   const [category, setCategory] = useState("");
   const [hasPhone, setHasPhone] = useState<PhoneAvailabilityFilter>("");
@@ -43,42 +45,53 @@ export default function EntreprisesPage() {
   const [detailsEntreprise, setDetailsEntreprise] = useState<Entreprise | null>(null);
   const [callStats, setCallStats] = useState<EntrepriseCallStats | null>(null);
   const [detailsTab, setDetailsTab] = useState<EntrepriseDetailsTab>("infos");
-  const osintReloadTimer = useRef<number | null>(null);
   const importUiResetTimer = useRef<number | null>(null);
 
   const entreprisesCount = useMemo(() => total, [total]);
   const page = useMemo(() => Math.floor(skip / limit) + 1, [skip, limit]);
   const pageCount = useMemo(() => Math.max(1, Math.ceil(total / limit)), [total, limit]);
 
-  const reload = () => {
-    setLoading(true);
-    setError(null);
-    fetchEntreprises({
-      skip,
-      limit,
-      q: q.trim() || undefined,
-      city: city.trim() || undefined,
-      category: category.trim() || undefined,
-      has_phone: hasPhone === "" ? undefined : hasPhone === "true",
-    })
-      .then((data) => {
-        setEntreprises(data.items);
-        setTotal(data.total);
-        setSelectedIds([]);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedQ(q), 280);
+    return () => window.clearTimeout(t);
+  }, [q]);
+
+  const reload = useCallback(
+    (opts?: { silent?: boolean; preserveSelection?: boolean }) => {
+      const silent = Boolean(opts?.silent);
+      if (silent) setRefreshing(true);
+      else setLoading(true);
+      setError(null);
+      fetchEntreprises({
+        skip,
+        limit,
+        q: debouncedQ.trim() || undefined,
+        city: city.trim() || undefined,
+        category: category.trim() || undefined,
+        has_phone: hasPhone === "" ? undefined : hasPhone === "true",
       })
-      .catch(() => setError("Impossible de charger les entreprises (verifie le backend)."))
-      .finally(() => setLoading(false));
-  };
+        .then((data) => {
+          setEntreprises(data.items);
+          setTotal(data.total);
+          if (!opts?.preserveSelection) setSelectedIds([]);
+        })
+        .catch(() => setError("Impossible de charger les entreprises (verifie le backend)."))
+        .finally(() => {
+          if (silent) setRefreshing(false);
+          else setLoading(false);
+        });
+    },
+    [skip, limit, debouncedQ, city, category, hasPhone],
+  );
 
   useEffect(() => {
     reload();
-  }, [skip, limit]);
+  }, [reload]);
 
   useEffect(() => {
-    // Quand on change un filtre, on revient à la page 1
-    setSkip(0);
-    reload();
-  }, [q, city, category, hasPhone]);
+    // Quand les filtres changent, revenir page 1 sans recharger agressivement.
+    setSkip((prev) => (prev === 0 ? prev : 0));
+  }, [debouncedQ, city, category, hasPhone]);
 
   useEntrepriseImportRealtime({
     activeBatchId: activeImportBatchId,
@@ -88,15 +101,9 @@ export default function EntreprisesPage() {
     },
     onCompleted: () => {
       setActiveImportBatchId(null);
-      reload();
+      reload({ silent: true, preserveSelection: true });
     },
-    onOsintEvent: () => {
-      // Débouncer: plusieurs tasks OSINT peuvent finir d'un coup
-      if (osintReloadTimer.current) window.clearTimeout(osintReloadTimer.current);
-      osintReloadTimer.current = window.setTimeout(() => {
-        reload();
-      }, 400);
-    },
+    onOsintEvent: () => {},
   });
 
   useEffect(() => {
@@ -261,6 +268,11 @@ export default function EntreprisesPage() {
               onOpenDetails={handleOpenDetails}
               onDeleteRow={handleDeleteOne}
             />
+            {refreshing ? (
+              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.75 }}>
+                Mise à jour en arrière-plan...
+              </Typography>
+            ) : null}
           </Box>
         )}
         </CardContent>

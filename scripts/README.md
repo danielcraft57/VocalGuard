@@ -4,8 +4,8 @@ Scripts utilitaires pour la migration, le deploiement et les tests. Ne pas commi
 
 ## Deploiement Raspberry Pi
 
-- **deploy_to_rpi.sh** (Bash) : utilise la variable d'environnement `RPI_HOST` si definie, sinon `pi@raspberrypi.local`. Exemple : `RPI_HOST=pi@monrpi.local ./scripts/deploy_to_rpi.sh`
-- **deploy_to_rpi.ps1** / **deploy_to_rpi_simple.ps1** (PowerShell) : idem, `$env:RPI_HOST` ou saisie a l'invite.
+- **deploy_to_rpi.ps1** (script unique) : pipeline de deploiement prod optimise (build frontend, sync code, `.env.prod` -> `.env`, venv, deps).
+  Exemple : `.\scripts\deploy_to_rpi.ps1 -AppServerUser "pi" -AppServerName "app-node.lan" -RestartService`
 
 Configurer l'hote via une variable d'environnement permet d'eviter de stocker des noms de machine ou utilisateurs dans le depot.
 

@@ -640,6 +640,18 @@ html.vg-theme-dark .MuiInputBase-input::placeholder {
   color: var(--vg-color-text-muted) !important;
 }
 
+html.vg-theme-dark .MuiDialog-root .MuiSvgIcon-root,
+html.vg-theme-dark .MuiDialog-root .material-icons,
+html.vg-theme-dark .MuiDialog-root .MuiIconButton-root {
+  color: var(--vg-neutral-200) !important;
+}
+
+html.vg-theme-light .MuiDialog-root .MuiSvgIcon-root,
+html.vg-theme-light .MuiDialog-root .material-icons,
+html.vg-theme-light .MuiDialog-root .MuiIconButton-root {
+  color: var(--vg-neutral-700) !important;
+}
+
 html.vg-theme-dark .MuiChip-root {
   color: var(--vg-color-text) !important;
   border-color: var(--vg-color-border) !important;
@@ -996,6 +1008,264 @@ html.vg-theme-dark .MuiChip-outlinedWarning {
   .vg-topbar-menu-button {
     display: none;
   }
+}
+
+.vg-agenda-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.vg-agenda-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--vg-color-border-subtle);
+  border-radius: var(--vg-radius-md);
+  background: var(--vg-color-surface);
+}
+
+.vg-agenda-month {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-rows: auto repeat(6, minmax(88px, 1fr));
+  border: 1px solid var(--vg-color-border-subtle);
+  border-radius: var(--vg-radius-md);
+  overflow-x: hidden;
+  overflow-y: auto;
+  max-height: calc(100vh - 250px);
+}
+
+.vg-agenda-weekday {
+  padding: 0.5rem;
+  text-align: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  background: var(--vg-neutral-200);
+  border-right: 1px solid var(--vg-color-border-subtle);
+}
+
+.vg-agenda-day-cell {
+  border: none;
+  border-right: 1px solid var(--vg-color-border-subtle);
+  border-top: 1px solid var(--vg-color-border-subtle);
+  background: var(--vg-color-surface);
+  color: var(--vg-color-text);
+  padding: 0.4rem;
+  text-align: left;
+  min-height: 88px;
+  cursor: pointer;
+}
+
+.vg-agenda-day-cell:hover {
+  background: rgba(34, 197, 94, 0.12);
+}
+
+.vg-agenda-day-cell--muted {
+  opacity: 0.55;
+}
+
+.vg-agenda-day-cell--occupied {
+  background: rgba(14, 165, 233, 0.12);
+}
+
+.vg-agenda-day-cell--disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.vg-agenda-day-number {
+  font-weight: 700;
+  margin-bottom: 0.35rem;
+}
+
+.vg-agenda-events-mini {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.vg-agenda-pill {
+  font-size: 0.72rem;
+  border-radius: 6px;
+  padding: 0.2rem 0.35rem;
+  border: 1px solid var(--vg-accent-300);
+  background: var(--vg-accent-100);
+  color: var(--vg-accent-700);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  transition: transform 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+}
+
+.vg-agenda-pill:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+}
+
+.vg-agenda-time-shell {
+  position: relative;
+}
+
+.vg-agenda-time-grid {
+  display: grid;
+  grid-template-columns: 80px repeat(7, minmax(0, 1fr));
+  border: 1px solid var(--vg-color-border-subtle);
+  border-radius: var(--vg-radius-md);
+  overflow: hidden;
+  min-height: auto;
+}
+
+.vg-agenda-time-scroll {
+  position: relative;
+  max-height: calc(100vh - 250px);
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.vg-agenda-time-head {
+  padding: 0.45rem;
+  text-align: center;
+  font-weight: 700;
+  font-size: 0.8rem;
+  background: var(--vg-neutral-200);
+  border-right: 1px solid var(--vg-color-border-subtle);
+}
+
+.vg-agenda-hour-label {
+  border-top: 1px solid var(--vg-color-border-subtle);
+  border-right: 1px solid var(--vg-color-border-subtle);
+  padding: 0.35rem;
+  font-size: 0.75rem;
+  color: var(--vg-color-text-muted);
+}
+
+.vg-agenda-hour-cell {
+  border: none;
+  border-top: 1px solid var(--vg-color-border-subtle);
+  border-right: 1px solid var(--vg-color-border-subtle);
+  min-height: 52px;
+  background: var(--vg-color-surface);
+  cursor: pointer;
+  text-align: left;
+  padding: 0.2rem;
+}
+
+.vg-agenda-hour-cell:hover {
+  background: rgba(34, 197, 94, 0.1);
+}
+
+.vg-agenda-hour-cell--disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.vg-agenda-hour-cell--disabled:hover {
+  background: var(--vg-color-surface);
+}
+
+.vg-agenda-loading {
+  color: var(--vg-color-text-muted);
+  font-size: 0.9rem;
+}
+
+.vg-agenda-overlay {
+  position: absolute;
+  top: 33px;
+  left: 0;
+  right: 0;
+  display: grid;
+  pointer-events: none;
+}
+
+.vg-agenda-day-overlay-col {
+  position: relative;
+  min-height: calc(13 * 52px);
+  pointer-events: auto;
+}
+
+.vg-agenda-event-block {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(165, 243, 252, 0.95), rgba(56, 189, 248, 0.85));
+  border: 1px solid rgba(56, 189, 248, 0.8);
+  color: #082f49;
+  padding: 0.25rem 0.35rem 0.5rem 0.35rem;
+  cursor: grab;
+  user-select: none;
+  overflow: hidden;
+  max-width: calc(100% - 4px);
+  transition: box-shadow 140ms ease, transform 140ms ease;
+}
+
+.vg-agenda-event-block:hover {
+  box-shadow: 0 8px 18px rgba(14, 165, 233, 0.35);
+  transform: translateY(-1px);
+}
+
+.vg-agenda-event-title {
+  font-size: 0.72rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vg-agenda-event-resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 8px;
+  cursor: ns-resize;
+  background: rgba(8, 47, 73, 0.22);
+}
+
+html.vg-theme-dark .vg-agenda-time-head,
+html.vg-theme-dark .vg-agenda-weekday {
+  background: #e5e7eb;
+  color: #1f2937;
+}
+
+html.vg-theme-dark .vg-agenda-day-cell,
+html.vg-theme-dark .vg-agenda-hour-cell {
+  background: #1f2d45;
+  border-color: #334155;
+}
+
+html.vg-theme-dark .vg-agenda-day-cell--occupied {
+  background: rgba(14, 165, 233, 0.2);
+}
+
+html.vg-theme-dark .vg-agenda-hour-cell:hover,
+html.vg-theme-dark .vg-agenda-day-cell:hover {
+  background: #24324d;
+}
+
+.vg-agenda-editor-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+}
+
+.vg-agenda-editor {
+  width: min(640px, 100%);
+  background: var(--vg-color-surface);
+  border: 1px solid var(--vg-color-border-subtle);
+  border-radius: var(--vg-radius-md);
+  padding: 1rem;
 }
 
 

@@ -32,6 +32,25 @@ python scripts/test_patterns_voice.py
 
 Idéal pour tester un IVR type téléphone fixe basé sur des patterns et intents. Voir [config/README_INTENTS_IVR.md](../config/README_INTENTS_IVR.md).
 
+### benchmark_intent_vocal.py – Benchmark latence (micro/casque)
+
+Mesure les latences de bout en bout:
+micro → STT → ML intents → choix réponse → TTS → lecture audio.
+
+```bash
+python scripts/benchmark_intent_vocal.py --log-jsonl
+```
+
+Options utiles:
+
+- `--stt vosk|whisper` : forcer le moteur STT
+- `--tts pyttsx3|gtts|edgetts` : forcer le moteur TTS
+- `--device <index>` : choisir le micro (sounddevice)
+- `--turns 20` : nombre de tours
+- `--max-seconds 8` : durée max d'écoute par tour
+
+Astuce: pour de bons résultats de latence, privilégier `--stt vosk`.
+
 ### generate_intents_tts_examples.py – Exemples TTS à partir des intents (edge-tts)
 
 ```bash
@@ -47,7 +66,7 @@ Prérequis : `pip install edge-tts`. Optionnel : pydub + ffmpeg pour la conversi
 
 ### test_modem_answer_play_record.py – Test modem (décrocher, WAV, enregistrer)
 
-À lancer sur le Raspberry Pi avec modem et carte audio (ex. pi@raspberrypi.local). Décroche un appel entrant, joue un fichier WAV (ex. `ivr_wav/ivr_message.wav`), enregistre un message répondeur dans `recordings/voicemail_*.wav`, puis raccroche. Voir [scripts/transfer_and_test_modem_node14.md](transfer_and_test_modem_node14.md) pour le transfert vers le Pi et le lancement avec le venv.
+À lancer sur le Raspberry Pi avec modem et carte audio (ex. `pi@app-node.local`). Décroche un appel entrant, joue un fichier WAV (ex. `ivr_wav/ivr_message.wav`), enregistre un message répondeur dans `recordings/voicemail_*.wav`, puis raccroche. Voir [scripts/transfer_and_test_modem_node14.md](transfer_and_test_modem_node14.md) pour le transfert vers le Pi et le lancement avec le venv.
 
 ```bash
 # Sur le Pi, après transfert
@@ -63,16 +82,14 @@ python scripts/test_modem_answer_play_record.py
 
 #### Lancer le test modem en mode démon (service systemd)
 
-Pour avoir le test modem qui tourne en tâche de fond avec un fichier de log dédié :
+Pour avoir le test modem qui tourne en tâche de fond avec un fichier de log dédié, utiliser le script de déploiement (le service est généré automatiquement) :
 
-1. Copier le service sur le Pi :
-
-   ```bash
-   scp vocalguard-test-modem.service pi@raspberrypi.local:/tmp/
-   ssh pi@raspberrypi.local "sudo mv /tmp/vocalguard-test-modem.service /etc/systemd/system/"
-   ssh pi@raspberrypi.local "sudo systemctl daemon-reload && sudo systemctl enable vocalguard-test-modem.service"
-   ssh pi@raspberrypi.local "sudo systemctl start vocalguard-test-modem.service"
-   ```
+```powershell
+.\scripts\deploy_to_rpi.ps1 `
+  -AppServerUser "pi" -AppServerName "app-node.lan" `
+  -NginxServerUser "pi" -NginxServerName "edge-node.lan" `
+  -InstallServices $true -EnableModemTestService $true
+```
 
 2. Le service exécute en boucle :
 

@@ -99,6 +99,18 @@ uvicorn backend.main:app --reload
 Le backend utilise par défaut une base SQLite locale `vocalguard.db` à la racine.  
 En production, vous pouvez passer sur PostgreSQL en ajustant `database_url` dans la configuration.
 
+### Profils d'environnement (`.env` et `.env.prod`)
+
+- Mode standard: `Config` charge `.env`
+- Mode production-like local: `Config` charge `.env.prod` si `VG_ENV=prod`
+
+Exemple PowerShell:
+
+```powershell
+$env:VG_ENV="prod"
+python -m backend.main
+```
+
 ## Structure du projet
 
 ```text
@@ -143,6 +155,7 @@ VocalGuard/
 - [Architecture originale](docs/ARCHITECTURE.md) - historique
 - [Module OSINT](docs/OSINT.md) - Enrichissement des numéros de téléphone
 - [Page Appels et OSINT](docs/APPELS_OSINT_UI.md) - Liste des appels, filtres, recherche intelligente
+- [API Agenda](docs/AGENDA_API.md) - Endpoints agenda, settings et jours non travaillés
 - [Services de réputation](docs/REPUTATION_SERVICES.md) - NOMOROBO / SHOULDIANSWER (type callattendant)
 - [Mise en production (RPi)](docs/DEPLOYMENT_PROD.md) - Service systemd, demarrage au boot, logs
 - [Résumé des améliorations](docs/IMPROVEMENTS_SUMMARY.md)
@@ -201,6 +214,13 @@ curl http://localhost:8000/api/v1/osint/phone/+33123456789
 
 ```bash
 curl http://localhost:8000/api/v1/osint/reputation/+33123456789
+```
+
+### Agenda (nouveaux endpoints)
+
+```bash
+curl http://localhost:8000/api/v1/agenda
+curl http://localhost:8000/api/v1/agenda/settings
 ```
 
 ## Développement

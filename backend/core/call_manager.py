@@ -21,8 +21,10 @@ from backend.voice.ivr_patterns import IvrPatternsEngine
 from backend.voice.audio_utils import export_wav_8k_8bit, load_wav_as_16k16bit_pcm
 from backend.services.call_service import CallService
 from backend.services.block_service import BlockService
+from backend.services.appointment_service import AppointmentService
 from backend.services.conversation_service import ConversationService
 from backend.database.database import get_db
+from backend.database.models import Call
 
 
 class CallManager:
@@ -46,6 +48,7 @@ class CallManager:
         # Services
         self.call_service = CallService(db)
         self.block_service = BlockService(config, db)
+        self.appointment_service = AppointmentService(db)
 
         # Service de conversation base sur patterns metier
         self.conversation_service = ConversationService()
@@ -345,6 +348,25 @@ class CallManager:
                         )
                     except Exception as e:
                         logger.warning("Impossible de mettre a jour l'appel avec l'intent IVR: {}", e)
+                auto_appointment = None
+                try:
+                    caller_phone_number = None
+                    if self.current_call_id:
+                        call_row = self.db.query(Call).filter(Call.id == self.current_call_id).first()
+                        if call_row:
+                            caller_phone_number = call_row.phone_number
+                    auto_appointment = self.appointment_service.maybe_schedule_from_intent(
+                        intent_name=intent.get("name"),
+                        transcription=transcription,
+                        call_id=self.current_call_id,
+                        phone_number=caller_phone_number,
+                    )
+                except Exception as e:
+                    logger.warning("Creation auto du rendez-vous impossible: {}", e)
+
+                if auto_appointment:
+                    start_label = auto_appointment.start_time.strftime("%d/%m a %H:%M")
+                    return f"{response_text} Je vous propose le {start_label}. Vous pourrez le modifier depuis l agenda."
                 return response_text
         except Exception as e:
             logger.warning(f"Erreur dans le moteur IVR patterns: {e}")

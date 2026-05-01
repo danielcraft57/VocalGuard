@@ -11,13 +11,15 @@ export interface AppLayoutProps {
   title: string;
   /** Sous-titre optionnel affiche sous le titre. */
   subtitle?: string;
+  /** Permet de masquer le header de page (titre + sous-titre). */
+  hidePageHeader?: boolean;
 }
 
 /**
  * Layout principal de l'application VocalGuard.
  * Le theme (sombre par defaut) est fourni par le layout racine et s'applique a toutes les pages.
  */
-export const AppLayout: React.FC<AppLayoutProps> = ({ children, title, subtitle }) => {
+export const AppLayout: React.FC<AppLayoutProps> = ({ children, title, subtitle, hidePageHeader = false }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const handleToggleSidebar = () => {
@@ -34,10 +36,12 @@ export const AppLayout: React.FC<AppLayoutProps> = ({ children, title, subtitle 
         <div className="vg-main">
           <Topbar title={title} onMenuClick={handleToggleSidebar} />
           <main className="vg-content">
-            <header className="vg-page-header">
-              <h1 className="vg-page-title">{title}</h1>
-              {subtitle ? <p className="vg-page-subtitle">{subtitle}</p> : null}
-            </header>
+            {!hidePageHeader ? (
+              <header className="vg-page-header">
+                <h1 className="vg-page-title">{title}</h1>
+                {subtitle ? <p className="vg-page-subtitle">{subtitle}</p> : null}
+              </header>
+            ) : null}
             {children}
           </main>
           <footer className="vg-footer">

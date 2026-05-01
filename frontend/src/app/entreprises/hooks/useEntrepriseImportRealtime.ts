@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { getApiBaseUrl } from "../../../services/httpClient";
 import type { ImportProgressCounters } from "../types";
 
@@ -9,11 +9,22 @@ export function useEntrepriseImportRealtime(opts: {
   onOsintEvent?: (payload: { type: "osint.profile.completed" | "osint.profile.failed"; data?: any }) => void;
 }) {
   const { activeBatchId, onProgress, onCompleted, onOsintEvent } = opts;
+  const onProgressRef = useRef(onProgress);
+  const onCompletedRef = useRef(onCompleted);
+  const onOsintEventRef = useRef(onOsintEvent);
+
+  useEffect(() => {
+    onProgressRef.current = onProgress;
+    onCompletedRef.current = onCompleted;
+    onOsintEventRef.current = onOsintEvent;
+  }, [onProgress, onCompleted, onOsintEvent]);
 
   useEffect(() => {
     const apiBase = getApiBaseUrl();
-    const wsBase = apiBase.replace(/^http/, "ws").replace(/\/api\/v1$/, "");
-    const wsUrl = `${wsBase}/ws/events`;
+    const wsUrl =
+      typeof window !== "undefined"
+        ? `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws/events`
+        : apiBase.replace(/^http/, "ws").replace(/\/api\/v1$/, "/ws/events");
 
     let ws: WebSocket | null = null;
     let pingTimer: number | null = null;
@@ -42,11 +53,11 @@ export function useEntrepriseImportRealtime(opts: {
         const processed = imported + skippedWebsite + skippedInvalid + skippedDuplicates;
         const pct = total > 0 ? Math.min(100, Math.max(0, Math.round((processed / total) * 100))) : null;
 
-        onProgress(pct, { imported, skippedWebsite, skippedInvalid, skippedDuplicates });
+        onProgressRef.current(pct, { imported, skippedWebsite, skippedInvalid, skippedDuplicates });
         if (!completed && total > 0 && processed >= total) {
           completed = true;
-          onProgress(100, null);
-          onCompleted();
+          onProgressRef.current(100, null);
+          onCompletedRef.current();
         }
       } catch {
         // ignore
@@ -91,7 +102,7 @@ export function useEntrepriseImportRealtime(opts: {
             const current = Number(payload.data?.current ?? 0);
             const total = Number(payload.data?.total_rows ?? 0);
             const pct = total > 0 ? Math.min(100, Math.max(0, Math.round((current / total) * 100))) : null;
-            onProgress(pct, {
+            onProgressRef.current(pct, {
               imported: Number(payload.data?.imported_rows ?? 0),
               skippedWebsite: Number(payload.data?.skipped_with_website ?? 0),
               skippedInvalid: Number(payload.data?.skipped_invalid ?? 0),
@@ -102,12 +113,12 @@ export function useEntrepriseImportRealtime(opts: {
           if (payload.type === "entreprise.import.completed") {
             currentBatchId = Number(payload.data?.batch_id ?? 0) || currentBatchId;
             completed = true;
-            onProgress(100, null);
-            onCompleted();
+            onProgressRef.current(100, null);
+            onCompletedRef.current();
           }
 
           if (payload.type === "osint.profile.completed" || payload.type === "osint.profile.failed") {
-            onOsintEvent?.({ type: payload.type, data: payload.data });
+            onOsintEventRef.current?.({ type: payload.type, data: payload.data });
           }
         } catch {
           // ignore
@@ -135,6 +146,6 @@ export function useEntrepriseImportRealtime(opts: {
         // ignore
       }
     };
-  }, [activeBatchId, onCompleted, onOsintEvent, onProgress]);
+  }, [activeBatchId]);
 }
 

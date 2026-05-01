@@ -5,7 +5,7 @@ Guide pour faire tourner VocalGuard en production sur un Raspberry Pi : service 
 ## Vue d'ensemble
 
 - **Service systemd** : VocalGuard tourne comme un service, redemarre en cas de crash, demarre au boot.
-- **Utilisateur** : par defaut `pi`, repertoire `~/VocalGuard`.
+- **Utilisateur** : configurable (ex: `pi`), repertoire deploiable (ex: `/opt/vocalguard`).
 - **Port** : 8000 (modifiable dans le fichier service ou la config).
 
 ## 0. Prerequis systeme (Raspberry Pi)
@@ -21,30 +21,25 @@ Voir [INSTALLATION.md](INSTALLATION.md) pour la liste complete.
 
 ## 1. Deployer le projet
 
-Suivre [scripts/DEPLOY_NODE14.md](../scripts/DEPLOY_NODE14.md) (build frontend + `RPI_HOST=pi@votre-rpi ./scripts/deploy_to_rpi.sh`).
+Suivre [scripts/DEPLOY_NODE14.md](../scripts/DEPLOY_NODE14.md) et lancer le script unique:
+`pwsh -File ./scripts/deploy_to_rpi.ps1 -AppServerUser pi -AppServerName app-node.lan -NginxServerUser pi -NginxServerName edge-node.lan -ConfigureNginx`.
 
-## 2. Installer le service systemd
+## 2. Installer/mettre a jour les services systemd
 
-Sur le Raspberry Pi, apres deploiement :
+Le script de deploiement genere et installe automatiquement les unites systemd:
+- `vocalguard.service` (API)
+- `vocalguard-celery.service` (worker Celery)
+- `vocalguard-frontend.service` (optionnel, Next.js standalone)
+- `vocalguard-test-modem.service` (optionnel)
 
-```bash
-ssh pi@votre-rpi
-cd ~/VocalGuard
-chmod +x scripts/install_service_rpi.sh
-./scripts/install_service_rpi.sh
-```
+Exemple:
 
-Le script copie `vocalguard.service` dans `/etc/systemd/system/`, adapte le chemin et l'utilisateur, puis active le service au demarrage.
-
-### Installation manuelle
-
-Si le repertoire ou l'utilisateur differe (ex. `/opt/VocalGuard`, user `vocalguard`) :
-
-```bash
-# Editer vocalguard.service : WorkingDirectory, User, Group, PATH, PYTHONPATH, ExecStart
-sudo cp vocalguard.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable vocalguard
+```powershell
+.\scripts\deploy_to_rpi.ps1 `
+  -AppServerUser "pi" -AppServerName "app-node.lan" `
+  -NginxServerUser "pi" -NginxServerName "edge-node.lan" `
+  -InstallServices $true -EnableFrontendService $false -EnableModemTestService $false `
+  -ConfigureNginx -RestartService -HealthCheck
 ```
 
 ## 3. Demarrer / arreter / redemarrer
@@ -54,6 +49,7 @@ sudo systemctl start vocalguard    # Demarrer
 sudo systemctl stop vocalguard     # Arreter
 sudo systemctl restart vocalguard  # Redemarrer
 sudo systemctl status vocalguard   # Statut
+sudo systemctl status vocalguard-celery
 ```
 
 ## 4. Logs
@@ -71,15 +67,15 @@ Une fois le service active (`systemctl enable vocalguard`), VocalGuard demarre a
 ## 6. Configuration production
 
 - **Fichier de config** : `~/VocalGuard/config/config.yaml` (ou `~/.vocalguard/config.yaml` selon la config). Creer depuis `config/config.example.yaml` si besoin.
-- **Variables d'environnement** : optionnellement mettre un `.env` dans `~/VocalGuard` (base de donnees, cles API, etc.). Le service n'expose pas d'env par defaut ; pour en ajouter, editer le fichier service et ajouter des lignes `Environment=...`.
-- **Base de donnees** : SQLite par defaut (`vocalguard.db` dans le repertoire du projet). Pour PostgreSQL en prod, definir `database_url` dans la config.
+- **Variables d'environnement** : gerer en prod via un fichier local `.env.prod` (non versionne), copie vers `.env` sur le serveur par `deploy_to_rpi.ps1`.
+  Le runtime charge `.env.prod` automatiquement quand `VG_ENV=prod`, sinon fallback `.env`.
+- **Base de donnees** : SQLite par defaut (`vocalguard.db` dans le repertoire du projet). Pour PostgreSQL en prod, definir `DATABASE_URL` (ou `database_url`) avec des credentials non exposes.
 
 ## 7. Fichiers concernes
 
 | Fichier | Role |
 |--------|------|
-| `vocalguard.service` | Unite systemd (ExecStart, User, WorkingDirectory, restart) |
-| `scripts/install_service_rpi.sh` | Installation et activation du service sur le RPi |
+| `scripts/deploy_to_rpi.ps1` | Deploiement complet + generation/installation des services systemd |
 | `run_backend.sh` | Lancement manuel (dev ou debug) |
 
 ## 8. Depannage

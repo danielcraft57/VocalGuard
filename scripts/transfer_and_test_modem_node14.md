@@ -1,10 +1,10 @@
 # Transfert vers Raspberry Pi et test modem
 
-Procedure pour transferer VocalGuard sur **pi@raspberrypi.local** et lancer le test modem (decrocher, jouer un WAV, enregistrer un message).
+Procedure pour transferer VocalGuard sur **pi@app-node.lan** et lancer le test modem (decrocher, jouer un WAV, enregistrer un message).
 
 ## Pre-requis
 
-- Acces SSH a `pi@raspberrypi.local`
+- Acces SSH a `pi@app-node.lan`
 - Modem USB branche sur le Raspberry Pi (port serie pour ATA/ATH)
 - Carte audio ou modem avec interface audio connectee a la ligne (ALSA)
 - Fichier WAV a jouer : generer avec `generate_intents_tts_examples.py` (ex. `ivr_wav/ivr_message.wav`) ou utiliser un WAV 8 kHz mono
@@ -13,29 +13,21 @@ Procedure pour transferer VocalGuard sur **pi@raspberrypi.local** et lancer le t
 
 Depuis ta machine (dans le dossier VocalGuard) :
 
-```bash
-# Avec variable d'environnement (bash/WSL/Git Bash)
-export RPI_HOST=pi@raspberrypi.local
-./scripts/deploy_to_rpi.sh
-```
-
-Sous PowerShell :
-
 ```powershell
-$env:RPI_HOST = "pi@raspberrypi.local"
-.\scripts\deploy_to_rpi.ps1
+$env:RPI_APP_SERVER = "app-node.lan"
+.\scripts\deploy_to_rpi.ps1 -AppServerUser "pi" -AppServerName "app-node.lan"
 ```
 
 Si tu n'as pas de script PowerShell, utilise rsync a la main :
 
 ```bash
-rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' --exclude '*.db' --exclude 'audio_cache' --exclude 'logs' -e ssh . pi@raspberrypi.local:~/VocalGuard/
+rsync -avz --exclude 'venv' --exclude '__pycache__' --exclude '.git' --exclude '*.db' --exclude 'audio_cache' --exclude 'logs' -e ssh . pi@app-node.lan:~/VocalGuard/
 ```
 
 Puis sur le Pi, installer les dependances si besoin :
 
 ```bash
-ssh pi@raspberrypi.local "cd ~/VocalGuard && source venv/bin/activate && pip install -r requirements.txt"
+ssh pi@app-node.lan "cd ~/VocalGuard && source venv/bin/activate && pip install -r requirements.txt"
 ```
 
 ## 2. Preparer le WAV et la config sur le Pi
@@ -50,7 +42,7 @@ Les WAV generes par `generate_intents_tts_examples.py` et par le flux IVR (test_
 SSH sur le Pi puis :
 
 ```bash
-ssh pi@raspberrypi.local
+ssh pi@app-node.lan
 cd ~/VocalGuard
 source venv/bin/activate
 python scripts/test_modem_answer_play_record.py
@@ -68,20 +60,18 @@ Arret : Ctrl+C.
 
 ## 3bis. Lancer le test modem en mode démon (service systemd)
 
-Pour ne pas avoir à laisser une session SSH ouverte et garder le test en écoute en permanence, tu peux utiliser le service systemd `vocalguard-test-modem.service` (à copier sur le Pi).
+Le service `vocalguard-test-modem.service` est désormais généré et installé automatiquement par `scripts/deploy_to_rpi.ps1`.
 
-1. Copier le service sur le Pi :
+Exemple :
 
-   ```bash
-   scp vocalguard-test-modem.service pi@raspberrypi.local:/tmp/
-   ssh pi@raspberrypi.local "sudo mv /tmp/vocalguard-test-modem.service /etc/systemd/system/"
-   ssh pi@raspberrypi.local "mkdir -p /home/pi/VocalGuard/logs"
-   ssh pi@raspberrypi.local "sudo systemctl daemon-reload"
-   ssh pi@raspberrypi.local "sudo systemctl enable vocalguard-test-modem.service"
-   ssh pi@raspberrypi.local "sudo systemctl start vocalguard-test-modem.service"
-   ```
+```powershell
+.\scripts\deploy_to_rpi.ps1 `
+  -AppServerUser "pi" -AppServerName "app-node.lan" `
+  -NginxServerUser "pi" -NginxServerName "edge-node.lan" `
+  -InstallServices $true -EnableModemTestService $true -RestartService
+```
 
-2. Le service tourne alors en tâche de fond, surveille les appels entrants et écrit les logs dans :
+Le service tourne alors en tâche de fond, surveille les appels entrants et écrit les logs dans :
 
    - `journalctl -u vocalguard-test-modem.service`
    - `/home/pi/VocalGuard/logs/test_modem_answer_play_record.log`

@@ -1,50 +1,18 @@
-# Environnement Python
+# Environnements Python
 venv/
 .venv/
 env/
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Environnement Node / frontend
-node_modules/
-.next/
-frontend/.next/
-frontend/node_modules/
-
-# Bases de données locales
-vocalguard.db
-*.sqlite
-*.sqlite3
-*.db-wal
-*.db-shm
-*.db-journal
-
-# Logs
-logs/
-*.log
-
-# Config sensibles
-.env
-env.example
-config/config.yaml
-
-# Caches divers
-.pytest_cache/
-.coverage
-dist/
-build/
-
-# Python
+ENV/
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+
+# Packaging / build Python
 build/
-develop-eggs/
 dist/
+develop-eggs/
 downloads/
 eggs/
 .eggs/
@@ -58,52 +26,63 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual environments
-venv/
-env/
-ENV/
-.venv
+# Frontend / Node / Next
+node_modules/
+.next/
+frontend/node_modules/
+frontend/.next/
+.turbo/
+frontend/.turbo/
+frontend/out/
+backend/web/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Configuration
-config/config.yaml
-config/.env
-config/intents_ivr.yaml
-
+# Bases de données locales
+vocalguard.db
 *.db
 *.sqlite
 *.sqlite3
+*.db-wal
+*.db-shm
+*.db-journal
 
 # Logs
 logs/
 *.log
 
-# Audio files
+# Config sensibles / locales
+.env
+.env.prod
+env.example
+config/.env
+config/config.yaml
+config/intents_ivr.yaml
+
+# Caches divers
+.pytest_cache/
+.coverage
+
+# Audio temporaires
 audio/
 recordings/
 *.wav
 *.mp3
 *.ogg
+ivr_wav/
+vosk-models/
+
+# Artefacts IA / ML locaux
+models/**/*.pkl
+models/**/*.joblib
+french_phone_data/
+
+# IDE / éditeurs
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+*~
 
 # OS
 .DS_Store
 Thumbs.db
-
-# Build frontend (export statique)
-frontend/out/
-backend/web/
-vosk-models/
-ivr_wav/
-
-# Données de référence téléphonie FR (générées/locales)
-french_phone_data/
-
-# Turbopack / Next caches
-.turbo/
-frontend/.turbo/
