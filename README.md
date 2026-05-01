@@ -158,6 +158,7 @@ VocalGuard/
 - [API Agenda](docs/AGENDA_API.md) - Endpoints agenda, settings et jours non travaillés
 - [Services de réputation](docs/REPUTATION_SERVICES.md) - NOMOROBO / SHOULDIANSWER (type callattendant)
 - [Mise en production (RPi)](docs/DEPLOYMENT_PROD.md) - Service systemd, demarrage au boot, logs
+- [CI/CD](docs/CI_CD.md) - Tests GitHub Actions, déploiement auto prod, cron update
 - [Résumé des améliorations](docs/IMPROVEMENTS_SUMMARY.md)
 - [Améliorations par rapport à callattendant](docs/IMPROVEMENTS.md)
 - [Test vocal (micro, patterns, intents)](scripts/README_VOICE_TEST.md)
