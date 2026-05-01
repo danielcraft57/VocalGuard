@@ -1,86 +1,70 @@
-# Deploiement sur votre-rpi
+# Deploiement prod (app + nginx)
 
-Guide rapide pour deployer VocalGuard sur `pi@votre-rpi`.
+Guide court pour deployer VocalGuard en prod avec:
+- application/backend sur `pi@app-node.lan`
+- reverse proxy Nginx sur `pi@edge-node.lan`
 
 ## Pre-requis
 
-- SSH configure vers `pi@votre-rpi` (cle SSH ou mot de passe)
-- Le Raspberry Pi doit avoir Python 3.9+ et pip installes
+- SSH fonctionnel vers `pi@app-node.lan` (app) et `pi@edge-node.lan` (nginx)
+- PowerShell + `ssh/scp/tar` disponibles localement
+- fichier local `.env.prod` renseigne (copie vers `.env` sur le serveur)
 
-## Etape 1 : Build du frontend (Windows)
+## Script unique
 
-Depuis la racine du projet VocalGuard :
-
-```powershell
-.\scripts\build_and_copy_frontend.ps1
-```
-
-Cela compile le frontend Next.js et copie le resultat dans `backend/web/`.
-
-## Etape 2 : Deploiement sur votre-rpi
-
-### Option A : Bash (WSL ou Git Bash)
-
-```bash
-RPI_HOST=pi@votre-rpi ./scripts/deploy_to_rpi.sh
-```
-
-### Option B : PowerShell
+Le script unique de deploiement est :
 
 ```powershell
-$env:RPI_HOST="pi@votre-rpi"
 .\scripts\deploy_to_rpi.ps1
 ```
 
-Ou directement :
+Par défaut, il cible:
+- app: `pi@app-node.lan`
+- nginx: `pi@edge-node.lan`
+- dossier app: `/opt/vocalguard`
+
+Options utiles :
 
 ```powershell
-.\scripts\deploy_to_rpi_simple.ps1
-# Puis saisir : pi@votre-rpi
+.\scripts\deploy_to_rpi.ps1 -AppServerUser "pi" -AppServerName "app-node.lan" -NginxServerUser "pi" -NginxServerName "edge-node.lan" -RestartService -ConfigureNginx
+.\scripts\deploy_to_rpi.ps1 -SkipFrontendBuild
+.\scripts\deploy_to_rpi.ps1 -NoSystemDeps
+.\scripts\deploy_to_rpi.ps1 -ConfigureNginx -RestartService -HealthCheck
+.\scripts\deploy_to_rpi.ps1 -RemoteDir "/opt/vocalguard"
 ```
 
-## Etape 3 : Lancer sur votre-rpi
+## Ce que fait le script
 
-SSH sur le Raspberry Pi, puis depuis `~/VocalGuard` :
+1. Verifie la connexion SSH.
+2. Build le frontend et copie dans `backend/web` (sauf `-SkipFrontendBuild`).
+3. Prepare le serveur (dossier, venv, deps systeme utiles).
+Le script gere automatiquement les droits sur `/opt/vocalguard`:
+- `sudo mkdir -p /opt/vocalguard`
+- `sudo chown -R <user>:<user> /opt/vocalguard`
+- `chmod` dossiers/fichiers pour execution et ecriture runtime.
+4. Synchronise le code (archive optimisee).
+5. Applique `.env.prod` -> `.env` sur le serveur avec backup auto.
+6. Ajoute `VG_ENV=prod` si absent.
+7. Installe/met a jour les dependances Python.
+8. Optionnel: restart `vocalguard` via systemd (`-RestartService`).
+9. Optionnel: configure/reload Nginx (`-ConfigureNginx`) sur le noeud edge, proxy vers app-node:8000.
+10. Optionnel: health checks automatiques (`-HealthCheck`) backend + nginx.
+
+## Verification rapide sur le Pi
 
 ```bash
-ssh pi@votre-rpi
+ssh pi@app-node.lan
 cd ~/VocalGuard
 source venv/bin/activate
-./run_backend.sh
+grep '^DATABASE_URL=' .env
+curl http://localhost:8000/health
+
+ssh pi@edge-node.lan
+curl -I http://edge-node.lan
 ```
 
-Le script `run_backend.sh` definit `PYTHONPATH` et lance `uvicorn backend.main:app` pour eviter l'erreur `No module named 'backend'`.
+## Remarques prod
 
-En arriere-plan :
-
-```bash
-mkdir -p logs
-nohup ./run_backend.sh > logs/vocalguard.log 2>&1 &
-```
-
-## Etape 4 : Acceder a l'interface
-
-- Frontend : http://votre-rpi.local:8000/ (ou IP du RPi)
-- API docs : http://votre-rpi.local:8000/docs
-
-## Mise en production (service systemd)
-
-Pour faire tourner VocalGuard en permanence (redemarrage auto, demarrage au boot) :
-
-```bash
-cd ~/VocalGuard
-chmod +x scripts/install_service_rpi.sh
-./scripts/install_service_rpi.sh
-sudo systemctl start vocalguard
-```
-
-Voir **docs/DEPLOYMENT_PROD.md** pour les details (logs, config, depannage).
-
-## Troubleshooting
-
-- **No module named 'backend'** : Utiliser `./run_backend.sh` (ou `PYTHONPATH=. uvicorn backend.main:app --host 0.0.0.0`) au lieu de `python -m backend.main`.
-- **Erreur SSH** : Verifier que `ssh pi@votre-rpi` fonctionne manuellement
-- **Erreur Python** : Installer Python 3.9+ sur le RPi
-- **Erreur build frontend** : Verifier que `npm run build` fonctionne localement
-- **Port 8000 occupe** : Changer `api_port` dans la config ou tuer le processus existant
+- `DATABASE_URL` doit pointer vers PostgreSQL en prod (`postgresql+psycopg2://...`).
+- Le script preserve les donnees runtime (`venv`, `logs`, `data`, `recordings`).
+- Voir `docs/DEPLOYMENT_PROD.md` pour la partie service systemd.

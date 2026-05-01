@@ -172,7 +172,7 @@ if env_path.exists():
         k, v = line.split("=", 1)
         env_map[k.strip()] = v.strip().strip('"').strip("'")
 
-broker = env_map.get("CELERY_BROKER_URL") or os.environ.get("CELERY_BROKER_URL") or "redis://node13.lan:6379/2"
+broker = env_map.get("CELERY_BROKER_URL") or os.environ.get("CELERY_BROKER_URL") or "redis://127.0.0.1:6379/2"
 backend = env_map.get("CELERY_RESULT_BACKEND") or os.environ.get("CELERY_RESULT_BACKEND") or broker
 
 def flush_if_redis(url: str) -> None:

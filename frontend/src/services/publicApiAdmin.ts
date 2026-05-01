@@ -50,7 +50,10 @@ export interface PublicApiTokenCreatePayload {
 
 function buildHeaders(): HeadersInit {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  const safeAdminToken = (process.env.NEXT_PUBLIC_PUBLIC_API_ADMIN_TOKEN ?? "").trim();
+  let safeAdminToken = (process.env.NEXT_PUBLIC_PUBLIC_API_ADMIN_TOKEN ?? "").trim();
+  if (!safeAdminToken && typeof window !== "undefined") {
+    safeAdminToken = (window.localStorage.getItem("vg_public_api_admin_token") ?? "").trim();
+  }
   if (safeAdminToken) headers["x-admin-token"] = safeAdminToken;
   return headers;
 }

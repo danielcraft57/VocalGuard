@@ -39,7 +39,8 @@ import {
 export default function ApiManagementPage() {
   const [docs, setDocs] = useState<PublicApiDocsPayload | null>(null);
   const [tokens, setTokens] = useState<PublicApiToken[]>([]);
-  const [appUrl, setAppUrl] = useState("https://danielcraft.fr");
+  const [adminToken, setAdminToken] = useState("");
+  const [appUrl, setAppUrl] = useState("https://example.com");
   const [canReadAgenda, setCanReadAgenda] = useState(true);
   const [canWriteAgenda, setCanWriteAgenda] = useState(true);
   const [canWriteEntreprises, setCanWriteEntreprises] = useState(true);
@@ -50,6 +51,10 @@ export default function ApiManagementPage() {
   const [showSystemTokens, setShowSystemTokens] = useState(false);
   const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    setAdminToken((window.localStorage.getItem("vg_public_api_admin_token") ?? "").trim());
+  }, []);
   useEffect(() => {
     fetchPublicApiDocs().then(setDocs).catch(() => null);
   }, []);
@@ -67,10 +72,28 @@ export default function ApiManagementPage() {
       setTokens(rows);
       setSuccess(`${rows.length} token(s) chargé(s).`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Chargement impossible.");
+      const message = err instanceof Error ? err.message : "Chargement impossible.";
+      if (message.includes("(401)")) {
+        setError("401: renseigne le token admin puis clique sur Rafraîchir.");
+      } else {
+        setError(message);
+      }
     } finally {
       setBusy(false);
     }
+  };
+
+  const saveAdminToken = () => {
+    if (typeof window === "undefined") return;
+    const cleaned = adminToken.trim();
+    if (cleaned) {
+      window.localStorage.setItem("vg_public_api_admin_token", cleaned);
+      setSuccess("Token admin enregistré dans ce navigateur.");
+    } else {
+      window.localStorage.removeItem("vg_public_api_admin_token");
+      setSuccess("Token admin supprimé de ce navigateur.");
+    }
+    setError(null);
   };
 
   const onCreate = async () => {
@@ -185,11 +208,23 @@ export default function ApiManagementPage() {
             </Typography>
             <Stack spacing={2}>
               <TextField
+                label="Token admin API (x-admin-token)"
+                value={adminToken}
+                onChange={(e) => setAdminToken(e.target.value)}
+                fullWidth
+                placeholder="Colle ici le token admin pour gérer les tokens"
+              />
+              <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                <Button variant="outlined" onClick={saveAdminToken}>
+                  Enregistrer le token admin
+                </Button>
+              </Box>
+              <TextField
                 label="URL du site"
                 value={appUrl}
                 onChange={(e) => setAppUrl(e.target.value)}
                 fullWidth
-                placeholder="https://danielcraft.fr"
+                placeholder="https://example.com"
               />
               <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
                 <Chip

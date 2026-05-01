@@ -64,7 +64,7 @@ $results = @()
 
 # 1) Génération token
 $createTokenPayload = @{
-    app_url = "https://danielcraft.fr"
+    app_url = "https://example.com"
     name = "integration-tests-public-api"
     can_read_agenda = $true
     can_write_agenda = $true
@@ -122,9 +122,9 @@ if ($createEntreprise.ok -and $createEntreprise.body.id) {
 # 4) Clients
 $createClientPayload = @{
     entreprise_id = $entrepriseId
-    name = "Loic Daniel"
-    email = "loic5488@gmail.com"
-    phone_number = "03 87 78 09 16"
+    name = "Alex Martin"
+    email = "alex.martin@example.test"
+    phone_number = "+33 1 23 45 67 89"
     notes = "Client test API publique"
 }
 $createClient = Invoke-Api -Name "POST /public/clients" -Method "POST" -Url "$base/public/clients" -Headers $authHeaders -Body $createClientPayload
@@ -175,11 +175,11 @@ $results += Invoke-Api -Name "POST /public/agenda/booking" -Method "POST" -Url "
     service = "site_vitrine"
     budget = "1200"
     project_type = "web"
-    name = "Loic Daniel"
+    name = "Alex Martin"
     company_name = "Entreprise Test API Public"
-    email = "loic5488@gmail.com"
-    emails = @("loic5488@gmail.com", "contact@example.test")
-    phone = "03 87 78 09 16"
+    email = "alex.martin@example.test"
+    emails = @("alex.martin@example.test", "contact@example.test")
+    phone = "+33 1 23 45 67 89"
     website = "https://example.test"
     city = "Nancy"
     country = "France"

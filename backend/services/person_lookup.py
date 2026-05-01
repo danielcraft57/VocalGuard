@@ -5,9 +5,12 @@ Intègre plusieurs sources pour obtenir nom, prénom, adresse, entreprise
 
 import os
 import re
+import time
 from typing import Dict, Optional, Any
 from loguru import logger
 import httpx
+
+from backend.services.external_api_metrics import external_api_metrics
 
 
 class PersonLookupService:
@@ -15,6 +18,9 @@ class PersonLookupService:
     Service pour rechercher des informations sur une personne ou entreprise
     """
     
+    _sirene_disabled_until: float = 0.0
+    _sirene_auth_warned: bool = False
+
     def __init__(self):
         """Initialise le service de recherche"""
         # Clés API optionnelles
@@ -136,6 +142,7 @@ class PersonLookupService:
                         "Type": "caller-name"
                     }
                 )
+                external_api_metrics.record("twilio_lookup", response.status_code == 200)
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -146,6 +153,7 @@ class PersonLookupService:
                     }
         except Exception as e:
             logger.debug(f"Erreur Twilio Lookup: {e}")
+            external_api_metrics.record("twilio_lookup", False)
         
         return {}
     
@@ -171,6 +179,10 @@ class PersonLookupService:
         """
         if not self.sirene_api_key:
             logger.debug("Clé API Sirene non configurée. Voir https://portail-api.insee.fr/ pour obtenir l'accès")
+            return {}
+
+        now = time.monotonic()
+        if now < self.__class__._sirene_disabled_until:
             return {}
         
         try:
@@ -199,6 +211,7 @@ class PersonLookupService:
                 }
                 
                 response = await client.get(url, headers=headers, params=params)
+                external_api_metrics.record("sirene", response.status_code == 200)
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -216,12 +229,21 @@ class PersonLookupService:
                             'company_postal_code': etablissement.get('adresseEtablissement', {}).get('codePostalEtablissement'),
                             'company_activity': unite_legale.get('activitePrincipaleUniteLegale'),
                         }
+                elif response.status_code == 401:
+                    # Token/API key invalide: on coupe temporairement Sirene pour éviter de spammer le serveur.
+                    self.__class__._sirene_disabled_until = time.monotonic() + 1800  # 30 min
+                    if not self.__class__._sirene_auth_warned:
+                        logger.warning(
+                            "API Sirene retourne 401 (Unauthorized). Sirene désactivée 30 min. Vérifier SIRENE_API_KEY."
+                        )
+                        self.__class__._sirene_auth_warned = True
                 elif response.status_code == 404:
                     logger.debug(f"Aucun établissement trouvé pour le téléphone {clean_phone}")
                 else:
                     logger.debug(f"Erreur API Sirene: {response.status_code} - {response.text}")
         except Exception as e:
             logger.debug(f"Erreur API Sirene: {e}")
+            external_api_metrics.record("sirene", False)
         
         return {}
     

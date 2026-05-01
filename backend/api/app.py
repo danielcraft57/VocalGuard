@@ -3,6 +3,7 @@ Application FastAPI principale
 """
 
 import asyncio
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -34,6 +35,9 @@ from backend.api.routes import (
 )
 from backend.database import database as db_module
 
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
 
 def create_app(config: Config) -> FastAPI:
     """
@@ -48,7 +52,7 @@ def create_app(config: Config) -> FastAPI:
     app = FastAPI(
         title="VocalGuard API",
         description="API REST pour VocalGuard - Système de gestion d'appels avec interface vocale",
-        version="1.0.0"
+        version="0.8"
     )
     
     # CORS
@@ -166,7 +170,7 @@ def create_app(config: Config) -> FastAPI:
             return FileResponse(str(index_path))
         return {
             "name": "VocalGuard API",
-            "version": "1.0.0",
+            "version": "0.8",
             "status": "running",
             "docs": "/docs"
         }

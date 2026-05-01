@@ -178,12 +178,12 @@ async def tokens_docs() -> dict:
                         "service": "site_vitrine",
                         "budget": "1500",
                         "project_type": "web",
-                        "name": "Loïc Daniel",
-                        "company_name": "DanielCraft",
-                        "email": "contact@danielcraft.fr",
-                        "emails": ["contact@danielcraft.fr", "loic5488@gmail.com"],
-                        "phone": "03 87 78 09 16",
-                        "website": "https://danielcraft.fr",
+                        "name": "Alex Martin",
+                        "company_name": "Acme Studio",
+                        "email": "contact@example.com",
+                        "emails": ["contact@example.com", "sales@example.com"],
+                        "phone": "+33 1 23 45 67 89",
+                        "website": "https://example.com",
                         "message": "Demande issue du formulaire public",
                     },
                 },
@@ -191,7 +191,7 @@ async def tokens_docs() -> dict:
                     "201": {
                         "example": {
                             "id": 44,
-                            "title": "RDV site - Loïc Daniel - site_vitrine",
+                            "title": "RDV site - Alex Martin - site_vitrine",
                             "start_time": "2026-05-06T11:00:00",
                             "end_time": "2026-05-06T12:00:00",
                         }
@@ -241,16 +241,16 @@ async def tokens_docs() -> dict:
                     "headers": ["Authorization: Bearer <token>"],
                     "query": {},
                     "body": {
-                        "name": "DanielCraft",
-                        "phone_number": "03 87 78 09 16",
-                        "website": "https://danielcraft.fr",
+                        "name": "Acme Studio",
+                        "phone_number": "+33 1 23 45 67 89",
+                        "website": "https://example.com",
                         "city": "Metz",
                         "country": "France",
-                        "emails": ["contact@danielcraft.fr", "hello@danielcraft.fr"],
+                        "emails": ["contact@example.com", "hello@example.com"],
                     },
                 },
                 "responses": {
-                    "201": {"example": {"id": 7, "name": "DanielCraft", "emails": ["contact@danielcraft.fr"]}},
+                    "201": {"example": {"id": 7, "name": "Acme Studio", "emails": ["contact@example.com"]}},
                     "400": {"example": {"detail": "Payload invalide"}},
                 },
             },
@@ -263,10 +263,10 @@ async def tokens_docs() -> dict:
                 "request": {
                     "headers": ["Authorization: Bearer <token>"],
                     "query": {},
-                    "body": {"city": "Nancy", "emails": ["contact@danielcraft.fr"]},
+                    "body": {"city": "Nancy", "emails": ["contact@example.com"]},
                 },
                 "responses": {
-                    "200": {"example": {"id": 7, "city": "Nancy", "emails": ["contact@danielcraft.fr"]}},
+                    "200": {"example": {"id": 7, "city": "Nancy", "emails": ["contact@example.com"]}},
                     "404": {"example": {"detail": "Entreprise introuvable."}},
                 },
             },
@@ -283,9 +283,9 @@ async def tokens_docs() -> dict:
                             {
                                 "id": 10,
                                 "entreprise_id": 7,
-                                "name": "Loïc Daniel",
-                                "email": "loic5488@gmail.com",
-                                "phone_number": "03 87 78 09 16",
+                                "name": "Alex Martin",
+                                "email": "alex.martin@example.com",
+                                "phone_number": "+33 1 23 45 67 89",
                             }
                         ]
                     }
@@ -302,13 +302,13 @@ async def tokens_docs() -> dict:
                     "query": {},
                     "body": {
                         "entreprise_id": 7,
-                        "name": "Loïc Daniel",
-                        "email": "loic5488@gmail.com",
-                        "phone_number": "03 87 78 09 16",
+                        "name": "Alex Martin",
+                        "email": "alex.martin@example.com",
+                        "phone_number": "+33 1 23 45 67 89",
                         "notes": "Contact principal",
                     },
                 },
-                "responses": {"201": {"example": {"id": 11, "entreprise_id": 7, "name": "Loïc Daniel"}}},
+                "responses": {"201": {"example": {"id": 11, "entreprise_id": 7, "name": "Alex Martin"}}},
             },
             {
                 "method": "GET",
@@ -343,7 +343,7 @@ async def tokens_docs() -> dict:
                     "query": {},
                     "body": {
                         "client_id": 11,
-                        "phone_number": "03 87 78 09 16",
+                        "phone_number": "+33 1 23 45 67 89",
                         "title": "Pack identité",
                         "lines": [{"description": "Création site", "quantity": 1, "unit_price": 1500}],
                         "notes": "Priorité haute",
@@ -388,12 +388,14 @@ async def tokens_docs() -> dict:
 
 
 @router.get("", response_model=List[PublicApiTokenResponse], dependencies=[Depends(_require_token_admin)])
+@router.get("/", response_model=List[PublicApiTokenResponse], dependencies=[Depends(_require_token_admin)])
 async def list_tokens(db: Session = Depends(get_db)) -> List[PublicApiTokenResponse]:
     rows = db.query(ApiPublicToken).order_by(ApiPublicToken.created_at.desc()).all()
     return [_to_token_response(x, include_token=False) for x in rows]
 
 
 @router.post("", response_model=PublicApiTokenResponse, status_code=201, dependencies=[Depends(_require_token_admin)])
+@router.post("/", response_model=PublicApiTokenResponse, status_code=201, dependencies=[Depends(_require_token_admin)])
 async def create_token(payload: PublicApiTokenCreate, db: Session = Depends(get_db)) -> PublicApiTokenResponse:
     url = (payload.app_url or "").strip()
     if not url:

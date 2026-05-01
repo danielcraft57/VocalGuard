@@ -16,6 +16,7 @@ import httpx
 
 from backend.core.config import Config
 from backend.services.commercial_detector import CommercialDetector
+from backend.services.external_api_metrics import external_api_metrics
 from backend.services.french_phone_detector import FrenchPhoneDetector
 from backend.services.person_lookup import PersonLookupService
 from backend.services.reputation_providers import check_nomorobo, check_shouldianswer
@@ -375,8 +376,6 @@ class OSINTService:
             Informations depuis phoneinfoga
         """
         try:
-            logger.debug(f"Interrogation phoneinfoga pour {phone_number}")
-            
             # Exécuter phoneinfoga via subprocess
             # Note: phoneinfoga peut être utilisé via API ou CLI
             cmd = ["phoneinfoga", "scan", "-n", phone_number, "-o", "json"]
@@ -391,6 +390,7 @@ class OSINTService:
             stdout, stderr = await process.communicate()
             
             if process.returncode == 0:
+                external_api_metrics.record("phoneinfoga", True)
                 try:
                     data = json.loads(stdout.decode())
                     return {
@@ -402,6 +402,8 @@ class OSINTService:
                     }
                 except json.JSONDecodeError:
                     logger.warning("Impossible de parser la réponse phoneinfoga")
+            else:
+                external_api_metrics.record("phoneinfoga", False)
             
         except FileNotFoundError:
             logger.warning("phoneinfoga non trouvé")
@@ -421,8 +423,6 @@ class OSINTService:
             Informations depuis Truecaller
         """
         try:
-            logger.debug(f"Interrogation Truecaller pour {phone_number}")
-            
             # Utiliser truecallerpy si disponible
             try:
                 import truecallerpy
@@ -434,14 +434,16 @@ class OSINTService:
                     "name": None,  # À remplir avec l'API
                     "address": None,
                 }
-                
+                external_api_metrics.record("truecaller", True)
                 return result
                 
             except ImportError:
                 logger.warning("truecallerpy non installé")
+                external_api_metrics.record("truecaller", False)
         
         except Exception as e:
             logger.exception(f"Erreur lors de l'interrogation Truecaller: {e}")
+            external_api_metrics.record("truecaller", False)
         
         return {}
     
@@ -635,8 +637,6 @@ class OSINTService:
             return {}
         
         try:
-            logger.debug(f"Interrogation NumLookup pour {phone_number}")
-            
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(
                     f"https://api.numlookupapi.com/v1/validate",
@@ -645,6 +645,7 @@ class OSINTService:
                         "apikey": self.numlookup_api_key
                     }
                 )
+                external_api_metrics.record("numlookup", response.status_code == 200)
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -657,6 +658,7 @@ class OSINTService:
                     }
         except Exception as e:
             logger.exception(f"Erreur lors de l'interrogation NumLookup: {e}")
+            external_api_metrics.record("numlookup", False)
         
         return {}
     
@@ -674,8 +676,6 @@ class OSINTService:
             return {}
         
         try:
-            logger.debug(f"Interrogation OpenCNAM pour {phone_number}")
-            
             # Nettoyer le numéro pour OpenCNAM (format E.164)
             clean_number = self._clean_phone_number(phone_number)
             if not clean_number.startswith('+'):
@@ -689,6 +689,7 @@ class OSINTService:
                         "auth_token": self.opencnam_api_key
                     }
                 )
+                external_api_metrics.record("opencnam", response.status_code == 200)
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -698,6 +699,7 @@ class OSINTService:
                     }
         except Exception as e:
             logger.exception(f"Erreur lors de l'interrogation OpenCNAM: {e}")
+            external_api_metrics.record("opencnam", False)
         
         return {}
     
@@ -715,8 +717,6 @@ class OSINTService:
             return {}
         
         try:
-            logger.debug(f"Interrogation NumVerify pour {phone_number}")
-            
             async with httpx.AsyncClient(timeout=10.0) as client:
                 response = await client.get(
                     "http://apilayer.net/api/validate",
@@ -725,6 +725,7 @@ class OSINTService:
                         "number": phone_number
                     }
                 )
+                external_api_metrics.record("numverify", response.status_code == 200)
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -738,6 +739,7 @@ class OSINTService:
                         }
         except Exception as e:
             logger.exception(f"Erreur lors de l'interrogation NumVerify: {e}")
+            external_api_metrics.record("numverify", False)
         
         return {}
     
@@ -755,8 +757,6 @@ class OSINTService:
             return {}
         
         try:
-            logger.debug(f"Interrogation HLR Lookup pour {phone_number}")
-            
             # Nettoyer le numéro pour HLR (format E.164)
             clean_number = self._clean_phone_number(phone_number)
             if not clean_number.startswith('+'):
@@ -770,6 +770,7 @@ class OSINTService:
                         "number": clean_number
                     }
                 )
+                external_api_metrics.record("hlr_lookup", response.status_code == 200)
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -781,6 +782,7 @@ class OSINTService:
                     }
         except Exception as e:
             logger.exception(f"Erreur lors de l'interrogation HLR Lookup: {e}")
+            external_api_metrics.record("hlr_lookup", False)
         
         return {}
 

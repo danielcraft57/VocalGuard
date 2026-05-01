@@ -11,6 +11,8 @@ from typing import Any, Dict, Optional
 import httpx
 from loguru import logger
 
+from backend.services.external_api_metrics import external_api_metrics
+
 
 NOMOROBO_CHECK_URL = "https://api.nomorobo.com/v2/check"
 
@@ -72,6 +74,7 @@ async def check_nomorobo(
                     "Accept": "application/json",
                 },
             )
+            external_api_metrics.record("nomorobo", response.status_code == 200)
             if response.status_code != 200:
                 logger.warning("Nomorobo API: status {} pour {}", response.status_code, phone_number)
                 return {}
@@ -95,6 +98,7 @@ async def check_nomorobo(
             }
     except Exception as e:
         logger.warning("Nomorobo: erreur pour {}: {}", phone_number, e)
+        external_api_metrics.record("nomorobo", False)
     return {}
 
 

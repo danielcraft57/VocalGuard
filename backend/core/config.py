@@ -131,6 +131,29 @@ class Config(BaseSettings):
     
     def _apply_env_overrides(self) -> None:
         """Réapplique les variables d'environnement (.env) pour que .env prime sur le YAML."""
+        # Runtime/prod-critical overrides (DB, queue, API) to avoid YAML forcing SQLite in production.
+        if os.environ.get("DATABASE_URL"):
+            self.database_url = os.environ.get("DATABASE_URL", "").strip()
+        if os.environ.get("CELERY_BROKER_URL"):
+            self.celery_broker_url = os.environ.get("CELERY_BROKER_URL", "").strip() or None
+        if os.environ.get("CELERY_RESULT_BACKEND"):
+            self.celery_result_backend = os.environ.get("CELERY_RESULT_BACKEND", "").strip() or None
+        if os.environ.get("API_HOST"):
+            self.api_host = os.environ.get("API_HOST", "").strip() or self.api_host
+        if os.environ.get("API_PORT"):
+            try:
+                self.api_port = int(os.environ.get("API_PORT", "").strip())
+            except ValueError:
+                pass
+        if os.environ.get("API_DEBUG"):
+            self.api_debug = os.environ.get("API_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
+        if os.environ.get("API_PUBLIC_ADMIN_TOKEN"):
+            self.api_public_admin_token = os.environ.get("API_PUBLIC_ADMIN_TOKEN", "").strip() or None
+        if os.environ.get("PUBLIC_BASE_URL"):
+            self.public_base_url = os.environ.get("PUBLIC_BASE_URL", "").strip() or self.public_base_url
+        if os.environ.get("AGENDA_PUBLIC_SECRET"):
+            self.agenda_public_secret = os.environ.get("AGENDA_PUBLIC_SECRET", "").strip() or self.agenda_public_secret
+
         if os.environ.get("VOICE_RECOGNITION_ENGINE"):
             self.voice_recognition_engine = os.environ.get("VOICE_RECOGNITION_ENGINE", "").strip().lower()
         if os.environ.get("VOICE_SYNTHESIS_ENGINE"):
