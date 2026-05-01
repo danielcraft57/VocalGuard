@@ -7,24 +7,35 @@ Ce projet inclut maintenant :
   - frontend: `npm ci` + `npm run build`
 - **CD prod** : `.github/workflows/cd-prod.yml`
   - déclenché sur push `master`
-  - connexion SSH au serveur de prod
-  - exécution `scripts/prod_auto_update.sh`
+  - mode **pull-based** (pas de SSH direct depuis GitHub)
+  - le serveur met à jour via `scripts/prod_auto_update.sh` (cron)
 
-## Secrets GitHub requis
+## Pourquoi pas de SSH direct GitHub -> node11.lan ?
 
-Dans `Settings > Secrets and variables > Actions` :
+`node11.lan` est un hostname privé LAN, inaccessible depuis les runners GitHub hébergés.
+Donc la stratégie fiable est :
 
-- `PROD_HOST` : host SSH du serveur app (ex: `node11.lan`)
-- `PROD_USER` : utilisateur SSH (ex: `pi`)
-- `PROD_SSH_KEY` : clé privée SSH (format OpenSSH)
+1. merge sur `master`
+2. workflow CI/CD valide le push
+3. cron sur `node11` fait `fetch/pull + restart`
 
-Optionnel pour email custom en cas d'échec CD :
+## Secrets GitHub (optionnels)
+
+Aucun secret n'est requis pour le mode pull-based.
+
+Optionnel uniquement pour des mails custom :
 
 - `SMTP_SERVER`
 - `SMTP_USERNAME`
 - `SMTP_PASSWORD`
 - `ALERT_EMAIL_TO`
 - `ALERT_EMAIL_FROM` (optionnel)
+
+Script d'aide (local) :
+
+```bash
+bash scripts/setup_github_secrets.sh
+```
 
 ## Auto-update via cron (fallback / complément)
 
@@ -48,5 +59,4 @@ Tu reçois déjà des emails GitHub si les notifications sont actives :
 2. cocher les emails pour `Actions` / `Pull requests` selon ton besoin
 3. dans le repo: `Watch > Custom > Actions`
 
-Pas besoin d’un script mail séparé si la config GitHub est activée.  
-Le mail SMTP dans le workflow reste une option supplémentaire.
+Pas besoin d’un script mail séparé si la config GitHub est activée.
