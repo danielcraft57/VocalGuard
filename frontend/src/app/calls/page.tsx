@@ -219,7 +219,7 @@ export default function CallsPage() {
   dialerCallIdRef.current = dialerCallId;
 
   const audioActive = dialerCallId !== null && (dialerStatus === "dialing" || dialerStatus === "connected");
-  useOutgoingCallAudio(dialerCallId, audioActive && liveListen, audioActive && liveMic);
+  useOutgoingCallAudio(dialerCallId, audioActive && liveListen, audioActive && liveMic, dialerStatus);
 
   useEffect(() => {
     if (!dialerOpen) return;

@@ -8,6 +8,7 @@ from backend.telephony_daemon.factory import create_telephony_app
 
 def test_create_telephony_app_exposes_health_and_calls_routes() -> None:
     app = create_telephony_app(Config())
+    assert getattr(app.state, "is_vocalguard_telephony_daemon", False) is True
     paths = [getattr(r, "path", "") or "" for r in app.routes]
     assert "/health" in paths
     assert any(p.endswith("/calls/outgoing/start") for p in paths)

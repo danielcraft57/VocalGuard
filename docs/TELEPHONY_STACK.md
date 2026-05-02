@@ -13,7 +13,7 @@ Sur une même machine (ex. Raspberry Pi), les deux peuvent coexister avec `TELEP
 
 | Variable | Où | Rôle |
 |----------|-----|------|
-| `USE_TELEPHONY_DAEMON` | API principale | `1` : pas d’ouverture du modem dans ce processus ; proxification des routes sortantes vers `TELEPHONY_DAEMON_URL`. |
+| `USE_TELEPHONY_DAEMON` | API principale | `1` : pas d’ouverture du modem dans ce processus ; proxification des routes sortantes vers `TELEPHONY_DAEMON_URL`. **Sur le service `vocalguard-telephony`, cette valeur est ignorée** (le daemon traite toujours les appels en local). |
 | `TELEPHONY_DAEMON_URL` | API principale | URL du daemon (ex. `http://node11.lan:8090`). |
 | `TELEPHONY_PUBLIC_API_URL` | **Daemon** | URL joignable **depuis le Pi** vers l’API qui reçoit les événements (ex. `http://192.168.x.x:8000` si l’API tourne sur un PC). |
 | `TELEPHONY_INTERNAL_TOKEN` | API + daemon | Même secret pour l’en-tête `X-VocalGuard-Internal` sur `/internal/telephony-events`. |

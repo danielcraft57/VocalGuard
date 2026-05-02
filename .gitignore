@@ -34,6 +34,7 @@ frontend/.next/
 .turbo/
 frontend/.turbo/
 frontend/out/
+frontend/tsconfig.tsbuildinfo
 backend/web/
 
 # Bases de données locales

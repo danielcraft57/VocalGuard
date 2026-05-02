@@ -1,0 +1,29 @@
+# Logging uvicorn pour vocalguard-telephony : date/heure sur chaque ligne (logs fichier ou journal).
+version: 1
+disable_existing_loggers: false
+formatters:
+  dated:
+    class: logging.Formatter
+    format: "%(asctime)s | %(levelname)s | %(message)s"
+    datefmt: "%Y-%m-%d %H:%M:%S"
+handlers:
+  stderr:
+    class: logging.StreamHandler
+    formatter: dated
+    stream: ext://sys.stderr
+loggers:
+  uvicorn:
+    handlers: [stderr]
+    level: INFO
+    propagate: false
+  uvicorn.error:
+    handlers: [stderr]
+    level: INFO
+    propagate: false
+  uvicorn.access:
+    handlers: [stderr]
+    level: INFO
+    propagate: false
+root:
+  level: WARNING
+  handlers: [stderr]

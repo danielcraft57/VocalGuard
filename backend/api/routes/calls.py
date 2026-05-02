@@ -50,6 +50,18 @@ def _telephony_daemon_base(request: Request, config: Config) -> str:
     return str(base).strip().rstrip("/")
 
 
+def _should_proxy_outgoing_to_daemon(config: Config, request: Request) -> bool:
+    """
+    Le service vocalguard-telephony traite les routes sortantes en local : ne jamais proxifier.
+
+    Sinon avec USE_TELEPHONY_DAEMON=1 dans .env du Pi, le daemon se rappelle en boucle via httpx
+    jusqu'à OSError « Too many open files ».
+    """
+    if getattr(request.app.state, "is_vocalguard_telephony_daemon", False):
+        return False
+    return bool(config.use_telephony_daemon)
+
+
 async def _proxy_outgoing_to_telephony(
     request: Request, config: Config, path: str, json_body: Optional[dict] = None
 ) -> OutgoingCallActionResponse:
@@ -180,6 +192,7 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
     call_service = call_manager.call_service
     modem = call_manager.modem
     arecord_proc: Optional[asyncio.subprocess.Process] = None
+    alsa_reader_task: Optional[asyncio.Task] = None
     finalize_completion = True
     end_reason = "hangup"
     end_error: Optional[str] = None
@@ -243,30 +256,34 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
         else:
             await _stt_flush_legacy(stt_buffer)
 
+    alsa_raw = bytearray()
+    serial_pcm_chunks: list[bytes] = []
     try:
-        await _publish_log(session.call_id, session.phone_number, f"Composition vers {session.phone_number} (ATD)")
-        dial_ok, raw = await modem.dial_number(session.phone_number)
-        preview = (raw or "").replace("\r\n", " ")[:420]
-        await _publish_log(session.call_id, session.phone_number, f"Reponse modem: {preview!r}")
-        if not dial_ok:
-            await _publish_log(session.call_id, session.phone_number, "Echec composition (pas OK/CONNECT)", "error")
-            await call_service.miss_call(session.call_id)
-            await _publish_state(
-                EventType.CALL_OUTGOING_ENDED,
-                session.call_id,
-                session.phone_number,
-                reason="dial_failed",
-                modem_response=raw,
-            )
-            finalize_completion = False
-            return
-        await call_service.answer_call(session.call_id)
-        await _publish_state(EventType.CALL_OUTGOING_CONNECTED, session.call_id, session.phone_number)
-        await _publish_log(session.call_id, session.phone_number, "Ligne connectee")
-        vosk_stream_ok = call_manager.voice_recognition.outgoing_stream_start(stream_key)
+        stt_allowed = {"ok": False}
 
-        alsa_raw = bytearray()
-        serial_pcm_chunks: list[bytes] = []
+        await _publish_log(session.call_id, session.phone_number, f"Composition vers {session.phone_number} (ATD)")
+
+        async def _alsa_capture_loop() -> None:
+            """Lit arecord en continu : ligne vers WebSocket des le decroche avant CONNECT ; STT seulement apres ligne OK."""
+            idle_reads = 0
+            proc = arecord_proc
+            if proc is None:
+                return
+            while not session.stop_event.is_set():
+                chunk = await proc.stdout.read(4096)
+                if not chunk:
+                    idle_reads += 1
+                    if idle_reads > 80:
+                        await _publish_log(session.call_id, session.phone_number, "Fin flux arecord", "warn")
+                        break
+                    await asyncio.sleep(0.05)
+                    continue
+                idle_reads = 0
+                alsa_raw.extend(chunk)
+                await session_broadcast_pcm(session, chunk)
+                if stt_allowed["ok"]:
+                    stt_buffer.extend(chunk)
+                    await _feed_stt_stream(stt_buffer)
 
         if use_alsa_live:
             try:
@@ -294,42 +311,35 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
             await _publish_log(
                 session.call_id,
                 session.phone_number,
-                f"Audio live ALSA {call_manager._alsa_record} -> navigateur; micro -> {call_manager._alsa_play} ou file modem",
+                f"Audio live ALSA {call_manager._alsa_record} -> navigateur (des la composition); micro -> "
+                f"{call_manager._alsa_play} ou file modem",
             )
-            idle_reads = 0
+            alsa_reader_task = asyncio.create_task(_alsa_capture_loop())
+
+        dial_ok, raw = await modem.dial_number(session.phone_number)
+        preview = (raw or "").replace("\r\n", " ")[:420]
+        await _publish_log(session.call_id, session.phone_number, f"Reponse modem: {preview!r}")
+        if not dial_ok:
+            await _publish_log(session.call_id, session.phone_number, "Echec composition (pas OK/CONNECT)", "error")
+            await call_service.miss_call(session.call_id)
+            await _publish_state(
+                EventType.CALL_OUTGOING_ENDED,
+                session.call_id,
+                session.phone_number,
+                reason="dial_failed",
+                modem_response=raw,
+            )
+            finalize_completion = False
+            return
+        await call_service.answer_call(session.call_id)
+        await _publish_state(EventType.CALL_OUTGOING_CONNECTED, session.call_id, session.phone_number)
+        await _publish_log(session.call_id, session.phone_number, "Ligne connectee")
+        vosk_stream_ok = call_manager.voice_recognition.outgoing_stream_start(stream_key)
+        stt_allowed["ok"] = True
+
+        if arecord_proc is not None:
             while not session.stop_event.is_set():
-                chunk = await arecord_proc.stdout.read(4096)
-                if not chunk:
-                    idle_reads += 1
-                    if idle_reads > 80:
-                        await _publish_log(session.call_id, session.phone_number, "Fin flux arecord", "warn")
-                        break
-                    await asyncio.sleep(0.05)
-                    continue
-                idle_reads = 0
-                alsa_raw.extend(chunk)
-                await session_broadcast_pcm(session, chunk)
-                stt_buffer.extend(chunk)
-                await _feed_stt_stream(stt_buffer)
-            if arecord_proc.returncode is None:
-                arecord_proc.terminate()
-                try:
-                    await asyncio.wait_for(arecord_proc.wait(), timeout=2.0)
-                except Exception:
-                    try:
-                        arecord_proc.kill()
-                    except Exception:
-                        pass
-            if alsa_raw:
-                ts = int(time.time())
-                wav_rel = f"recordings/call_out_{session.call_id}_{ts}.wav"
-                wav_path = base / wav_rel
-                with wave.open(str(wav_path), "wb") as wf:
-                    wf.setnchannels(1)
-                    wf.setsampwidth(2)
-                    wf.setframerate(16000)
-                    wf.writeframes(bytes(alsa_raw))
-                await call_service.set_audio_file(session.call_id, wav_rel)
+                await asyncio.sleep(0.05)
         elif modem.supports_voice_serial:
             await _publish_log(
                 session.call_id,
@@ -405,6 +415,36 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
         end_error = str(exc)
         await _publish_log(session.call_id, session.phone_number, f"Erreur session: {exc}", "error")
     finally:
+        session.stop_event.set()
+        if alsa_reader_task is not None:
+            try:
+                await asyncio.wait_for(alsa_reader_task, timeout=8.0)
+            except asyncio.TimeoutError:
+                alsa_reader_task.cancel()
+                try:
+                    await alsa_reader_task
+                except asyncio.CancelledError:
+                    pass
+        if arecord_proc is not None and arecord_proc.returncode is None:
+            try:
+                arecord_proc.terminate()
+                await asyncio.wait_for(arecord_proc.wait(), timeout=2.0)
+            except Exception:
+                try:
+                    arecord_proc.kill()
+                except Exception:
+                    pass
+        if len(alsa_raw) > 0 and wav_rel is None:
+            ts = int(time.time())
+            wav_rel = f"recordings/call_out_{session.call_id}_{ts}.wav"
+            wav_path = base / wav_rel
+            with wave.open(str(wav_path), "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(bytes(alsa_raw))
+            await call_service.set_audio_file(session.call_id, wav_rel)
+
         if serial_vrx_active:
             try:
                 await modem.end_outgoing_vrx_stream()
@@ -671,7 +711,7 @@ async def start_outgoing_call(
     config: Config = Depends(get_config),
 ):
     """Demarre un appel sortant depuis la page Appels."""
-    if config.use_telephony_daemon:
+    if _should_proxy_outgoing_to_daemon(config, request):
         return await _proxy_outgoing_to_telephony(
             request,
             config,
@@ -704,7 +744,7 @@ async def outgoing_send_dtmf(
     config: Config = Depends(get_config),
 ):
     """Envoie une touche DTMF au modem pendant l'appel."""
-    if config.use_telephony_daemon:
+    if _should_proxy_outgoing_to_daemon(config, request):
         return await _proxy_outgoing_to_telephony(
             request,
             config,
@@ -734,7 +774,7 @@ async def outgoing_hangup(
     config: Config = Depends(get_config),
 ):
     """Raccroche un appel sortant en cours."""
-    if config.use_telephony_daemon:
+    if _should_proxy_outgoing_to_daemon(config, request):
         return await _proxy_outgoing_to_telephony(
             request,
             config,

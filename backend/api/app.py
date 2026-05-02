@@ -6,6 +6,7 @@ import asyncio
 import logging
 from pathlib import Path
 
+import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -113,6 +114,29 @@ def create_app(config: Config) -> FastAPI:
         app.state.call_manager_task = task
         app.state.call_manager_db = db
         logger.info("Surveillance des appels (modem) demarree")
+
+        if config.use_telephony_daemon:
+            base = str(config.telephony_daemon_url).strip().rstrip("/")
+            try:
+                async with httpx.AsyncClient() as client:
+                    r = await client.get(f"{base}/health", timeout=3.0)
+                if r.status_code >= 400:
+                    logger.warning(
+                        "TELEPHONY_DAEMON_URL {} repond HTTP {} — les appels sortants peuvent echouer (502).",
+                        base,
+                        r.status_code,
+                    )
+                else:
+                    logger.info("Daemon telephonie joignable ({})", base)
+            except Exception as exc:
+                logger.warning(
+                    "Daemon telephonie injoignable sur {} — POST /api/v1/calls/outgoing/* renverra 502. "
+                    "Sans modem sur cette machine : USE_TELEPHONY_DAEMON=0 dans .env. "
+                    "Avec Pi : demarrer vocalguard-telephony et verifier TELEPHONY_DAEMON_URL (ex. http://ip-du-pi:8090). "
+                    "Detail: {}",
+                    base,
+                    exc,
+                )
 
     @app.on_event("shutdown")
     async def on_shutdown() -> None:

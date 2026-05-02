@@ -6,6 +6,12 @@ const PLAYOUT_INITIAL_LATENCY_SEC = 0.14;
 /** Si la tete de lecture retarde trop sur l'horloge audio, on resynchronise. */
 const PLAYOUT_RESYNC_LATE_SEC = 0.06;
 
+/** Tonalite de comfort (~ tonalite occupation ligne FR) jusqu'a reception du flux ligne reel. */
+const DIAL_COMFORT_FREQ_HZ = 425;
+const DIAL_COMFORT_GAIN = 0.06;
+
+export type OutgoingDialPhase = "idle" | "dialing" | "connected" | "ended" | "error";
+
 /**
  * Branche WebSocket audio pour un appel sortant actif : ligne -> haut-parleurs, micro -> ligne.
  * Planification continue des BufferSource pour limiter les trous entre chunks PCM.
@@ -13,7 +19,8 @@ const PLAYOUT_RESYNC_LATE_SEC = 0.06;
 export function useOutgoingCallAudio(
   callId: number | null,
   listenActive: boolean,
-  micActive: boolean
+  micActive: boolean,
+  dialPhase: OutgoingDialPhase = "idle"
 ): void {
   const ctxRef = useRef<AudioContext | null>(null);
   const playHeadRef = useRef<number>(0);
@@ -21,6 +28,17 @@ export function useOutgoingCallAudio(
   const streamRef = useRef<MediaStream | null>(null);
   const procRef = useRef<ScriptProcessorNode | null>(null);
   const micGraphRef = useRef<{ ctx: AudioContext; mute: GainNode } | null>(null);
+  const dialComfortStopRef = useRef<(() => void) | null>(null);
+  const dialPhaseRef = useRef(dialPhase);
+  dialPhaseRef.current = dialPhase;
+
+  useEffect(() => {
+    if (dialPhase !== "dialing") {
+      const fn = dialComfortStopRef.current;
+      dialComfortStopRef.current = null;
+      fn?.();
+    }
+  }, [dialPhase]);
 
   useEffect(() => {
     if (callId === null || (!listenActive && !micActive)) {
@@ -32,6 +50,12 @@ export function useOutgoingCallAudio(
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
+    const stopDialComfort = () => {
+      const fn = dialComfortStopRef.current;
+      dialComfortStopRef.current = null;
+      fn?.();
+    };
+
     const ensurePlaybackCtx = (): AudioContext => {
       if (!ctxRef.current) {
         ctxRef.current = new AudioContext();
@@ -40,9 +64,38 @@ export function useOutgoingCallAudio(
       return ctxRef.current;
     };
 
+    const startDialComfortIfNeeded = () => {
+      if (!listenActive || dialPhaseRef.current !== "dialing") return;
+      if (dialComfortStopRef.current) return;
+      const ctx = ensurePlaybackCtx();
+      void ctx.resume().catch(() => undefined);
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      gain.gain.value = DIAL_COMFORT_GAIN;
+      osc.type = "sine";
+      osc.frequency.value = DIAL_COMFORT_FREQ_HZ;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      dialComfortStopRef.current = () => {
+        try {
+          osc.stop();
+        } catch {
+          /* ignore */
+        }
+        try {
+          osc.disconnect();
+          gain.disconnect();
+        } catch {
+          /* ignore */
+        }
+      };
+    };
+
     ws.onmessage = (ev: MessageEvent<ArrayBuffer | string>) => {
       if (!listenActive) return;
       if (typeof ev.data === "string") return;
+      stopDialComfort();
       const arr = new Int16Array(ev.data as ArrayBuffer);
       if (arr.length === 0) return;
       const ctx = ensurePlaybackCtx();
@@ -110,11 +163,13 @@ export function useOutgoingCallAudio(
 
     ws.onopen = () => {
       void ensurePlaybackCtx().resume().catch(() => undefined);
+      startDialComfortIfNeeded();
       void startMic();
     };
 
     return () => {
       cancelled = true;
+      stopDialComfort();
       try {
         ws.close();
       } catch {
@@ -149,5 +204,6 @@ export function useOutgoingCallAudio(
       }
       playHeadRef.current = 0;
     };
+    // dialPhase lu via dialPhaseRef pour ne pas rouvrir le WebSocket a la connexion.
   }, [callId, listenActive, micActive]);
 }

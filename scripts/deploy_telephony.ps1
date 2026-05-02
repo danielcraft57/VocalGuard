@@ -92,9 +92,10 @@ Environment=PYTHONPATH=$RemoteDirPath
 Environment=TELEPHONY_BIND_HOST=127.0.0.1
 Environment=TELEPHONY_BIND_PORT=8090
 EnvironmentFile=-$RemoteDirPath/.env
-ExecStart=$VenvPython -m uvicorn backend.telephony_daemon.main:app --host $telephonyBindHost --port $telephonyBindPort
+ExecStart=$VenvPython -m uvicorn backend.telephony_daemon.main:app --host $telephonyBindHost --port $telephonyBindPort --log-config $RemoteDirPath/config/uvicorn_telephony_logging.yaml
 Restart=always
 RestartSec=5
+LimitNOFILE=65536
 StandardOutput=append:$RemoteDirPath/logs/vocalguard-telephony.log
 StandardError=append:$RemoteDirPath/logs/vocalguard-telephony.log
 SyslogIdentifier=vocalguard-telephony

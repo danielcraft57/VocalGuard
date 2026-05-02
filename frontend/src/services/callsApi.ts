@@ -77,16 +77,26 @@ export interface OutgoingCallActionResponse {
   message: string;
 }
 
+const TELEPHONY_DEV_HINT_FR =
+  "Backend avec modem sur un Raspberry Pi : le daemon doit tourner (port 8090) et TELEPHONY_DAEMON_URL doit être joignable depuis ce PC (ex. http://192.168.1.xx:8090). Sur ce PC sans modem ni daemon local : mettez USE_TELEPHONY_DAEMON=0 dans le .env du backend puis redémarrez uvicorn.";
+
+function outgoingTelephonyHintNeeded(status: number, detail: string, path: string): boolean {
+  if (!path.startsWith("/calls/outgoing")) return false;
+  if (status !== 502 && status !== 503) return false;
+  return !/USE_TELEPHONY_DAEMON|TELEPHONY_DAEMON_URL|service telephony|daemon|8090|injoignable/i.test(detail);
+}
+
 async function postJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(`${getApiBaseUrl()}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
   });
+  const rawText = await res.text();
   if (!res.ok) {
     let detail = `Erreur API POST ${path}: ${res.status}`;
     try {
-      const j = (await res.json()) as { detail?: unknown };
+      const j = JSON.parse(rawText) as { detail?: unknown };
       if (j?.detail != null) {
         detail =
           typeof j.detail === "string"
@@ -96,7 +106,10 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
               : JSON.stringify(j.detail);
       }
     } catch {
-      /* corps non JSON */
+      const snippet = rawText.trim().slice(0, 400);
+      if (snippet) {
+        detail = `${detail} — ${snippet}`;
+      }
     }
     const telephonyHintAlready =
       /USE_TELEPHONY_DAEMON|TELEPHONY_DAEMON_URL|service telephony|daemon.*8090/i.test(detail);
@@ -107,9 +120,16 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     ) {
       detail = `${detail} — Vérifiez NEXT_PUBLIC_API_BASE_URL (ex. http://localhost:8000/api/v1). Sans modem local : USE_TELEPHONY_DAEMON=0 dans .env backend. Avec Pi : TELEPHONY_DAEMON_URL doit pointer vers le daemon téléphonie (ex. :8090), pas la page web.`;
     }
+    if (outgoingTelephonyHintNeeded(res.status, detail, path)) {
+      detail = `${detail}\n\n${TELEPHONY_DEV_HINT_FR}`;
+    }
     throw new Error(detail);
   }
-  return (await res.json()) as T;
+  try {
+    return JSON.parse(rawText) as T;
+  } catch {
+    throw new Error(`Réponse JSON invalide pour POST ${path}`);
+  }
 }
 
 export async function startOutgoingCall(phoneNumber: string): Promise<OutgoingCallActionResponse> {

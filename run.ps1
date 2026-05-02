@@ -1,9 +1,30 @@
 # Script de démarrage PowerShell pour VocalGuard
+# Usage rapide :
+#   .\run.ps1                          → installe pip si besoin (venv) ou met à jour (conda), puis lance tout
+#   .\run.ps1 -SkipRequirements        → aucun pip install (démarrage plus rapide)
+#   .\run.ps1 -PromptRequirements      → demande avant pip (installer ou ignorer)
 param(
-    [switch]$SingleWindow
+    [switch]$SingleWindow,
+    [switch]$SkipRequirements,
+    [switch]$PromptRequirements
 )
 
 Write-Host "Démarrage de VocalGuard..." -ForegroundColor Green
+
+if ($PromptRequirements) {
+    Write-Host ""
+    Write-Host "Dépendances Python (requirements.txt) :" -ForegroundColor Cyan
+    Write-Host "  O = Installer ou mettre à jour maintenant"
+    Write-Host "  n = Ignorer pip pour cette session"
+    $pipAnswer = Read-Host "Choix [O/n] (Entrée = O)"
+    if ($pipAnswer -match '^[nN]') {
+        $SkipRequirements = $true
+    }
+}
+
+if ($SkipRequirements) {
+    Write-Host "Option active : aucune installation pip (requirements.txt ignorée)." -ForegroundColor Yellow
+}
 
 $PROJECT_ROOT = (Get-Location).Path
 
@@ -83,30 +104,20 @@ if ($USE_CONDA) {
         Write-Host "Impossible de verifier la version Python de l'environnement conda." -ForegroundColor Yellow
     }
     
-    # Installer/mettre à jour les dépendances depuis requirements.txt (évite les oublis: python-multipart, openpyxl, redis, etc.)
-    Write-Host "Installation/MAJ des dépendances (requirements.txt)..." -ForegroundColor Green
-    conda run -n $CONDA_ENV_NAME python -m pip install --upgrade pip
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Erreur lors de la mise à jour de pip" -ForegroundColor Red
-        exit 1
-    }
-    conda run -n $CONDA_ENV_NAME python -m pip install -r requirements.txt
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Erreur lors de l'installation des dépendances via requirements.txt" -ForegroundColor Red
-        exit 1
+    if (-not $SkipRequirements) {
+        Write-Host "Installation/MAJ des dépendances (requirements.txt)..." -ForegroundColor Green
+        conda run -n $CONDA_ENV_NAME python -m pip install --upgrade pip
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Erreur lors de la mise à jour de pip" -ForegroundColor Red
+            exit 1
+        }
+        conda run -n $CONDA_ENV_NAME python -m pip install -r requirements.txt
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Erreur lors de l'installation des dépendances via requirements.txt" -ForegroundColor Red
+            exit 1
+        }
     }
 
-    # Whisper: installer depuis GitHub uniquement s'il n'est pas déjà installé.
-    Write-Host "Vérification de whisper..." -ForegroundColor Green
-    $whisperCheck = conda run -n $CONDA_ENV_NAME python -c "import whisper; print(getattr(whisper, '__version__', 'installed'))" 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        Write-Host ("Whisper déjà installé ({0}) - installation ignorée." -f (($whisperCheck | Select-Object -Last 1).ToString().Trim())) -ForegroundColor DarkGray
-    } else {
-        Write-Host "Installation de whisper (GitHub)..." -ForegroundColor Green
-        conda run -n $CONDA_ENV_NAME python -m pip install --upgrade git+https://github.com/openai/whisper.git
-        # Ne pas échouer si whisper ne s'installe pas ici (dépendances lourdes)
-    }
-    
     # Utiliser conda run pour lancer l'application
     $PYTHON_CMD = "conda run -n ${CONDA_ENV_NAME} python"
 } else {
@@ -122,20 +133,24 @@ if ($USE_CONDA) {
     & "venv\Scripts\Activate.ps1"
     $PYTHON_CMD = (Resolve-Path "venv\Scripts\python.exe").Path
     
-    # Vérifier si les dépendances sont installées
-    if (-not (Test-Path "venv\.installed")) {
-        Write-Host "Installation des dépendances..." -ForegroundColor Yellow
-        pip install --upgrade pip
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "Erreur lors de la mise à jour de pip" -ForegroundColor Red
-            exit 1
+    if (-not $SkipRequirements) {
+        if (-not (Test-Path "venv\.installed")) {
+            Write-Host "Installation des dépendances..." -ForegroundColor Yellow
+            pip install --upgrade pip
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "Erreur lors de la mise à jour de pip" -ForegroundColor Red
+                exit 1
+            }
+            pip install -r requirements.txt
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "Erreur lors de l'installation des dépendances" -ForegroundColor Red
+                exit 1
+            }
+            New-Item -ItemType File -Path "venv\.installed" -Force | Out-Null
         }
-        pip install -r requirements.txt
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "Erreur lors de l'installation des dépendances" -ForegroundColor Red
-            exit 1
-        }
-        New-Item -ItemType File -Path "venv\.installed" -Force | Out-Null
+    } elseif (-not (Test-Path "venv\.installed")) {
+        Write-Host "ATTENTION : -SkipRequirements alors que le marqueur venv\.installed est absent." -ForegroundColor Yellow
+        Write-Host "Si le venv est vide, relancez sans -SkipRequirements une fois." -ForegroundColor Yellow
     }
 }
 

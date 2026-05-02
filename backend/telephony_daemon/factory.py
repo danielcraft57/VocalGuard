@@ -65,6 +65,7 @@ def create_telephony_app(config: Config) -> FastAPI:
         version="0.2",
         lifespan=lifespan,
     )
+    app.state.is_vocalguard_telephony_daemon = True
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
