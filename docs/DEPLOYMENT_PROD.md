@@ -77,8 +77,14 @@ Une fois le service active (`systemctl enable vocalguard`), VocalGuard demarre a
 |--------|------|
 | `scripts/deploy_to_rpi.ps1` | Deploiement complet + generation/installation des services systemd |
 | `run_backend.sh` | Lancement manuel (dev ou debug) |
+| `scripts/deploy_telephony.ps1` | Déploiement / mise à jour **uniquement** du daemon modem (`vocalguard-telephony`, port 8090) |
 
-## 8. Depannage
+## 8. Service telephony (modem, port 8090)
+
+Déploiement ciblé (sans rebuild front ni nginx) : `.\scripts\deploy_telephony.ps1 -AppServerName <hôte>`.  
+Variables `TELEPHONY_*`, relais vers l’API, audio WebSocket : **[TELEPHONY_STACK.md](TELEPHONY_STACK.md)**.
+
+## 9. Depannage
 
 - **Le service ne demarre pas** : `journalctl -u vocalguard -n 50` pour voir l'erreur. Verifier que `PYTHONPATH` et `WorkingDirectory` pointent bien vers le projet et que le venv existe.
 - **Port 8000 deja utilise** : changer le port dans `ExecStart` (ex. `--port 8080`) ou liberer le port.

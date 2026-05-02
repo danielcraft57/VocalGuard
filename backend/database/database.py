@@ -46,8 +46,33 @@ async def init_database(database_url: str) -> None:
     # Création des tables
     Base.metadata.create_all(bind=engine)
     _apply_lightweight_migrations(engine)
+    _apply_postgres_call_foreign_keys(engine)
 
     logger.info("Base de données initialisée")
+
+
+def _apply_postgres_call_foreign_keys(engine) -> None:
+    """Aligne les FK appels (CASCADE / SET NULL) sur PostgreSQL existant."""
+    if engine.dialect.name != "postgresql":
+        return
+    stmts = [
+        "ALTER TABLE voicemails DROP CONSTRAINT IF EXISTS voicemails_call_id_fkey",
+        "ALTER TABLE voicemails ADD CONSTRAINT voicemails_call_id_fkey "
+        "FOREIGN KEY (call_id) REFERENCES calls(id) ON DELETE CASCADE",
+        "ALTER TABLE calls DROP CONSTRAINT IF EXISTS calls_caller_id_fkey",
+        "ALTER TABLE calls ADD CONSTRAINT calls_caller_id_fkey "
+        "FOREIGN KEY (caller_id) REFERENCES callers(id) ON DELETE SET NULL",
+        "ALTER TABLE agenda DROP CONSTRAINT IF EXISTS agenda_source_call_id_fkey",
+        "ALTER TABLE agenda ADD CONSTRAINT agenda_source_call_id_fkey "
+        "FOREIGN KEY (source_call_id) REFERENCES calls(id) ON DELETE SET NULL",
+    ]
+    try:
+        with engine.begin() as conn:
+            for sql in stmts:
+                conn.execute(text(sql))
+        logger.info("Contraintes FK appels PostgreSQL mises a jour (CASCADE voicemails / SET NULL)")
+    except Exception as exc:
+        logger.warning("Migration FK appels PostgreSQL ignoree ou partielle: {}", exc)
 
 
 def _apply_lightweight_migrations(engine) -> None:

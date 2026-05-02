@@ -5,7 +5,7 @@ Diffuse les événements du `event_bus` (CALL_INCOMING, CALL_BLOCKED, etc.)
 vers les clients frontend afin d'afficher les appels en cours en temps réel.
 """
 
-from typing import List
+from typing import TYPE_CHECKING, List
 from datetime import datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Body
@@ -65,8 +65,32 @@ async def _handle_any_event(event: Event) -> None:
     await manager.broadcast_event(event)
 
 
-# S'abonner une seule fois à tous les événements
-event_bus.subscribe_all(_handle_any_event)
+_main_realtime_wired = False
+_daemon_relay_wired = False
+
+
+def wire_main_process_realtime() -> None:
+    """A appeler une fois au demarrage du processus API principal (pas le telephony_daemon)."""
+    global _main_realtime_wired
+    if _main_realtime_wired:
+        return
+    event_bus.subscribe_all(_handle_any_event)
+    _main_realtime_wired = True
+
+
+def wire_telephony_daemon_event_relay(config: "Config") -> None:
+    """Relaie tous les events du bus vers l'API principale (WebSocket clients)."""
+    global _daemon_relay_wired
+    if _daemon_relay_wired:
+        return
+    from backend.telephony_daemon.relay_wiring import wire_daemon_relay_once
+
+    wire_daemon_relay_once(config)
+    _daemon_relay_wired = True
+
+
+if TYPE_CHECKING:
+    from backend.core.config import Config
 
 
 @router.websocket("/ws/events")

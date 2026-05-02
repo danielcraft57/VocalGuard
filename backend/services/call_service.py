@@ -99,6 +99,30 @@ class CallService:
         
         logger.info(f"Appel entrant créé: {call.id} ({phone_number})")
         return call
+
+    async def create_outgoing_call(self, phone_number: str) -> Call:
+        """
+        Cree un appel sortant initialise en statut dialing.
+
+        @param phone_number Numero compose.
+        @returns Appel cree.
+        """
+        call = self.call_repo.create_call(
+            phone_number=phone_number,
+            caller_name="Sortant",
+            caller_id=None,
+            status="dialing",
+        )
+        await event_bus.publish(
+            Event(
+                event_type=EventType.CALL_OUTGOING_DIALING,
+                timestamp=datetime.utcnow(),
+                data={"call_id": call.id, "phone_number": phone_number},
+                source="CallService",
+            )
+        )
+        logger.info("Appel sortant cree: {} ({})", call.id, phone_number)
+        return call
     
     async def answer_call(self, call_id: int) -> Optional[Call]:
         """
@@ -216,6 +240,13 @@ class CallService:
         ))
         
         return call
+
+    async def set_audio_file(self, call_id: int, audio_file: Optional[str]) -> Optional[Call]:
+        """Enregistre le chemin relatif (ex. recordings/...) du WAV d'appel."""
+        call = self.call_repo.get_by_id(call_id)
+        if not call:
+            return None
+        return self.call_repo.update(call_id, audio_file=audio_file)
 
     async def set_transcription_and_intent(
         self,

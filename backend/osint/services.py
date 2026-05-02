@@ -109,6 +109,20 @@ class PhoneOsintService:
 
         return profile
 
+    def force_queue_refresh(self, phone_number: str) -> PhoneNumberProfile:
+        """
+        Cree ou recupere le profil puis relance une tache Celery OSINT (file d'attente).
+
+        @param phone_number Numero a rafraichir.
+        @returns Profil associe.
+        """
+        profile = self.ensure_profile_for_number(
+            phone_number=phone_number,
+            max_age=timedelta(days=9999),
+        )
+        self._enqueue_refresh_task(profile_id=profile.id)
+        return profile
+
     def _enqueue_refresh_task(self, profile_id: int) -> None:
         """
         Planifie une tache Celery pour rafraichir un profil.

@@ -1,5 +1,7 @@
 # Architecture VocalGuard
 
+> **Archive** : décrit un ancien layout (`vocalguard/`). La structure actuelle est dans [ARCHITECTURE_V3.md](ARCHITECTURE_V3.md).
+
 ## Vue d'ensemble
 
 VocalGuard est un système moderne de gestion d'appels avec interface vocale intelligente. Il est conçu avec une architecture modulaire et extensible.

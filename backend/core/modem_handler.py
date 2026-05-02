@@ -53,6 +53,9 @@ class ModemHandler:
         self.is_initialized = False
         self._is_conexant = False  # True si modem Conexant (Zoom 3095, etc.)
         self.on_incoming_call: Optional[callable] = None  # Callback pour les appels entrants
+        self._serial_io_lock = asyncio.Lock()
+        self._outgoing_owns_serial = False
+        self._vrx_saved_timeout: Optional[float] = None
     
     async def detect_modem(self) -> Optional[str]:
         """
@@ -152,7 +155,12 @@ class ModemHandler:
             return True
             
         except Exception as e:
-            logger.exception(f"Erreur lors de l'initialisation du modem: {e}")
+            # Pas de traceback complet : erreur courante en dev (mauvais port, OS sans /dev/ttyACM0).
+            logger.warning(
+                "Modem indisponible sur {} — verifier MODEM_PORT ou laisser vide pour auto-detect: {}",
+                self.port,
+                e,
+            )
             return False
 
     def _close_serial(self) -> None:
@@ -173,17 +181,18 @@ class ModemHandler:
         """
         if not self.port:
             return False
-        self._close_serial()
+        async with self._serial_io_lock:
+            self._close_serial()
         try:
             await asyncio.sleep(0.5)
-            self.serial_connection = serial.Serial(
-                self.port,
-                self.baudrate,
-                timeout=1,
-                write_timeout=1,
-            )
+            async with self._serial_io_lock:
+                self.serial_connection = serial.Serial(
+                    self.port,
+                    self.baudrate,
+                    timeout=1,
+                    write_timeout=1,
+                )
             await asyncio.sleep(0.8)
-            # Pas de retry ici pour eviter recursion
             await self.send_command("AT", _retry=False)
             await self.send_command("ATE0", _retry=False)
             await self.send_command("AT+VCID=1", _retry=False)
@@ -191,7 +200,8 @@ class ModemHandler:
             return True
         except Exception as e:
             logger.warning("Modem reconnexion echouee: {}", e)
-            self._close_serial()
+            async with self._serial_io_lock:
+                self._close_serial()
             return False
     
     async def send_command(self, command: str, timeout: float = 2.0, _retry: bool = True) -> bytes:
@@ -200,20 +210,9 @@ class ModemHandler:
         Pour ATA ou commandes lentes, preferer send_command_full.
         En cas d'erreur I/O (EIO), tente une reconnexion et un seul retry.
         """
-        if not self.serial_connection or not self.serial_connection.is_open:
-            raise RuntimeError("Modem non connecté")
         try:
-            self.serial_connection.write(f"{command}\r\n".encode())
-            response = b""
-            start = time.monotonic()
-            while (time.monotonic() - start) < timeout:
-                if self.serial_connection.in_waiting > 0:
-                    response += self.serial_connection.read(self.serial_connection.in_waiting)
-                    if b"\r\n" in response:
-                        break
-                await asyncio.sleep(0.1)
-            logger.debug("Commande: {} -> Reponse: {}", command, response.decode("utf-8", errors="ignore"))
-            return response
+            async with self._serial_io_lock:
+                return await self._send_command_unlocked(command, timeout)
         except (OSError, serial.SerialException) as e:
             if _retry and (getattr(e, "errno", None) == errno.EIO or isinstance(e, serial.SerialException)):
                 logger.warning("Erreur port sur commande {} ({}), reconnexion puis retry", command, e)
@@ -225,6 +224,21 @@ class ModemHandler:
             logger.error("Erreur envoi commande {}: {}", command, e)
             raise
 
+    async def _send_command_unlocked(self, command: str, timeout: float = 2.0) -> bytes:
+        if not self.serial_connection or not self.serial_connection.is_open:
+            raise RuntimeError("Modem non connecté")
+        self.serial_connection.write(f"{command}\r\n".encode())
+        response = b""
+        start = time.monotonic()
+        while (time.monotonic() - start) < timeout:
+            if self.serial_connection.in_waiting > 0:
+                response += self.serial_connection.read(self.serial_connection.in_waiting)
+                if b"\r\n" in response:
+                    break
+            await asyncio.sleep(0.1)
+        logger.debug("Commande: {} -> Reponse: {}", command, response.decode("utf-8", errors="ignore"))
+        return response
+
     async def send_command_full(
         self, command: str, timeout: float = 5.0, stop_on_ring: bool = True, _retry: bool = True
     ) -> bytes:
@@ -234,26 +248,9 @@ class ModemHandler:
         souvent DATE/NMBR/NAME/RING avant OK ou CONNECT).
         En cas d'erreur I/O (EIO), tente une reconnexion et un seul retry.
         """
-        if not self.serial_connection or not self.serial_connection.is_open:
-            raise RuntimeError("Modem non connecté")
-        codes = (b"OK", b"ERROR", b"CONNECT", b"NO CARRIER")
-        if stop_on_ring:
-            codes = codes + (b"RING", b"BUSY")
         try:
-            self.serial_connection.write(f"{command}\r\n".encode())
-            self.serial_connection.flush()
-            response = b""
-            start = time.monotonic()
-            while (time.monotonic() - start) < timeout:
-                if self.serial_connection.in_waiting > 0:
-                    response += self.serial_connection.read(self.serial_connection.in_waiting)
-                if any(code in response for code in codes):
-                    await asyncio.sleep(0.2)
-                    if self.serial_connection.in_waiting > 0:
-                        response += self.serial_connection.read(self.serial_connection.in_waiting)
-                    break
-                await asyncio.sleep(0.1)
-            return response
+            async with self._serial_io_lock:
+                return await self._send_command_full_unlocked(command, timeout, stop_on_ring)
         except (OSError, serial.SerialException) as e:
             if _retry and (getattr(e, "errno", None) == errno.EIO or isinstance(e, serial.SerialException)):
                 logger.warning("Erreur port sur {} ({}), reconnexion puis retry", command, e)
@@ -264,6 +261,29 @@ class ModemHandler:
         except Exception as e:
             logger.error("Erreur send_command_full {}: {}", command, e)
             raise
+
+    async def _send_command_full_unlocked(
+        self, command: str, timeout: float = 5.0, stop_on_ring: bool = True
+    ) -> bytes:
+        if not self.serial_connection or not self.serial_connection.is_open:
+            raise RuntimeError("Modem non connecté")
+        codes = (b"OK", b"ERROR", b"CONNECT", b"NO CARRIER")
+        if stop_on_ring:
+            codes = codes + (b"RING", b"BUSY")
+        self.serial_connection.write(f"{command}\r\n".encode())
+        self.serial_connection.flush()
+        response = b""
+        start = time.monotonic()
+        while (time.monotonic() - start) < timeout:
+            if self.serial_connection.in_waiting > 0:
+                response += self.serial_connection.read(self.serial_connection.in_waiting)
+            if any(code in response for code in codes):
+                await asyncio.sleep(0.2)
+                if self.serial_connection.in_waiting > 0:
+                    response += self.serial_connection.read(self.serial_connection.in_waiting)
+                break
+            await asyncio.sleep(0.1)
+        return response
 
     def _parse_caller_id_from_response(self, response: bytes) -> Tuple[Optional[str], Optional[str]]:
         """Extrait NMBR= et NAME= de la reponse modem (ex. reponse ATA avec Caller ID)."""
@@ -336,6 +356,38 @@ class ModemHandler:
         except Exception as e:
             logger.error("Erreur lors du raccrochage: {}", e)
             return False
+
+    async def dial_number(self, phone_number: str, timeout: float = 25.0) -> tuple[bool, str]:
+        """
+        Compose un numero sortant via ATD et attend un etat modem.
+
+        @param phone_number Numero a composer.
+        @param timeout Delai max d'attente de reponse modem.
+        @returns Tuple (succes, reponse_brute).
+        """
+        if not phone_number:
+            return (False, "numero vide")
+        command = f"ATD{phone_number};"
+        response = await self.send_command_full(command, timeout=timeout, stop_on_ring=False)
+        raw = response.decode("utf-8", errors="ignore").strip()
+        success = b"CONNECT" in response or b"OK" in response
+        return (success, raw)
+
+    async def send_dtmf(self, digit: str) -> bool:
+        """
+        Envoie une tonalite DTMF pendant un appel via AT+VTS.
+
+        @param digit Touche a envoyer (0-9, *, #, A-D).
+        @returns True si le modem confirme l'envoi.
+        """
+        if not digit:
+            return False
+        clean = str(digit).strip().upper()
+        allowed = set("0123456789*#ABCD")
+        if clean not in allowed:
+            return False
+        response = await self.send_command(f'AT+VTS="{clean}"', timeout=3.0)
+        return b"OK" in response
 
     def _send_command_sync(self, command: str, expect: str = "OK", timeout: float = 5.0) -> bool:
         """Envoie une commande AT et attend la réponse (synchrone, pour usage dans executor)."""
@@ -517,10 +569,101 @@ class ModemHandler:
             logger.exception("Erreur enregistrement VRX via serie: {}", e)
             return False
 
+    def _vrx_transparent_close_sync(self) -> None:
+        """Sort du flux transparent AT+VRX (donnees PCM) sans quitter le mode voix."""
+        if not self.serial_connection or not self.serial_connection.is_open:
+            return
+        try:
+            end_rx = _DTE_END_VOICE_RX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
+            self.serial_connection.write(end_rx)
+            self.serial_connection.flush()
+            time.sleep(0.1)
+            while self.serial_connection.in_waiting > 0:
+                self.serial_connection.read(self.serial_connection.in_waiting)
+        except (OSError, serial.SerialException):
+            pass
+
+    def _vrx_stream_open_sync(self, already_in_voice_mode: bool) -> bool:
+        """Passe en mode voix et ouvre AT+VRX (flux PCM 8 kHz 8-bit)."""
+        if not self.serial_connection or not self.serial_connection.is_open:
+            logger.warning("vrx_stream_open: modem non connecte")
+            return False
+        try:
+            if not already_in_voice_mode:
+                if not self._send_command_sync(_VOICE_MODE):
+                    logger.warning("vrx_stream_open: AT+FCLASS=8 a echoue")
+                    return False
+            vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
+            self._send_command_sync(vsd)
+            if self._is_conexant:
+                if not self._send_command_sync(_VOICE_COMPRESSION_USR):
+                    self._send_command_sync(_VOICE_COMPRESSION_CONEXANT)
+            else:
+                self._send_command_sync(_VOICE_COMPRESSION_USR)
+            if not already_in_voice_mode:
+                if not self._send_command_sync(_TAD_OFF_HOOK):
+                    logger.warning("vrx_stream_open: AT+VLS=1 a echoue")
+                    return False
+            if not self._send_command_sync(_VOICE_RX, expect="CONNECT", timeout=10.0):
+                logger.warning("vrx_stream_open: AT+VRX (CONNECT) a echoue")
+                return False
+            self._vrx_saved_timeout = self.serial_connection.timeout
+            self.serial_connection.timeout = 0.25
+            return True
+        except Exception as e:
+            logger.exception("vrx_stream_open: {}", e)
+            return False
+
+    def _vrx_stream_finalize_sync(self) -> None:
+        """Ferme le flux VRX transparent et restaure le timeout serie."""
+        self._vrx_transparent_close_sync()
+        try:
+            if self.serial_connection and self.serial_connection.is_open and self._vrx_saved_timeout is not None:
+                self.serial_connection.timeout = self._vrx_saved_timeout
+        except (OSError, serial.SerialException):
+            pass
+        self._vrx_saved_timeout = None
+
+    def _half_duplex_uplink_sync(self, u8_pcm: bytes) -> bool:
+        """
+        Coupe VRX, envoie une rafale PCM 8-bit 8 kHz vers la ligne (VTX), rouvre VRX.
+        Utilise pour micro navigateur lorsqu'il n'y a pas de carte ALSA modem.
+        """
+        if not u8_pcm or not self.serial_connection or not self.serial_connection.is_open:
+            return True
+        try:
+            self._vrx_transparent_close_sync()
+            vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
+            self._send_command_sync(vsd)
+            if self._is_conexant:
+                if not self._send_command_sync(_VOICE_COMPRESSION_USR):
+                    self._send_command_sync(_VOICE_COMPRESSION_CONEXANT)
+            else:
+                self._send_command_sync(_VOICE_COMPRESSION_USR)
+            if not self._send_command_sync(_VOICE_TX, expect="CONNECT", timeout=10.0):
+                logger.warning("half_duplex_uplink: AT+VTX CONNECT a echoue")
+                return False
+            chunk = 1024
+            sleep_interval = chunk / float(_VRX_SAMPLE_RATE)
+            for i in range(0, len(u8_pcm), chunk):
+                self.serial_connection.write(u8_pcm[i : i + chunk])
+                time.sleep(sleep_interval)
+            end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
+            self.serial_connection.write(end_seq)
+            self.serial_connection.flush()
+            time.sleep(0.08)
+            if not self._send_command_sync(_VOICE_RX, expect="CONNECT", timeout=10.0):
+                logger.warning("half_duplex_uplink: reprise AT+VRX a echoue")
+                return False
+            return True
+        except Exception as e:
+            logger.warning("half_duplex_uplink: {}", e)
+            return False
+
     @property
     def supports_voice_serial(self) -> bool:
-        """True si le modem supporte la lecture WAV via le port série (mode voix)."""
-        return self._is_conexant
+        """True si le modem est pret pour le mode voix serie (USR 5637 / Conexant, etc.)."""
+        return bool(self.is_initialized)
 
     async def play_wav_via_serial(
         self, wav_path: Path, already_in_voice_mode: bool = False
@@ -531,9 +674,10 @@ class ModemHandler:
         en mode voix (FCLASS=8, VLS=1) pour ne pas renvoyer ces commandes et éviter de couper l'appel.
         """
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None, self._play_wav_serial_impl, wav_path, already_in_voice_mode
-        )
+        async with self._serial_io_lock:
+            return await loop.run_in_executor(
+                None, self._play_wav_serial_impl, wav_path, already_in_voice_mode
+            )
 
     async def record_wav_via_serial(
         self,
@@ -546,13 +690,48 @@ class ModemHandler:
         Passer already_in_voice_mode=True si on vient de answer_call + play pour ne pas recouper l'appel.
         """
         loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(
-            None,
-            self._record_wav_serial_impl,
-            duration_sec,
-            out_path,
-            already_in_voice_mode,
-        )
+        async with self._serial_io_lock:
+            return await loop.run_in_executor(
+                None,
+                self._record_wav_serial_impl,
+                duration_sec,
+                out_path,
+                already_in_voice_mode,
+            )
+
+    async def start_outgoing_vrx_stream(self, already_in_voice_mode: bool = False) -> bool:
+        """Ouvre le flux VRX pour une session sortante (streaming vers WebSocket)."""
+        loop = asyncio.get_event_loop()
+        async with self._serial_io_lock:
+            return await loop.run_in_executor(None, self._vrx_stream_open_sync, already_in_voice_mode)
+
+    async def end_outgoing_vrx_stream(self) -> None:
+        """Ferme le flux VRX (avant ATH)."""
+        loop = asyncio.get_event_loop()
+        async with self._serial_io_lock:
+            await loop.run_in_executor(None, self._vrx_stream_finalize_sync)
+
+    async def read_outgoing_vrx_chunk(self, nbytes: int = 2048) -> bytes:
+        """Lit des octets PCM 8-bit depuis le flux VRX (lock court)."""
+        loop = asyncio.get_event_loop()
+        async with self._serial_io_lock:
+            return await loop.run_in_executor(None, self._serial_read_fixed, nbytes)
+
+    def _serial_read_fixed(self, nbytes: int) -> bytes:
+        if not self.serial_connection or not self.serial_connection.is_open:
+            return b""
+        try:
+            return self.serial_connection.read(nbytes)
+        except (OSError, serial.SerialException):
+            return b""
+
+    async def half_duplex_send_uplink_u8(self, u8_pcm: bytes) -> bool:
+        """Envoie une rafale micro vers la ligne (VTX) puis reprend VRX."""
+        if not u8_pcm:
+            return True
+        loop = asyncio.get_event_loop()
+        async with self._serial_io_lock:
+            return await loop.run_in_executor(None, self._half_duplex_uplink_sync, u8_pcm)
 
     async def monitor_calls(self):
         """
@@ -569,14 +748,21 @@ class ModemHandler:
 
         while self.is_initialized:
             try:
+                if self._outgoing_owns_serial:
+                    await asyncio.sleep(0.15)
+                    continue
                 if not self.serial_connection.is_open:
                     logger.warning("Port série fermé, arrêt de la surveillance")
                     break
-                n = self.serial_connection.in_waiting
-                if n > 0:
-                    # Lire par petits blocs pour limiter les EIO sur certains modems
-                    chunk_size = min(n, 256)
-                    data = self.serial_connection.read(chunk_size)
+                data = b""
+                async with self._serial_io_lock:
+                    if not self.serial_connection or not self.serial_connection.is_open:
+                        break
+                    n = self.serial_connection.in_waiting
+                    if n > 0:
+                        chunk_size = min(n, 256)
+                        data = self.serial_connection.read(chunk_size)
+                if data:
                     buffer += data
                     while b"\r\n" in buffer:
                         line, buffer = buffer.split(b"\r\n", 1)

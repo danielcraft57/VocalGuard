@@ -16,12 +16,15 @@ param(
     [switch]$FixNginxLegacyWarnings,
     [string]$CertbotEmail = "",
     [string]$CertbotCertName = "vocalguard-multidomain",
-    [switch]$HealthCheck
+    [switch]$HealthCheck,
+    [bool]$EnableTelephonyDaemon = $false
 )
 
 $ErrorActionPreference = "Stop"
 $ProjectDir = (Get-Item (Split-Path -Parent $PSScriptRoot)).FullName
 $ArchivePath = Join-Path $env:TEMP "vocalguard_deploy.tar.gz"
+# Renseigne par le bloc ConfigureNginx : sert aux health checks (SSL auto si cert deja sur le serveur).
+$script:NginxVocalguardUsesSsl = $null
 
 # Priorité paramètres > variables d'environnement > defaults
 if (-not $AppServerName -or $AppServerName.Trim() -eq "") {
@@ -226,7 +229,7 @@ Ok "Dependencies installed"
 Step "[8/9] PostgreSQL readiness and service"
 ssh "$AppRemoteHost" "cd $RemoteDir && source venv/bin/activate && python -m compileall backend -q" | Out-Null
 if ($RestartService) {
-    ssh "$AppRemoteHost" "sudo systemctl restart vocalguard && sudo systemctl status vocalguard --no-pager -n 20" | Out-Host
+    ssh "$AppRemoteHost" "sudo systemctl restart vocalguard; sudo systemctl try-restart vocalguard-telephony 2>/dev/null || true; sudo systemctl status vocalguard --no-pager -n 20" | Out-Host
     Ok "Service restarted"
 } else {
     Info "Service restart skipped (use -RestartService)"
@@ -239,11 +242,21 @@ if ($InstallServices) {
     $venvPython = "$RemoteDir/venv/bin/python"
     $frontendDir = "$RemoteDir/frontend"
 
+    $telephonyUnitExtra = ""
+    if ($EnableTelephonyDaemon) {
+        $telephonyUnitExtra = @"
+
+After=vocalguard-telephony.service
+Wants=vocalguard-telephony.service
+"@
+    }
+
     $vocalguardService = @"
 [Unit]
 Description=VocalGuard API
 After=network-online.target
 Wants=network-online.target
+$telephonyUnitExtra
 
 [Service]
 Type=simple
@@ -264,6 +277,42 @@ SyslogIdentifier=vocalguard
 WantedBy=multi-user.target
 "@
     Install-RemoteService -RemoteHost $AppRemoteHost -ServiceName "vocalguard.service" -Content $vocalguardService -Enable $true -Start $true
+
+    $telephonyBindHost = '${TELEPHONY_BIND_HOST}'
+    $telephonyBindPort = '${TELEPHONY_BIND_PORT}'
+    $telephonyService = @"
+[Unit]
+Description=VocalGuard Telephony (modem, appels sortants, WebSocket audio)
+After=network-online.target
+Wants=network-online.target
+Before=vocalguard.service
+
+[Service]
+Type=simple
+User=$serviceUser
+Group=$serviceGroup
+WorkingDirectory=$RemoteDir
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=$RemoteDir
+Environment=TELEPHONY_BIND_HOST=127.0.0.1
+Environment=TELEPHONY_BIND_PORT=8090
+EnvironmentFile=-$RemoteDir/.env
+ExecStart=$venvPython -m uvicorn backend.telephony_daemon.main:app --host $telephonyBindHost --port $telephonyBindPort
+Restart=always
+RestartSec=5
+StandardOutput=append:$RemoteDir/logs/vocalguard-telephony.log
+StandardError=append:$RemoteDir/logs/vocalguard-telephony.log
+SyslogIdentifier=vocalguard-telephony
+
+[Install]
+WantedBy=multi-user.target
+"@
+    if ($EnableTelephonyDaemon) {
+        Install-RemoteService -RemoteHost $AppRemoteHost -ServiceName "vocalguard-telephony.service" -Content $telephonyService -Enable $true -Start $true
+    } else {
+        ssh "$AppRemoteHost" "sudo systemctl disable --now vocalguard-telephony.service 2>/dev/null || true" | Out-Null
+        Info "vocalguard-telephony.service desactive (EnableTelephonyDaemon=false)."
+    }
 
     $celeryService = @"
 [Unit]
@@ -349,7 +398,7 @@ WantedBy=multi-user.target
         ssh "$AppRemoteHost" "sudo systemctl disable --now vocalguard-test-modem.service 2>/dev/null || true" | Out-Null
     }
 
-    ssh "$AppRemoteHost" "sudo systemctl daemon-reload && sudo systemctl status vocalguard vocalguard-celery --no-pager -n 10" | Out-Host
+    ssh "$AppRemoteHost" "sudo systemctl daemon-reload && sudo systemctl status vocalguard vocalguard-celery vocalguard-telephony --no-pager -n 10 2>/dev/null || sudo systemctl status vocalguard vocalguard-celery --no-pager -n 10" | Out-Host
     Ok "Systemd services installed/updated"
 }
 
@@ -358,6 +407,26 @@ if ($ConfigureNginx) {
     $serverNames = @($NginxServerName) + $DomainAliases | Select-Object -Unique
     $serverNameLine = ($serverNames -join " ")
     $proxyTarget = if ($AppServerName -and $AppServerName.Trim() -ne "") { "${AppServerName}:8000" } else { "127.0.0.1:8000" }
+
+    $nginxOutgoingWs = ""
+    if ($EnableTelephonyDaemon) {
+        $telephonyWsTarget = if ($AppServerName -and $AppServerName.Trim() -ne "") { "${AppServerName}:8090" } else { "127.0.0.1:8090" }
+        $nginxOutgoingWs = @"
+
+    location /ws/outgoing-call/ {
+        proxy_pass http://$telephonyWsTarget;
+        proxy_http_version 1.1;
+        proxy_set_header Host `$host;
+        proxy_set_header X-Real-IP `$remote_addr;
+        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto `$scheme;
+        proxy_set_header Upgrade `$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+"@
+    }
 
     $nginxConfigHttp = @"
 server {
@@ -381,6 +450,7 @@ server {
         expires 1h;
         add_header Cache-Control "public, max-age=3600";
     }
+"@ + $nginxOutgoingWs + @"
 
     location /ws/ {
         proxy_pass http://$proxyTarget;
@@ -408,49 +478,8 @@ server {
     }
 }
 "@
-    $tmpNginx = Join-Path $env:TEMP "vocalguard_nginx.conf"
-    Set-Content -Path $tmpNginx -Value $nginxConfigHttp -Encoding UTF8
-    Copy-ScpStrict -Source $tmpNginx -Destination "${NginxRemoteHost}:/tmp/vocalguard_nginx.conf"
-    Remove-Item $tmpNginx -Force -ErrorAction SilentlyContinue
-    Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command "sudo mv /tmp/vocalguard_nginx.conf /etc/nginx/sites-available/vocalguard && sudo ln -sf /etc/nginx/sites-available/vocalguard /etc/nginx/sites-enabled/vocalguard && sudo nginx -t && sudo systemctl reload nginx"
 
-    if ($FixNginxLegacyWarnings) {
-        Info "Applying optional cleanup on legacy nginx vhosts (safe best-effort)"
-        $cleanupCmd = "if [ -f /etc/nginx/sites-enabled/danielcraft.fr ]; then " +
-            "sudo sed -i -E 's/listen ([0-9]+) ssl http2;/listen \1 ssl;/g' /etc/nginx/sites-enabled/danielcraft.fr; " +
-            "sudo sed -i -E 's/listen \[::\]:([0-9]+) ssl http2;/listen [::]:\1 ssl;/g' /etc/nginx/sites-enabled/danielcraft.fr; " +
-            "grep -q 'http2 on;' /etc/nginx/sites-enabled/danielcraft.fr || sudo sed -i '/listen \[::\]:443 ssl;/a\    http2 on;' /etc/nginx/sites-enabled/danielcraft.fr; " +
-            "sudo sed -i -E 's/^\s*ssl_stapling\s+on;/    # ssl_stapling on; # disabled by deploy script (no OCSP in cert)/' /etc/nginx/sites-enabled/danielcraft.fr; " +
-            "sudo sed -i -E 's/^\s*ssl_stapling_verify\s+on;/    # ssl_stapling_verify on; # disabled by deploy script (no OCSP in cert)/' /etc/nginx/sites-enabled/danielcraft.fr; " +
-            "fi; " +
-            "sudo nginx -t && sudo systemctl reload nginx"
-        Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command $cleanupCmd
-    }
-
-    if ($EnableHttps) {
-        if (-not $CertbotEmail -or $CertbotEmail.Trim() -eq "") {
-            if ($env:CERTBOT_EMAIL -and $env:CERTBOT_EMAIL.Trim() -ne "") {
-                $CertbotEmail = $env:CERTBOT_EMAIL.Trim()
-            } else {
-                throw "EnableHttps requires -CertbotEmail or env CERTBOT_EMAIL."
-            }
-        }
-        $certbotDomains = @(
-            $serverNames | Where-Object {
-                $_ -match "^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$" -and
-                $_ -notmatch "\.(lan|local|home|internal)$"
-            }
-        )
-        if (($certbotDomains | Measure-Object).Count -eq 0) {
-            throw "EnableHttps: no public domain available for certbot (current server names: $serverNameLine)"
-        }
-        if (-not $NoSystemDeps) {
-            Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command "sudo apt-get update -qq && sudo apt-get install -y certbot"
-        }
-        $domainArgs = ($certbotDomains | ForEach-Object { "-d $_" }) -join " "
-        Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command "sudo mkdir -p /var/www/html/.well-known/acme-challenge && sudo certbot certonly --webroot -w /var/www/html --non-interactive --agree-tos --email '$CertbotEmail' --cert-name '$CertbotCertName' --expand $domainArgs"
-
-        $nginxConfigHttps = @"
+    $nginxConfigHttps = @"
 server {
     listen 80;
     listen [::]:80;
@@ -490,6 +519,7 @@ server {
         expires 1h;
         add_header Cache-Control "public, max-age=3600";
     }
+"@ + $nginxOutgoingWs + @"
 
     location /ws/ {
         proxy_pass http://$proxyTarget;
@@ -517,11 +547,81 @@ server {
     }
 }
 "@
+
+    # HTTPS si -EnableHttps OU certificat Let's Encrypt deja present (evite vhost 80 seul apres deploy puis SNI 443 -> autre site)
+    $useNginxSsl = $false
+    $runCertbot = $false
+    if ($EnableHttps) {
+        $useNginxSsl = $true
+        $runCertbot = $true
+    } else {
+        try {
+            $certProbeRaw = Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command "test -f /etc/letsencrypt/live/$CertbotCertName/fullchain.pem && echo yes || echo no" -CaptureOutput
+            $certProbe = ($certProbeRaw | Out-String).Trim()
+            if ($certProbe -eq "yes") {
+                $useNginxSsl = $true
+                $runCertbot = $false
+                Info "Certificat $CertbotCertName deja sur $NginxServerName : vhost vocalguard HTTP+HTTPS (sans certbot)."
+            }
+        } catch {
+            Info "Sonde certificat nginx ignoree: $_"
+        }
+    }
+
+    if ($useNginxSsl -and $runCertbot) {
+        if (-not $CertbotEmail -or $CertbotEmail.Trim() -eq "") {
+            if ($env:CERTBOT_EMAIL -and $env:CERTBOT_EMAIL.Trim() -ne "") {
+                $CertbotEmail = $env:CERTBOT_EMAIL.Trim()
+            } else {
+                throw "EnableHttps requires -CertbotEmail or env CERTBOT_EMAIL."
+            }
+        }
+        $certbotDomains = @(
+            $serverNames | Where-Object {
+                $_ -match "^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$" -and
+                $_ -notmatch "\.(lan|local|home|internal)$"
+            }
+        )
+        if (($certbotDomains | Measure-Object).Count -eq 0) {
+            throw "EnableHttps: no public domain available for certbot (current server names: $serverNameLine)"
+        }
+        if (-not $NoSystemDeps) {
+            Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command "sudo apt-get update -qq && sudo apt-get install -y certbot"
+        }
+        $domainArgs = ($certbotDomains | ForEach-Object { "-d $_" }) -join " "
+        Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command "sudo mkdir -p /var/www/html/.well-known/acme-challenge && sudo certbot certonly --webroot -w /var/www/html --non-interactive --agree-tos --email '$CertbotEmail' --cert-name '$CertbotCertName' --expand $domainArgs"
+        Ok "HTTPS : certbot cert '$CertbotCertName' renouvelle ou etendu."
+    }
+
+    $tmpNginx = Join-Path $env:TEMP "vocalguard_nginx.conf"
+    if ($useNginxSsl) {
         Set-Content -Path $tmpNginx -Value $nginxConfigHttps -Encoding UTF8
-        Copy-ScpStrict -Source $tmpNginx -Destination "${NginxRemoteHost}:/tmp/vocalguard_nginx.conf"
-        Remove-Item $tmpNginx -Force -ErrorAction SilentlyContinue
-        Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command "sudo mv /tmp/vocalguard_nginx.conf /etc/nginx/sites-available/vocalguard && sudo ln -sf /etc/nginx/sites-available/vocalguard /etc/nginx/sites-enabled/vocalguard && sudo nginx -t && sudo systemctl reload nginx"
-        Ok "HTTPS configured with certbot cert '$CertbotCertName'"
+        $script:NginxVocalguardUsesSsl = $true
+    } else {
+        Set-Content -Path $tmpNginx -Value $nginxConfigHttp -Encoding UTF8
+        $script:NginxVocalguardUsesSsl = $false
+    }
+    Copy-ScpStrict -Source $tmpNginx -Destination "${NginxRemoteHost}:/tmp/vocalguard_nginx.conf"
+    Remove-Item $tmpNginx -Force -ErrorAction SilentlyContinue
+    Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command "sudo mv /tmp/vocalguard_nginx.conf /etc/nginx/sites-available/vocalguard && sudo ln -sf /etc/nginx/sites-available/vocalguard /etc/nginx/sites-enabled/vocalguard && sudo nginx -t && sudo systemctl reload nginx"
+
+    if ($FixNginxLegacyWarnings) {
+        Info "Applying optional cleanup on legacy nginx vhosts (safe best-effort)"
+        $cleanupCmd = "if [ -f /etc/nginx/sites-enabled/danielcraft.fr ]; then " +
+            "sudo sed -i -E 's/listen ([0-9]+) ssl http2;/listen \1 ssl;/g' /etc/nginx/sites-enabled/danielcraft.fr; " +
+            "sudo sed -i -E 's/listen \[::\]:([0-9]+) ssl http2;/listen [::]:\1 ssl;/g' /etc/nginx/sites-enabled/danielcraft.fr; " +
+            "grep -q 'http2 on;' /etc/nginx/sites-enabled/danielcraft.fr || sudo sed -i '/listen \[::\]:443 ssl;/a\    http2 on;' /etc/nginx/sites-enabled/danielcraft.fr; " +
+            "sudo sed -i -E 's/^\s*ssl_stapling\s+on;/    # ssl_stapling on; # disabled by deploy script (no OCSP in cert)/' /etc/nginx/sites-enabled/danielcraft.fr; " +
+            "sudo sed -i -E 's/^\s*ssl_stapling_verify\s+on;/    # ssl_stapling_verify on; # disabled by deploy script (no OCSP in cert)/' /etc/nginx/sites-enabled/danielcraft.fr; " +
+            "fi; " +
+            "sudo nginx -t && sudo systemctl reload nginx"
+        Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command $cleanupCmd
+    }
+
+    if ($useNginxSsl) {
+        Ok "Nginx vocalguard : HTTPS actif (cert $CertbotCertName) -> $proxyTarget"
+    } else {
+        Ok "Nginx vocalguard : HTTP seulement -> $proxyTarget"
     }
     Ok "Nginx configured on $NginxServerName -> $proxyTarget"
 }
@@ -530,27 +630,34 @@ if ($HealthCheck) {
     Step "[health] End-to-end checks"
     $checks = @()
     $primaryPublicDomain = if ($DomainAliases.Count -gt 0) { $DomainAliases[0] } else { $NginxServerName }
+    $useSslForNginx = if ($null -ne $script:NginxVocalguardUsesSsl) { $script:NginxVocalguardUsesSsl } else { $EnableHttps }
 
-    # 1) backend direct
-    try {
-        $raw = Invoke-SshStrict -RemoteHost $AppRemoteHost -Command "curl -fsS http://127.0.0.1:8000/health" -CaptureOutput
-        $checks += [pscustomobject]@{
-            Name = "Backend direct ($AppServerName)"
-            Ok = $true
-            Detail = ($raw | Out-String).Trim()
+    # 1) backend direct (plusieurs essais : uvicorn peut refuser la connexion juste apres restart systemd)
+    $backendOk = $false
+    $backendDetail = ""
+    for ($attempt = 0; $attempt -lt 8; $attempt++) {
+        try {
+            $raw = Invoke-SshStrict -RemoteHost $AppRemoteHost -Command "curl -fsS http://127.0.0.1:8000/health" -CaptureOutput
+            $backendOk = $true
+            $backendDetail = ($raw | Out-String).Trim()
+            break
+        } catch {
+            $backendDetail = $_.Exception.Message
+            if ($attempt -lt 7) {
+                Start-Sleep -Seconds 3
+            }
         }
-    } catch {
-        $checks += [pscustomobject]@{
-            Name = "Backend direct ($AppServerName)"
-            Ok = $false
-            Detail = $_.Exception.Message
-        }
+    }
+    $checks += [pscustomobject]@{
+        Name = "Backend direct ($AppServerName)"
+        Ok = $backendOk
+        Detail = $backendDetail
     }
 
     # 2) nginx local (edge -> app)
     if ($ConfigureNginx) {
         try {
-            $localHealthCommand = if ($EnableHttps) {
+            $localHealthCommand = if ($useSslForNginx) {
                 "curl -fsS -k -H 'Host: $primaryPublicDomain' https://127.0.0.1/health"
             } else {
                 "curl -fsS http://127.0.0.1/health"
@@ -573,14 +680,14 @@ if ($HealthCheck) {
     # 3) nginx public hostname
     if ($ConfigureNginx) {
         try {
-            $hostnameHealthCommand = if ($EnableHttps) {
+            $hostnameHealthCommand = if ($useSslForNginx) {
                 "curl -fsS https://$primaryPublicDomain/health"
             } else {
                 "curl -fsS http://$NginxServerName/health"
             }
             $raw = Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command $hostnameHealthCommand -CaptureOutput
             $checks += [pscustomobject]@{
-                Name = if ($EnableHttps) { "Nginx public https ($primaryPublicDomain)" } else { "Nginx hostname ($NginxServerName)" }
+                Name = if ($useSslForNginx) { "Nginx public https ($primaryPublicDomain)" } else { "Nginx hostname ($NginxServerName)" }
                 Ok = $true
                 Detail = ($raw | Out-String).Trim()
             }
@@ -597,14 +704,14 @@ if ($HealthCheck) {
     if ($ConfigureNginx -and $DomainAliases.Count -gt 0) {
         foreach ($domain in $DomainAliases) {
             try {
-                $aliasHealthCommand = if ($EnableHttps) {
+                $aliasHealthCommand = if ($useSslForNginx) {
                     "curl -fsS -k -H 'Host: $domain' https://127.0.0.1/health"
                 } else {
                     "curl -fsS -H 'Host: $domain' http://127.0.0.1/health"
                 }
                 $raw = Invoke-SshStrict -RemoteHost $NginxRemoteHost -Command $aliasHealthCommand -CaptureOutput
                 $checks += [pscustomobject]@{
-                    Name = if ($EnableHttps) { "Nginx alias https ($domain)" } else { "Nginx alias ($domain)" }
+                    Name = if ($useSslForNginx) { "Nginx alias https ($domain)" } else { "Nginx alias ($domain)" }
                     Ok = $true
                     Detail = ($raw | Out-String).Trim()
                 }

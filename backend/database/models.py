@@ -70,7 +70,7 @@ class Call(Base):
     __tablename__ = "calls"
     
     id = Column(Integer, primary_key=True, index=True)
-    caller_id = Column(Integer, ForeignKey("callers.id"), nullable=True)
+    caller_id = Column(Integer, ForeignKey("callers.id", ondelete="SET NULL"), nullable=True)
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
     phone_number = Column(String(20), index=True, nullable=True)
     caller_name = Column(String(255), nullable=True)
@@ -100,7 +100,7 @@ class Voicemail(Base):
     __tablename__ = "voicemails"
     
     id = Column(Integer, primary_key=True, index=True)
-    call_id = Column(Integer, ForeignKey("calls.id"), nullable=True)
+    call_id = Column(Integer, ForeignKey("calls.id", ondelete="CASCADE"), nullable=True)
     caller_id = Column(Integer, ForeignKey("callers.id"), nullable=True)
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
     
@@ -383,7 +383,7 @@ class Appointment(Base):
     id = Column(Integer, primary_key=True, index=True)
     
     client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
-    source_call_id = Column(Integer, ForeignKey("calls.id"), nullable=True)
+    source_call_id = Column(Integer, ForeignKey("calls.id", ondelete="SET NULL"), nullable=True)
     entreprise_id = Column(Integer, ForeignKey("entreprises.id", ondelete="CASCADE"), nullable=True, index=True)
     phone_number = Column(String(20), index=True, nullable=True)
     

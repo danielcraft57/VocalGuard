@@ -18,6 +18,12 @@ class EventType(str, Enum):
     CALL_BLOCKED = "call.blocked"
     CALL_COMPLETED = "call.completed"
     CALL_MISSED = "call.missed"
+    CALL_OUTGOING_DIALING = "call.outgoing.dialing"
+    CALL_OUTGOING_CONNECTED = "call.outgoing.connected"
+    CALL_OUTGOING_ENDED = "call.outgoing.ended"
+    CALL_TRANSCRIPTION_PARTIAL = "call.transcription.partial"
+    CALL_TRANSCRIPTION_FINAL = "call.transcription.final"
+    CALL_SESSION_LOG = "call.session.log"
     
     VOICEMAIL_RECORDED = "voicemail.recorded"
     VOICEMAIL_DELETED = "voicemail.deleted"

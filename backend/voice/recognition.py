@@ -27,6 +27,7 @@ class VoiceRecognition:
         self.whisper_model = None
         self.vosk_model = None
         self.vosk_recognizer = None
+        self._out_stream_recs: dict[str, object] = {}
     
     async def initialize(self):
         """Initialise le moteur de reconnaissance vocale"""
@@ -205,6 +206,67 @@ class VoiceRecognition:
             
         except Exception as e:
             logger.exception(f"Erreur lors de la transcription VOSK: {e}")
+            return ""
+
+    def outgoing_stream_start(self, session_key: str) -> bool:
+        """
+        Demarre un recognizer VOSK dedie pour une session (ex. appel sortant) sans Reset entre chunks.
+        Retourne False si VOSK indisponible.
+        """
+        if self.engine != "vosk" or not self.vosk_model:
+            return False
+        try:
+            from vosk import KaldiRecognizer
+
+            self.outgoing_stream_end(session_key)
+            r = KaldiRecognizer(self.vosk_model, 16000)
+            r.SetWords(True)
+            self._out_stream_recs[session_key] = r
+            return True
+        except Exception as e:
+            logger.warning("outgoing_stream_start: {}", e)
+            return False
+
+    def outgoing_stream_feed(self, session_key: str, pcm16: bytes) -> tuple[Optional[str], list[str]]:
+        """
+        Alimente le flux VOSK avec du PCM s16le 16 kHz mono.
+
+        Returns:
+            (texte_partiel pour affichage live, segments de phrase finalises dans ce bloc)
+        """
+        rec = self._out_stream_recs.get(session_key)
+        if not rec or not pcm16:
+            return (None, [])
+        try:
+            import json
+
+            segments: list[str] = []
+            step = 4000
+            for i in range(0, len(pcm16), step):
+                chunk = pcm16[i : i + step]
+                if rec.AcceptWaveform(chunk):
+                    r = json.loads(rec.Result())
+                    t = (r.get("text") or "").strip()
+                    if t:
+                        segments.append(t)
+            partial = json.loads(rec.PartialResult())
+            pt = (partial.get("partial") or "").strip()
+            return (pt or None, segments)
+        except Exception as e:
+            logger.debug("outgoing_stream_feed: {}", e)
+            return (None, [])
+
+    def outgoing_stream_end(self, session_key: str) -> str:
+        """Termine la session streaming et retourne le dernier texte VOSK (reste du buffer)."""
+        rec = self._out_stream_recs.pop(session_key, None)
+        if rec is None:
+            return ""
+        try:
+            import json
+
+            final = json.loads(rec.FinalResult())
+            return (final.get("text") or "").strip()
+        except Exception:
             return ""
 
     async def stream_vosk(

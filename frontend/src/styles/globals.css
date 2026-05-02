@@ -1268,5 +1268,19 @@ html.vg-theme-dark .vg-agenda-day-cell:hover {
   padding: 1rem;
 }
 
+@keyframes vg-dialer-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.vg-dialer-pulse {
+  animation: vg-dialer-pulse 1.2s ease-in-out infinite;
+}
+
 
 

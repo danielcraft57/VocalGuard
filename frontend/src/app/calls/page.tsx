@@ -1,8 +1,24 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { AppLayout } from "../../components/AppLayout";
-import { fetchCallsWithOsint, CallWithOsint } from "../../services/callsApi";
+import { OutgoingCallDialerModal } from "../../components/OutgoingCallDialerModal";
+import {
+  fetchCallsWithOsint,
+  fetchCallWithOsintById,
+  CallWithOsint,
+  startOutgoingCall,
+  sendOutgoingDtmf,
+  hangupOutgoingCall,
+  patchCallTag,
+  queueCallOsint,
+  bulkDeleteCalls,
+  deleteCall,
+  getCallRecordingUrl,
+  type CallUiTag
+} from "../../services/callsApi";
+import { getWsBaseUrl } from "../../services/httpClient";
+import { useOutgoingCallAudio } from "../../hooks/useOutgoingCallAudio";
 
 function formatStatus(status: string): { label: string; className: string } {
   const normalized = status.toLowerCase();
@@ -20,6 +36,7 @@ function formatStatus(status: string): { label: string; className: string } {
 
 /** Categorie de reputation pour affichage et filtres */
 type ReputationCategory = "good" | "bad" | "neutral" | "unknown";
+type OutgoingStatus = "idle" | "dialing" | "connected" | "ended" | "error";
 
 function getReputationCategory(osint?: CallWithOsint["osint"]): ReputationCategory {
   if (!osint) return "unknown";
@@ -64,84 +81,14 @@ function formatReputation(osint?: CallWithOsint["osint"]): React.ReactNode {
   );
 }
 
-function renderRow(call: CallWithOsint): React.ReactNode {
-  const date = new Date(call.call_time).toLocaleString("fr-FR", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
-  const phone = call.phone_number ?? "Inconnu";
-  const { label: statusLabel, className: statusClass } = formatStatus(call.status);
-  const intent =
-    (call.extra_data && typeof call.extra_data === "object" && "ivr_intent" in call.extra_data
-      ? (call.extra_data as { ivr_intent?: string | null }).ivr_intent
-      : null) || null;
-  const shortTranscript =
-    (call.transcription && call.transcription.length > 80
-      ? `${call.transcription.slice(0, 77)}...`
-      : call.transcription) || null;
-
-  const lieu = call.osint
-    ? [call.osint.city, call.osint.region].filter(Boolean).join(", ") || "-"
-    : "-";
-  const operateur = call.osint?.operator ?? "-";
-
-  return (
-    <tr
-      key={call.id}
-      style={{ transition: "background-color 150ms ease-out" }}
-      className="vg-table-row"
-    >
-      <td style={{ padding: "0.5rem 0.75rem" }}>{date}</td>
-      <td style={{ padding: "0.5rem 0.75rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
-        <span className="material-icons" style={{ fontSize: "16px", color: "#22c55e" }}>
-          phone_in_talk
-        </span>
-        <span>{phone}</span>
-      </td>
-      <td style={{ padding: "0.5rem 0.75rem" }}>
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
-          <span className={statusClass}>{statusLabel}</span>
-          {intent && (
-            <span
-              style={{
-                fontSize: "0.7rem",
-                padding: "0.1rem 0.4rem",
-                borderRadius: "999px",
-                border: "1px solid #4b5563",
-                color: "#e5e7eb",
-                alignSelf: "flex-start"
-              }}
-            >
-              Intent: {intent}
-            </span>
-          )}
-        </div>
-      </td>
-      <td style={{ padding: "0.5rem 0.75rem" }}>
-        {formatReputation(call.osint)}
-        {shortTranscript && (
-          <div
-            style={{
-              marginTop: "0.25rem",
-              fontSize: "0.7rem",
-              color: "#9ca3af",
-              maxWidth: "14rem",
-              whiteSpace: "nowrap",
-              overflow: "hidden",
-              textOverflow: "ellipsis"
-            }}
-            title={call.transcription ?? undefined}
-          >
-            “{shortTranscript}”
-          </div>
-        )}
-      </td>
-      <td style={{ padding: "0.5rem 0.75rem" }}>{lieu}</td>
-      <td style={{ padding: "0.5rem 0.75rem" }}>{operateur}</td>
-    </tr>
-  );
+function readUiTagFromCall(call: CallWithOsint): CallUiTag {
+  const ex = call.extra_data;
+  if (ex && typeof ex === "object" && "ui_tag" in ex) {
+    const v = String((ex as { ui_tag?: string }).ui_tag || "").toLowerCase();
+    const allowed: CallUiTag[] = ["permitted", "restricted", "unknown", "blocked", "commercial", "none"];
+    if (allowed.includes(v as CallUiTag)) return v as CallUiTag;
+  }
+  return "none";
 }
 
 /** Valeur normalisee du statut pour les filtres */
@@ -253,6 +200,34 @@ export default function CallsPage() {
   const [filterReputation, setFilterReputation] = useState<string>(FILTER_REP_ALL);
   const [searchInput, setSearchInput] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [dialerOpen, setDialerOpen] = useState(false);
+  const [dialerNumber, setDialerNumber] = useState("");
+  const [dialerCallId, setDialerCallId] = useState<number | null>(null);
+  const [dialerStatus, setDialerStatus] = useState<OutgoingStatus>("idle");
+  const [dialerError, setDialerError] = useState<string | null>(null);
+  const [dialerTranscriptConfirmed, setDialerTranscriptConfirmed] = useState("");
+  const [dialerTranscriptLive, setDialerTranscriptLive] = useState("");
+  const [dialerLoading, setDialerLoading] = useState(false);
+  const [dialerLogs, setDialerLogs] = useState<{ t: string; level: string; message: string }[]>([]);
+  const [liveListen, setLiveListen] = useState(true);
+  const [liveMic, setLiveMic] = useState(false);
+  const [detailCall, setDetailCall] = useState<CallWithOsint | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const dialerLogsEndRef = useRef<HTMLDivElement | null>(null);
+  const dialerCallIdRef = useRef<number | null>(null);
+  dialerCallIdRef.current = dialerCallId;
+
+  const audioActive = dialerCallId !== null && (dialerStatus === "dialing" || dialerStatus === "connected");
+  useOutgoingCallAudio(dialerCallId, audioActive && liveListen, audioActive && liveMic);
+
+  useEffect(() => {
+    if (!dialerOpen) return;
+    const id = requestAnimationFrame(() => {
+      dialerLogsEndRef.current?.scrollIntoView({ block: "nearest" });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [dialerLogs, dialerOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -323,6 +298,348 @@ export default function CallsPage() {
     effectiveRep !== FILTER_REP_ALL,
     parsed.text.length > 0
   ].filter(Boolean).length;
+
+  const canSendDtmf = dialerCallId !== null && (dialerStatus === "dialing" || dialerStatus === "connected");
+
+  const handleStartDial = async () => {
+    setDialerError(null);
+    const num = dialerNumber.trim();
+    if (!num) {
+      setDialerError("Saisissez un numero");
+      return;
+    }
+    setDialerLoading(true);
+    try {
+      const result = await startOutgoingCall(num);
+      dialerCallIdRef.current = result.call_id;
+      setDialerCallId(result.call_id);
+      setDialerStatus("dialing");
+      setDialerTranscriptConfirmed("");
+      setDialerTranscriptLive("");
+      setDialerLogs([]);
+      setLiveListen(true);
+      setLiveMic(false);
+    } catch (e) {
+      setDialerStatus("error");
+      setDialerError(e instanceof Error ? e.message : "Impossible de demarrer l'appel sortant");
+    } finally {
+      setDialerLoading(false);
+    }
+  };
+
+  const handleHangup = async () => {
+    if (dialerCallId === null) return;
+    setDialerLoading(true);
+    try {
+      await hangupOutgoingCall(dialerCallId);
+      setDialerStatus("ended");
+      fetchCallsWithOsint().then(setCalls).catch(() => undefined);
+    } catch {
+      setDialerError("Echec du raccrochage");
+    } finally {
+      setDialerLoading(false);
+    }
+  };
+
+  /** Fermeture modale : raccroche tout appel actif puis reinitialise l'etat local. */
+  const handleCloseDialer = async () => {
+    const id = dialerCallIdRef.current;
+    if (id != null) {
+      try {
+        await hangupOutgoingCall(id);
+        fetchCallsWithOsint().then(setCalls).catch(() => undefined);
+      } catch {
+        /* session deja terminee cote serveur : on ferme quand meme */
+      }
+    }
+    dialerCallIdRef.current = null;
+    setDialerCallId(null);
+    setDialerStatus("idle");
+    setDialerTranscriptConfirmed("");
+    setDialerTranscriptLive("");
+    setDialerLogs([]);
+    setDialerError(null);
+    setDialerOpen(false);
+  };
+
+  const handleSendDtmf = async (digit: string) => {
+    if (!canSendDtmf || dialerCallId === null) return;
+    try {
+      await sendOutgoingDtmf(dialerCallId, digit);
+    } catch {
+      setDialerError(`DTMF ${digit} refuse par le modem`);
+    }
+  };
+
+  const handleKeypadDigit = (digit: string) => {
+    if (canSendDtmf && dialerCallId !== null) {
+      void handleSendDtmf(digit);
+      return;
+    }
+    if (dialerStatus === "idle" || dialerStatus === "ended" || dialerStatus === "error") {
+      setDialerNumber((prev) => (prev + digit).slice(0, 28));
+    }
+  };
+
+  const handleRowTag = async (callId: number, tag: CallUiTag) => {
+    try {
+      await patchCallTag(callId, tag);
+      const data = await fetchCallsWithOsint();
+      setCalls(data);
+    } catch {
+      setError("Impossible de mettre a jour le tag");
+    }
+  };
+
+  const handleRowOsint = async (callId: number) => {
+    try {
+      await queueCallOsint(callId);
+      const data = await fetchCallsWithOsint();
+      setCalls(data);
+    } catch {
+      setError("Impossible de lancer l'OSINT");
+    }
+  };
+
+  const openDialerWith = (num: string) => {
+    setDialerNumber(num);
+    setDialerOpen(true);
+    dialerCallIdRef.current = null;
+    setDialerCallId(null);
+    setDialerStatus("idle");
+    setDialerTranscriptConfirmed("");
+    setDialerTranscriptLive("");
+    setDialerLogs([]);
+    setDialerError(null);
+  };
+
+  const openCallDetail = async (callId: number) => {
+    setDetailLoading(true);
+    setDetailCall(null);
+    try {
+      const c = await fetchCallWithOsintById(callId);
+      setDetailCall(c);
+    } catch {
+      setError("Impossible de charger le detail de l appel");
+    } finally {
+      setDetailLoading(false);
+    }
+  };
+
+  const handleDeleteDetailCall = async () => {
+    if (!detailCall) return;
+    if (!window.confirm("Supprimer cet appel et son enregistrement ?")) return;
+    try {
+      await deleteCall(detailCall.id);
+      setDetailCall(null);
+      setSelectedIds((s) => {
+        const n = new Set(s);
+        n.delete(detailCall.id);
+        return n;
+      });
+      const data = await fetchCallsWithOsint();
+      setCalls(data);
+    } catch {
+      setError("Echec de la suppression");
+    }
+  };
+
+  const allFilteredSelected =
+    filteredCalls.length > 0 && filteredCalls.every((c) => selectedIds.has(c.id));
+
+  const toggleSelectAllFiltered = () => {
+    if (allFilteredSelected) {
+      setSelectedIds(new Set());
+    } else {
+      setSelectedIds(new Set(filteredCalls.map((c) => c.id)));
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return;
+    if (!window.confirm(`Supprimer ${selectedIds.size} appel(s) ?`)) return;
+    try {
+      const ids = [...selectedIds];
+      await bulkDeleteCalls(ids);
+      setSelectedIds(new Set());
+      setDetailCall((d) => (d && ids.includes(d.id) ? null : d));
+      const data = await fetchCallsWithOsint();
+      setCalls(data);
+    } catch {
+      setError("Echec de la suppression groupée");
+    }
+  };
+
+  const renderCallRow = (call: CallWithOsint): React.ReactNode => {
+    const date = new Date(call.call_time).toLocaleString("fr-FR", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+    const phone = call.phone_number ?? "Inconnu";
+    const { label: statusLabel, className: statusClass } = formatStatus(call.status);
+    const intent =
+      (call.extra_data && typeof call.extra_data === "object" && "ivr_intent" in call.extra_data
+        ? (call.extra_data as { ivr_intent?: string | null }).ivr_intent
+        : null) || null;
+    const shortTranscript =
+      (call.transcription && call.transcription.length > 80
+        ? `${call.transcription.slice(0, 77)}...`
+        : call.transcription) || null;
+
+    const lieu = call.osint
+      ? [call.osint.city, call.osint.region].filter(Boolean).join(", ") || "-"
+      : "-";
+    const operateur = call.osint?.operator ?? "-";
+    const uiTag = readUiTagFromCall(call);
+
+    return (
+      <tr
+        key={call.id}
+        style={{ transition: "background-color 150ms ease-out" }}
+        className="vg-table-row"
+      >
+        <td style={{ padding: "0.5rem 0.35rem", width: "2rem" }}>
+          <input
+            type="checkbox"
+            checked={selectedIds.has(call.id)}
+            onChange={() =>
+              setSelectedIds((s) => {
+                const n = new Set(s);
+                if (n.has(call.id)) n.delete(call.id);
+                else n.add(call.id);
+                return n;
+              })
+            }
+            aria-label={`Selectionner appel ${call.id}`}
+          />
+        </td>
+        <td style={{ padding: "0.5rem 0.75rem" }}>{date}</td>
+        <td style={{ padding: "0.5rem 0.75rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+          <span className="material-icons" style={{ fontSize: "16px", color: "#22c55e" }}>
+            phone_in_talk
+          </span>
+          <span>{phone}</span>
+        </td>
+        <td style={{ padding: "0.5rem 0.75rem" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
+            <span className={statusClass}>{statusLabel}</span>
+            {intent && (
+              <span
+                style={{
+                  fontSize: "0.7rem",
+                  padding: "0.1rem 0.4rem",
+                  borderRadius: "999px",
+                  border: "1px solid #4b5563",
+                  color: "#e5e7eb",
+                  alignSelf: "flex-start"
+                }}
+              >
+                Intent: {intent}
+              </span>
+            )}
+          </div>
+        </td>
+        <td style={{ padding: "0.5rem 0.75rem" }}>
+          {formatReputation(call.osint)}
+          {shortTranscript && (
+            <div
+              style={{
+                marginTop: "0.25rem",
+                fontSize: "0.7rem",
+                color: "#9ca3af",
+                maxWidth: "12rem",
+                whiteSpace: "nowrap",
+                overflow: "hidden",
+                textOverflow: "ellipsis"
+              }}
+              title={call.transcription ?? undefined}
+            >
+              “{shortTranscript}”
+            </div>
+          )}
+        </td>
+        <td style={{ padding: "0.5rem 0.75rem" }}>{lieu}</td>
+        <td style={{ padding: "0.5rem 0.75rem" }}>{operateur}</td>
+        <td style={{ padding: "0.5rem 0.75rem", minWidth: "7rem" }}>
+          <select
+            value={uiTag}
+            onChange={(e) => void handleRowTag(call.id, e.target.value as CallUiTag)}
+            className="vg-input"
+            style={{ fontSize: "0.75rem", padding: "0.25rem", maxWidth: "100%" }}
+            aria-label="Tag appel"
+          >
+            <option value="none">Tag...</option>
+            <option value="permitted">Permis</option>
+            <option value="restricted">Restreint</option>
+            <option value="unknown">Inconnu</option>
+            <option value="blocked">Bloque</option>
+            <option value="commercial">Commercial</option>
+          </select>
+        </td>
+        <td style={{ padding: "0.5rem 0.75rem" }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+            {call.phone_number && (
+              <button
+                type="button"
+                title="Rappeler"
+                onClick={() => openDialerWith(call.phone_number!)}
+                style={{
+                  border: "1px solid #4b5563",
+                  background: "#1f2937",
+                  color: "#e5e7eb",
+                  borderRadius: "8px",
+                  padding: "0.25rem 0.45rem",
+                  cursor: "pointer",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "0.2rem",
+                  fontSize: "0.7rem"
+                }}
+              >
+                <span className="material-icons" style={{ fontSize: "14px" }}>
+                  phone_callback
+                </span>
+              </button>
+            )}
+            <button
+              type="button"
+              title="File OSINT"
+              onClick={() => void handleRowOsint(call.id)}
+              style={{
+                border: "1px solid #6366f1",
+                background: "transparent",
+                color: "#a5b4fc",
+                borderRadius: "8px",
+                padding: "0.25rem 0.45rem",
+                cursor: "pointer",
+                fontSize: "0.7rem"
+              }}
+            >
+              OSINT
+            </button>
+            <button
+              type="button"
+              title="Detail"
+              onClick={() => void openCallDetail(call.id)}
+              style={{
+                border: "1px solid #22c55e",
+                background: "transparent",
+                color: "#86efac",
+                borderRadius: "8px",
+                padding: "0.25rem 0.45rem",
+                cursor: "pointer",
+                fontSize: "0.7rem"
+              }}
+            >
+              Detail
+            </button>
+          </div>
+        </td>
+      </tr>
+    );
+  };
 
   const filterBar = (
     <div className="vg-calls-filters" style={{ marginBottom: "1.25rem" }}>
@@ -597,17 +914,89 @@ export default function CallsPage() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-    const wsUrl = `${protocol}://${window.location.host}/ws/events`;
+    const wsUrl = `${getWsBaseUrl()}/ws/events`;
     const ws = new WebSocket(wsUrl);
+
+    const dispose = () => {
+      ws.onmessage = null;
+      ws.onerror = null;
+      try {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.close();
+        } else if (ws.readyState === WebSocket.CONNECTING) {
+          // En dev (React Strict Mode), le cleanup peut arriver avant OPEN : eviter ws.close()
+          // immediat (bruit console "closed before the connection is established").
+          let tid: ReturnType<typeof window.setTimeout> | undefined;
+          const finish = () => {
+            if (tid !== undefined) window.clearTimeout(tid);
+            try {
+              if (ws.readyState !== WebSocket.CLOSED) ws.close();
+            } catch {
+              /* ignore */
+            }
+          };
+          ws.addEventListener("open", finish, { once: true });
+          ws.addEventListener("error", finish, { once: true });
+          tid = window.setTimeout(finish, 15_000);
+        }
+      } catch {
+        /* ignore */
+      }
+    };
 
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data as string) as {
           type?: string;
-          data?: { call_id?: number; phone_number?: string | null };
+          data?: {
+            call_id?: number;
+            phone_number?: string | null;
+            text?: string;
+            live?: boolean;
+            message?: string;
+            level?: string;
+          };
         };
         if (!msg || !msg.type || !msg.data || !msg.data.call_id) return;
+
+        const activeDialerId = dialerCallIdRef.current;
+        if (activeDialerId && msg.data.call_id === activeDialerId) {
+          if (msg.type === "call.outgoing.dialing") {
+            setDialerStatus("dialing");
+          } else if (msg.type === "call.outgoing.connected") {
+            setDialerStatus("connected");
+          } else if (msg.type === "call.outgoing.ended") {
+            setDialerStatus("ended");
+            fetchCallsWithOsint().then(setCalls).catch(() => undefined);
+          } else if (msg.type === "call.transcription.partial" && msg.data.text != null) {
+            const piece = String(msg.data.text);
+            if (msg.data.live === true) {
+              setDialerTranscriptLive(piece);
+            } else {
+              const trimmed = piece.trim();
+              if (trimmed) {
+                setDialerTranscriptLive("");
+                setDialerTranscriptConfirmed((prev) => (prev ? `${prev} ${trimmed}` : trimmed));
+              }
+            }
+          } else if (msg.type === "call.transcription.final" && msg.data.text) {
+            setDialerTranscriptLive("");
+            setDialerTranscriptConfirmed(String(msg.data.text));
+          } else if (msg.type === "call.session.log" && msg.data?.message) {
+            const logMsg = String(msg.data.message);
+            const logLevel = msg.data.level || "info";
+            setDialerLogs((prev) =>
+              [
+                ...prev.slice(-250),
+                {
+                  t: new Date().toLocaleTimeString("fr-FR"),
+                  level: logLevel,
+                  message: logMsg
+                }
+              ]
+            );
+          }
+        }
 
         const t = msg.type;
         let tag: LiveTag | null = null;
@@ -639,18 +1028,14 @@ export default function CallsPage() {
 
     ws.onerror = () => {
       try {
-        ws.close();
+        if (ws.readyState === WebSocket.OPEN) ws.close();
       } catch {
         // ignore
       }
     };
 
     return () => {
-      try {
-        ws.close();
-      } catch {
-        // ignore
-      }
+      dispose();
     };
   }, []);
 
@@ -684,6 +1069,40 @@ export default function CallsPage() {
       title="Appels"
       subtitle="Historique des appels traites par VocalGuard, enrichis avec un premier score OSINT."
     >
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "1rem" }}>
+        <button
+          type="button"
+          onClick={() => {
+            setDialerOpen(true);
+            if (dialerStatus !== "dialing" && dialerStatus !== "connected") {
+              dialerCallIdRef.current = null;
+              setDialerCallId(null);
+              setDialerStatus("idle");
+              setDialerTranscriptConfirmed("");
+              setDialerTranscriptLive("");
+              setDialerLogs([]);
+              setDialerError(null);
+            }
+          }}
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "0.45rem",
+            border: "none",
+            borderRadius: "10px",
+            padding: "0.6rem 0.95rem",
+            cursor: "pointer",
+            background: "#2563eb",
+            color: "#fff",
+            fontWeight: 600
+          }}
+        >
+          <span className="material-icons" style={{ fontSize: "18px" }}>
+            dialpad
+          </span>
+          Composer
+        </button>
+      </div>
       {liveCall && (
         <div
           className="vg-card"
@@ -746,18 +1165,60 @@ export default function CallsPage() {
       ) : (
         <div className="vg-card">
           {filterBar}
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: "0.5rem",
+              marginBottom: "0.65rem"
+            }}
+          >
+            <button
+              type="button"
+              onClick={toggleSelectAllFiltered}
+              className="vg-input"
+              style={{ fontSize: "0.8rem", padding: "0.35rem 0.65rem", cursor: "pointer" }}
+            >
+              {allFilteredSelected ? "Tout deselectionner" : "Tout selectionner (filtre)"}
+            </button>
+            <button
+              type="button"
+              disabled={selectedIds.size === 0}
+              onClick={() => void handleBulkDelete()}
+              style={{
+                fontSize: "0.8rem",
+                padding: "0.35rem 0.65rem",
+                cursor: selectedIds.size === 0 ? "not-allowed" : "pointer",
+                borderRadius: "8px",
+                border: "1px solid #b91c1c",
+                background: selectedIds.size === 0 ? "#374151" : "#7f1d1d",
+                color: "#fecaca",
+                opacity: selectedIds.size === 0 ? 0.5 : 1
+              }}
+            >
+              Supprimer la selection ({selectedIds.size})
+            </button>
+          </div>
           <table className="vg-table">
             <thead>
               <tr>
+                <th
+                  style={{ textAlign: "left", padding: "0.5rem 0.35rem", width: "2rem", fontSize: "0.65rem", color: "#6b7280" }}
+                >
+                  Sel.
+                </th>
                 <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Date</th>
                 <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Numero</th>
                 <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Statut</th>
                 <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Reputation OSINT</th>
                 <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Lieu</th>
                 <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Operateur</th>
+                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Tag</th>
+                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Actions</th>
               </tr>
             </thead>
-            <tbody>{filteredCalls.map(renderRow)}</tbody>
+            <tbody>{filteredCalls.map(renderCallRow)}</tbody>
           </table>
           <div style={{ fontSize: "0.8125rem", color: "#9ca3af", marginTop: "0.5rem" }}>
             {filteredCalls.length === calls.length ? (
@@ -767,6 +1228,195 @@ export default function CallsPage() {
                 {filteredCalls.length} resultat{filteredCalls.length > 1 ? "s" : ""} sur {calls.length} appels
               </span>
             )}
+          </div>
+        </div>
+      )}
+      <OutgoingCallDialerModal
+        open={dialerOpen}
+        onClose={() => void handleCloseDialer()}
+        dialerNumber={dialerNumber}
+        setDialerNumber={setDialerNumber}
+        dialerStatus={dialerStatus}
+        dialerCallId={dialerCallId}
+        dialerError={dialerError}
+        dialerLoading={dialerLoading}
+        liveListen={liveListen}
+        setLiveListen={setLiveListen}
+        liveMic={liveMic}
+        setLiveMic={setLiveMic}
+        audioActive={audioActive}
+        dialerLogs={dialerLogs}
+        dialerLogsEndRef={dialerLogsEndRef}
+        dialerTranscriptConfirmed={dialerTranscriptConfirmed}
+        dialerTranscriptLive={dialerTranscriptLive}
+        canSendDtmf={canSendDtmf}
+        onStartDial={() => void handleStartDial()}
+        onHangup={() => void handleHangup()}
+        onKeypadDigit={handleKeypadDigit}
+      />
+
+      {(detailCall !== null || detailLoading) && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1100,
+            background: "rgba(0,0,0,0.65)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "1rem"
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Detail appel"
+          onClick={() => !detailLoading && setDetailCall(null)}
+        >
+          <div
+            className="vg-card"
+            style={{
+              maxWidth: 560,
+              width: "100%",
+              maxHeight: "90vh",
+              overflow: "auto",
+              border: "1px solid #374151",
+              padding: "1.25rem"
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {detailLoading ? (
+              <div style={{ color: "#9ca3af", fontSize: "0.9rem" }}>Chargement...</div>
+            ) : detailCall ? (
+              <>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.75rem" }}>
+                  <div>
+                    <h2 style={{ margin: "0 0 0.25rem", fontSize: "1.15rem", color: "#f9fafb" }}>
+                      Appel #{detailCall.id}
+                    </h2>
+                    <div style={{ fontSize: "0.85rem", color: "#9ca3af" }}>
+                      {detailCall.phone_number ?? "Numero inconnu"}
+                      {detailCall.caller_name ? ` · ${detailCall.caller_name}` : ""}
+                    </div>
+                    <div style={{ fontSize: "0.78rem", color: "#6b7280", marginTop: "0.35rem" }}>
+                      {new Date(detailCall.call_time).toLocaleString("fr-FR")} · statut {detailCall.status}
+                      {detailCall.duration != null ? ` · ${detailCall.duration}s` : ""}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDetailCall(null)}
+                    style={{ border: "none", background: "transparent", color: "#9ca3af", cursor: "pointer" }}
+                    aria-label="Fermer"
+                  >
+                    <span className="material-icons">close</span>
+                  </button>
+                </div>
+
+                <div style={{ marginTop: "1rem" }}>
+                  <div style={{ fontSize: "0.72rem", color: "#64748b", textTransform: "uppercase", marginBottom: "0.35rem" }}>
+                    Enregistrement
+                  </div>
+                  {detailCall.audio_file ? (
+                    <audio
+                      controls
+                      src={getCallRecordingUrl(detailCall.id)}
+                      style={{ width: "100%", maxHeight: "48px" }}
+                      preload="metadata"
+                    />
+                  ) : (
+                    <p style={{ margin: 0, fontSize: "0.85rem", color: "#6b7280" }}>Aucun fichier audio pour cet appel.</p>
+                  )}
+                </div>
+
+                <div style={{ marginTop: "1rem" }}>
+                  <div style={{ fontSize: "0.72rem", color: "#64748b", textTransform: "uppercase", marginBottom: "0.35rem" }}>
+                    Transcription
+                  </div>
+                  <div
+                    style={{
+                      whiteSpace: "pre-wrap",
+                      fontSize: "0.88rem",
+                      color: "#e5e7eb",
+                      background: "#111827",
+                      borderRadius: "8px",
+                      padding: "0.65rem",
+                      border: "1px solid #374151",
+                      minHeight: "3rem"
+                    }}
+                  >
+                    {detailCall.transcription?.trim() || "—"}
+                  </div>
+                </div>
+
+                <div style={{ marginTop: "1rem" }}>
+                  <div style={{ fontSize: "0.72rem", color: "#64748b", textTransform: "uppercase", marginBottom: "0.35rem" }}>
+                    OSINT (base)
+                  </div>
+                  {detailCall.osint ? (
+                    <ul style={{ margin: 0, paddingLeft: "1.1rem", fontSize: "0.85rem", color: "#d1d5db", lineHeight: 1.5 }}>
+                      <li>Reputation: {detailCall.osint.recommendation} / {detailCall.osint.reputation}</li>
+                      <li>Operateur: {detailCall.osint.operator ?? "—"}</li>
+                      <li>Lieu: {[detailCall.osint.city, detailCall.osint.region].filter(Boolean).join(", ") || "—"}</li>
+                      <li>
+                        Flags: spam {detailCall.osint.is_spam ? "oui" : "non"}, arnaque {detailCall.osint.is_scam ? "oui" : "non"},
+                        demarchage: {detailCall.osint.is_telemarketer ? "oui" : "non"}
+                      </li>
+                    </ul>
+                  ) : (
+                    <p style={{ margin: 0, fontSize: "0.85rem", color: "#6b7280" }}>Pas de profil OSINT en base.</p>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void handleRowOsint(detailCall.id)}
+                    style={{
+                      marginTop: "0.5rem",
+                      fontSize: "0.78rem",
+                      padding: "0.35rem 0.65rem",
+                      borderRadius: "8px",
+                      border: "1px solid #6366f1",
+                      background: "transparent",
+                      color: "#a5b4fc",
+                      cursor: "pointer"
+                    }}
+                  >
+                    Rafraichir OSINT (file)
+                  </button>
+                </div>
+
+                <div style={{ display: "flex", gap: "0.5rem", marginTop: "1.25rem", flexWrap: "wrap" }}>
+                  <button
+                    type="button"
+                    onClick={() => void handleDeleteDetailCall()}
+                    style={{
+                      fontSize: "0.82rem",
+                      padding: "0.45rem 0.75rem",
+                      borderRadius: "8px",
+                      border: "1px solid #b91c1c",
+                      background: "#7f1d1d",
+                      color: "#fecaca",
+                      cursor: "pointer"
+                    }}
+                  >
+                    Supprimer cet appel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDetailCall(null)}
+                    style={{
+                      fontSize: "0.82rem",
+                      padding: "0.45rem 0.75rem",
+                      borderRadius: "8px",
+                      border: "1px solid #4b5563",
+                      background: "transparent",
+                      color: "#d1d5db",
+                      cursor: "pointer"
+                    }}
+                  >
+                    Fermer
+                  </button>
+                </div>
+              </>
+            ) : null}
           </div>
         </div>
       )}

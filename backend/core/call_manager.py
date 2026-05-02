@@ -102,14 +102,20 @@ class CallManager:
         """Initialise tous les composants"""
         logger.info("Initialisation du gestionnaire d'appels...")
         
-        # Initialiser le modem (optionnel)
-        modem_initialized = await self.modem.initialize()
-        if not modem_initialized:
-            logger.warning("Modem non disponible - l'API fonctionnera sans gestion d'appels")
+        # Modem : sur l API principale avec USE_TELEPHONY_DAEMON=1 le modem est sur le daemon (ex. node11).
+        # Ne pas ouvrir MODEM_PORT ici (evite /dev/ttyACM0 sur Windows et traces inutiles).
+        modem_initialized = False
+        if self.config.use_telephony_daemon:
+            logger.info(
+                "USE_TELEPHONY_DAEMON=1 : modem gere par le service telephony — pas de port serie sur ce processus."
+            )
         else:
-            # Configurer le callback du modem pour les appels entrants
-            self.modem.on_incoming_call = self.handle_incoming_call
-            logger.info("Modem initialisé")
+            modem_initialized = await self.modem.initialize()
+            if not modem_initialized:
+                logger.warning("Modem non disponible - l'API fonctionnera sans gestion d'appels")
+            else:
+                self.modem.on_incoming_call = self.handle_incoming_call
+                logger.info("Modem initialisé")
         
         # Initialiser la reconnaissance vocale (optionnel : si absent, pas de transcription IVR)
         try:

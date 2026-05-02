@@ -29,10 +29,13 @@ from backend.api.routes import (
     stats as stats_routes,
     block_rules as block_rules_routes,
     realtime,
+    outgoing_audio,
+    internal_telephony,
     agenda_public,
     public_api,
     tokens,
 )
+from backend.api.routes.realtime import wire_main_process_realtime
 from backend.database import database as db_module
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -81,6 +84,9 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(agenda_public.router, prefix="/api/v1", tags=["agenda-public"])
     # WebSocket temps reel (evenements d'appels, modem, etc.)
     app.include_router(realtime.router, tags=["realtime"])
+    app.include_router(internal_telephony.router, prefix="/api/v1")
+    if not config.use_telephony_daemon:
+        app.include_router(outgoing_audio.router, tags=["outgoing-audio"])
     app.include_router(public_api.router, prefix="/api/v1")
     app.include_router(tokens.router, prefix="/api/v1")
     
@@ -114,9 +120,10 @@ def create_app(config: Config) -> FastAPI:
         call_manager = getattr(app.state, "call_manager", None)
         task = getattr(app.state, "call_manager_task", None)
         db = getattr(app.state, "call_manager_db", None)
-        if call_manager:
-            call_manager.stop()
-            logger.info("Gestionnaire d'appels arrete")
+        if call_manager is None:
+            return
+        call_manager.stop()
+        logger.info("Gestionnaire d'appels arrete")
         if task and not task.done():
             task.cancel()
             try:
@@ -153,6 +160,22 @@ def create_app(config: Config) -> FastAPI:
         """Endpoint de santé"""
         return {"status": "healthy"}
 
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def favicon_svg():
+        """Sert le favicon statique du build Next (sinon la route catch-all ne le trouve pas)."""
+        p = web_root / "favicon.svg"
+        if p.is_file():
+            return FileResponse(str(p), media_type="image/svg+xml")
+        raise HTTPException(status_code=404, detail="Not Found")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon_ico():
+        """Alias .ico vers le SVG si pas de fichier dedie."""
+        p = web_root / "favicon.svg"
+        if p.is_file():
+            return FileResponse(str(p), media_type="image/svg+xml")
+        raise HTTPException(status_code=404, detail="Not Found")
+
     @app.get("/api_doc", include_in_schema=False)
     async def api_doc_redirect():
         """Raccourci vers la documentation API."""
@@ -187,7 +210,10 @@ def create_app(config: Config) -> FastAPI:
         if resp is not None:
             return resp
         raise HTTPException(status_code=404, detail="Not Found")
-    
+
+    # Abonne le bus d'evenements aux clients WebSocket /ws/events (une fois par processus).
+    wire_main_process_realtime()
+
     logger.info("Application FastAPI créée")
     return app
 

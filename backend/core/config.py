@@ -52,6 +52,14 @@ class Config(BaseSettings):
     # Modem
     modem_port: Optional[str] = Field(default=None)  # Auto-détection si None
     modem_baudrate: int = Field(default=115200)
+
+    # Processus telephony dedie (modem + WebSocket audio sortant) — voir systemd vocalguard-telephony.service
+    use_telephony_daemon: bool = Field(default=False)
+    telephony_daemon_url: str = Field(default="http://127.0.0.1:8090")
+    telephony_public_api_url: str = Field(default="http://127.0.0.1:8000")
+    telephony_internal_token: Optional[str] = Field(default=None)
+    telephony_bind_host: str = Field(default="127.0.0.1")
+    telephony_bind_port: int = Field(default=8090)
     
     # Voice
     voice_recognition_engine: str = Field(default="whisper")  # whisper ou vosk
@@ -160,6 +168,30 @@ class Config(BaseSettings):
             self.voice_synthesis_engine = os.environ.get("VOICE_SYNTHESIS_ENGINE", "").strip().lower()
         if os.environ.get("VOSK_MODEL_PATH"):
             self.vosk_model_path = os.environ.get("VOSK_MODEL_PATH", "").strip() or None
+        if os.environ.get("MODEM_PORT"):
+            self.modem_port = os.environ.get("MODEM_PORT", "").strip() or None
+        if os.environ.get("USE_TELEPHONY_DAEMON"):
+            self.use_telephony_daemon = os.environ.get("USE_TELEPHONY_DAEMON", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+        if os.environ.get("TELEPHONY_DAEMON_URL"):
+            self.telephony_daemon_url = os.environ.get("TELEPHONY_DAEMON_URL", "").strip().rstrip("/")
+        if os.environ.get("TELEPHONY_PUBLIC_API_URL"):
+            self.telephony_public_api_url = os.environ.get("TELEPHONY_PUBLIC_API_URL", "").strip().rstrip("/")
+        if os.environ.get("TELEPHONY_INTERNAL_TOKEN"):
+            self.telephony_internal_token = os.environ.get("TELEPHONY_INTERNAL_TOKEN", "").strip() or None
+        if os.environ.get("TELEPHONY_BIND_HOST"):
+            h = os.environ.get("TELEPHONY_BIND_HOST", "").strip()
+            if h:
+                self.telephony_bind_host = h
+        if os.environ.get("TELEPHONY_BIND_PORT"):
+            try:
+                self.telephony_bind_port = int(os.environ.get("TELEPHONY_BIND_PORT", "").strip())
+            except ValueError:
+                pass
 
     def load_from_yaml(self, path: Path):
         """

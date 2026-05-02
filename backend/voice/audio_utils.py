@@ -4,6 +4,8 @@ Export WAV 8 kHz, mono, 8-bit pour compatibilité modem voix (callattendant, Voc
 Lecture et conversion pour STT (16 kHz 16-bit).
 """
 
+import re
+import subprocess
 import wave
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -55,3 +57,51 @@ def load_wav_as_16k16bit_pcm(wav_path: Path) -> bytes:
     segment = AudioSegment.from_file(str(wav_path))
     segment = segment.set_frame_rate(16000).set_channels(1)
     return segment.raw_data
+
+
+def has_alsa_capture_devices() -> bool:
+    """
+    True si `arecord -l` liste au moins un peripherique de capture (carte son / modem ALSA).
+    Sur Pi + USR5637 sans carte capture, la section CAPTURE est vide : preferer VRX serie.
+    """
+    try:
+        r = subprocess.run(
+            ["arecord", "-l"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+        out = r.stdout or ""
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return False
+    in_capture_section = False
+    for line in out.splitlines():
+        if "CAPTURE" in line.upper() and "HARDWARE" in line.upper():
+            in_capture_section = True
+            continue
+        if in_capture_section and re.match(r"^\s*card\s+\d+:", line, re.I):
+            return True
+    return False
+
+
+def pcm_u8_8k_to_s16le_16k(data: bytes) -> bytes:
+    """PCM modem 8 kHz 8-bit unsigned -> PCM 16 kHz 16-bit LE (duplication d echantillon, 8k->16k)."""
+    out = bytearray()
+    for b in data:
+        s = int(b) - 128
+        s16 = max(-32768, min(32767, s * 256))
+        packed = s16.to_bytes(2, "little", signed=True)
+        out.extend(packed)
+        out.extend(packed)
+    return bytes(out)
+
+
+def pcm_s16le_16k_mono_to_u8_8k(data: bytes) -> bytes:
+    """Sous-echantillonne 16 kHz s16le mono vers 8 kHz 8-bit unsigned (1 echantillon sur 2)."""
+    out = bytearray()
+    for i in range(0, len(data) - 1, 4):
+        s16 = int.from_bytes(data[i : i + 2], "little", signed=True)
+        u8 = max(0, min(255, (s16 >> 8) + 128))
+        out.append(u8)
+    return bytes(out)
