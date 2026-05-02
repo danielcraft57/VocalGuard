@@ -625,7 +625,7 @@ export function OutgoingCallDialerModal(props: Props): React.ReactElement | null
               onKeyDown={(e) => {
                 if (e.key !== "Enter") return;
                 e.preventDefault();
-                if (dialerLoading || dialerStatus === "dialing" || dialerStatus === "connected") return;
+                if (dialerLoading) return;
                 if (!dialerNumber.trim()) return;
                 playOutgoingDialSound();
                 onStartDial();

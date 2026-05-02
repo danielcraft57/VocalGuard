@@ -386,8 +386,40 @@ class ModemHandler:
         allowed = set("0123456789*#ABCD")
         if clean not in allowed:
             return False
-        response = await self.send_command(f'AT+VTS="{clean}"', timeout=3.0)
-        return b"OK" in response
+        # Selon le firmware modem, le format peut varier.
+        # On essaie plusieurs syntaxes pour maximiser la compatibilite.
+        commands = [
+            f'AT+VTS="{clean}"',
+            f"AT+VTS={clean}",
+            f"AT+VTS={clean},100",
+        ]
+
+        async with self._serial_io_lock:
+            vrx_was_active = bool(self._vrx_saved_timeout is not None)
+            if vrx_was_active:
+                # Evite que la reponse AT soit polluee par le flux audio binaire VRX.
+                self._vrx_transparent_close_sync()
+                await asyncio.sleep(0.08)
+            try:
+                for command in commands:
+                    try:
+                        response = await self._send_command_full_unlocked(
+                            command, timeout=3.0, stop_on_ring=False
+                        )
+                        if b"OK" in response:
+                            return True
+                        logger.debug(
+                            "DTMF non confirme pour {} -> {}",
+                            command,
+                            response.decode("utf-8", errors="ignore").strip().replace("\r\n", " | ") or "(vide)",
+                        )
+                    except Exception as e:
+                        logger.debug("DTMF erreur sur {}: {}", command, e)
+                return False
+            finally:
+                if vrx_was_active:
+                    if not self._send_command_sync(_VOICE_RX, expect="CONNECT", timeout=10.0):
+                        logger.warning("send_dtmf: reprise VRX echouee apres AT+VTS")
 
     def _send_command_sync(self, command: str, expect: str = "OK", timeout: float = 5.0) -> bool:
         """Envoie une commande AT et attend la réponse (synchrone, pour usage dans executor)."""

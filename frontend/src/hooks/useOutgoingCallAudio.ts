@@ -5,6 +5,8 @@ import { getOutgoingAudioWsBaseUrl } from "../services/httpClient";
 const PLAYOUT_INITIAL_LATENCY_SEC = 0.14;
 /** Si la tete de lecture retarde trop sur l'horloge audio, on resynchronise. */
 const PLAYOUT_RESYNC_LATE_SEC = 0.06;
+/** Si la file de lecture part trop en avance, on recale pour eviter l'effet "echo retard". */
+const PLAYOUT_MAX_LEAD_SEC = 0.35;
 
 /** Tonalite de comfort (~ tonalite occupation ligne FR) jusqu'a reception du flux ligne reel. */
 const DIAL_COMFORT_FREQ_HZ = 425;
@@ -20,7 +22,8 @@ export function useOutgoingCallAudio(
   callId: number | null,
   listenActive: boolean,
   micActive: boolean,
-  dialPhase: OutgoingDialPhase = "idle"
+  dialPhase: OutgoingDialPhase = "idle",
+  onRemoteAudioDetected?: () => void
 ): void {
   const ctxRef = useRef<AudioContext | null>(null);
   const playHeadRef = useRef<number>(0);
@@ -30,6 +33,7 @@ export function useOutgoingCallAudio(
   const micGraphRef = useRef<{ ctx: AudioContext; mute: GainNode } | null>(null);
   const dialComfortStopRef = useRef<(() => void) | null>(null);
   const dialPhaseRef = useRef(dialPhase);
+  const remoteAudioSeenRef = useRef(false);
   dialPhaseRef.current = dialPhase;
 
   useEffect(() => {
@@ -49,6 +53,7 @@ export function useOutgoingCallAudio(
     const ws = new WebSocket(`${base}/ws/outgoing-call/${callId}/audio`);
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
+    remoteAudioSeenRef.current = false;
 
     const stopDialComfort = () => {
       const fn = dialComfortStopRef.current;
@@ -96,6 +101,10 @@ export function useOutgoingCallAudio(
       if (!listenActive) return;
       if (typeof ev.data === "string") return;
       stopDialComfort();
+      if (!remoteAudioSeenRef.current) {
+        remoteAudioSeenRef.current = true;
+        onRemoteAudioDetected?.();
+      }
       const arr = new Int16Array(ev.data as ArrayBuffer);
       if (arr.length === 0) return;
       const ctx = ensurePlaybackCtx();
@@ -113,6 +122,9 @@ export function useOutgoingCallAudio(
       let startAt = playHeadRef.current;
       if (startAt === 0) {
         startAt = ctx.currentTime + PLAYOUT_INITIAL_LATENCY_SEC;
+      } else if (startAt > ctx.currentTime + PLAYOUT_MAX_LEAD_SEC) {
+        // Trop de file d'attente => on jette le retard cumule pour garder un retour quasi temps reel.
+        startAt = ctx.currentTime + PLAYOUT_RESYNC_LATE_SEC;
       } else if (startAt < ctx.currentTime - PLAYOUT_RESYNC_LATE_SEC) {
         startAt = ctx.currentTime + PLAYOUT_INITIAL_LATENCY_SEC * 0.5;
       }

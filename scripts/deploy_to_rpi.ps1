@@ -151,6 +151,9 @@ if (-not $SkipFrontendBuild) {
     Ok "Frontend built"
 } else {
     Step "[2/8] Frontend build skipped"
+    if ($ConfigureNginx) {
+        Warn "Sans build, backend/web peut rester vide : en prod, https://.../ affichera le JSON API (FastAPI sans index.html). Lancez le deploy sans -SkipFrontendBuild ou build_and_copy_frontend.ps1."
+    }
 }
 
 Step "[3/8] Remote bootstrap (dirs + python + venv)"

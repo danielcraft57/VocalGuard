@@ -219,7 +219,16 @@ export default function CallsPage() {
   dialerCallIdRef.current = dialerCallId;
 
   const audioActive = dialerCallId !== null && (dialerStatus === "dialing" || dialerStatus === "connected");
-  useOutgoingCallAudio(dialerCallId, audioActive && liveListen, audioActive && liveMic, dialerStatus);
+  useOutgoingCallAudio(
+    dialerCallId,
+    audioActive && liveListen,
+    audioActive && liveMic,
+    dialerStatus,
+    () => {
+      // Filet de securite: si les events "connected" tardent/perdent, l'arrivee audio confirme la connexion.
+      setDialerStatus((prev) => (prev === "dialing" ? "connected" : prev));
+    }
+  );
 
   useEffect(() => {
     if (!dialerOpen) return;
@@ -926,7 +935,7 @@ export default function CallsPage() {
         } else if (ws.readyState === WebSocket.CONNECTING) {
           // En dev (React Strict Mode), le cleanup peut arriver avant OPEN : eviter ws.close()
           // immediat (bruit console "closed before the connection is established").
-          let tid: ReturnType<typeof window.setTimeout> | undefined;
+          let tid: number | undefined;
           const finish = () => {
             if (tid !== undefined) window.clearTimeout(tid);
             try {

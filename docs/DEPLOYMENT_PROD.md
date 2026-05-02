@@ -89,3 +89,15 @@ Variables `TELEPHONY_*`, relais vers l’API, audio WebSocket : **[TELEPHONY_STA
 - **Le service ne demarre pas** : `journalctl -u vocalguard -n 50` pour voir l'erreur. Verifier que `PYTHONPATH` et `WorkingDirectory` pointent bien vers le projet et que le venv existe.
 - **Port 8000 deja utilise** : changer le port dans `ExecStart` (ex. `--port 8080`) ou liberer le port.
 - **Droits** : le service tourne sous l'utilisateur `pi` ; fichiers et repertoires du projet doivent etre lisables par cet utilisateur.
+
+### 9.1 La racine (`https://vocalguard…/`) affiche du JSON API au lieu du front
+
+Nginx (ex. **node12**) proxifie `/` vers **FastAPI :8000** sur le serveur d’app. FastAPI ne sert le site que si **`backend/web/index.html`** est present (copie du build Next via `scripts/build_and_copy_frontend.ps1`). Sinon `/` renvoie le JSON par defaut — ce n’est **pas** une erreur nginx, c’est **l’absence du front statique** sur le serveur d’app.
+
+**Correctif** : redeployer sans `-SkipFrontendBuild`, ou lancer `.\scripts\build_and_copy_frontend.ps1` puis resynchroniser. Verifier sur le Pi : `test -f /opt/vocalguard/backend/web/index.html`.
+
+**Next sur le port 3000** (`EnableFrontendService`) : le gabarit nginx actuel envoie tout vers **8000**. Il faut un vhost qui envoie `/api/`, `/ws/`, `/docs`, etc. vers 8000 et `/` ainsi que `/_next/` vers **3000**, ou rester sur l’export statique dans `backend/web/`.
+
+### 9.2 Mauvais vhost (SNI / default_server)
+
+Verifier `sudo nginx -T | grep -E 'server_name|vocalguard'` et que `server_name` inclut le domaine. Test : `curl -sIk -H 'Host: vocalguard.danielcraft.fr' https://127.0.0.1/` sur **node12**.
