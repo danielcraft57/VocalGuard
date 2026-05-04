@@ -73,6 +73,36 @@ class TimedUtterance:
     words: tuple[TimedWord, ...] = ()
 
 
+def offset_timed_utterances(utterances: list[TimedUtterance], offset_sec: float) -> list[TimedUtterance]:
+    """Décale les bornes des énoncés et des mots (alignement timeline / rapport ``t_speech_candidate``)."""
+    if offset_sec == 0.0:
+        return list(utterances)
+    out: list[TimedUtterance] = []
+    for u in utterances:
+        words = tuple(
+            TimedWord(
+                start_sec=w.start_sec + offset_sec,
+                end_sec=w.end_sec + offset_sec,
+                word=w.word,
+            )
+            for w in u.words
+        )
+        out.append(
+            TimedUtterance(
+                start_sec=u.start_sec + offset_sec,
+                end_sec=u.end_sec + offset_sec,
+                text=u.text,
+                words=words,
+            )
+        )
+    return out
+
+
+def _collapse_subtitle_text(text: str) -> str:
+    """Une entrée SRT/VTT par bloc : évite les sauts de ligne parasites dans le texte STT."""
+    return " ".join((text or "").replace("\n", " ").replace("\r", " ").split())
+
+
 def format_timestamp_sub(sec: float) -> str:
     """Horodatage SubRip ``HH:MM:SS,mmm``."""
     if sec < 0:
@@ -115,7 +145,7 @@ def write_subrip(path: Path, utterances: list[TimedUtterance], *, encoding: str 
         lines.append(
             f"{format_timestamp_sub(u.start_sec)} --> {format_timestamp_sub(u.end_sec)}"
         )
-        lines.append(u.text.strip())
+        lines.append(_collapse_subtitle_text(u.text))
         lines.append("")
     path.write_text("\n".join(lines).rstrip() + "\n", encoding=encoding)
 
@@ -128,7 +158,7 @@ def write_webvtt(path: Path, utterances: list[TimedUtterance], *, encoding: str 
         lines.append(
             f"{format_timestamp_vtt(u.start_sec)} --> {format_timestamp_vtt(u.end_sec)}"
         )
-        lines.append(u.text.strip())
+        lines.append(_collapse_subtitle_text(u.text))
         lines.append("")
     path.write_text("\n".join(lines).rstrip() + "\n", encoding=encoding)
 

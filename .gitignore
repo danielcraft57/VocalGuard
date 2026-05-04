@@ -88,6 +88,7 @@ AGENTS.md
 scripts/modem_lab/generated/
 scripts/modem_lab/.presets.json
 scripts/modem_lab/.last_tts_voice.txt
+scripts/modem_lab/scenario_bookmarks.json
 *.swp
 *.swo
 *~

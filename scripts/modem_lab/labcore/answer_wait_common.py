@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from loguru import logger
 
@@ -59,6 +59,8 @@ async def run_answer_wait_phase(
     report_hop_ms: float,
     exit_wait_on_voice: bool = False,
     report_session_extra: dict[str, Any] | None = None,
+    on_vrx_pcm_u8: Callable[[bytes], None] | None = None,
+    vrx_hook_only_when_capturing: bool = False,
 ) -> tuple[bool, str]:
     """
     Attend un décroché ou une activité voix avec les mêmes options que la sonde métriques.
@@ -152,6 +154,8 @@ async def run_answer_wait_phase(
             vad_min_speech_ms=float(vad_min_speech_ms),
             vad_hangover_ms=float(vad_hangover_ms),
             exit_wait_on_voice=bool(exit_wait_on_voice),
+            on_vrx_pcm_u8=on_vrx_pcm_u8,
+            vrx_hook_only_when_capturing=bool(vrx_hook_only_when_capturing),
         )
     finally:
         if writer is not None:

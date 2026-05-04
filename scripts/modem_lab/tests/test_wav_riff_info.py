@@ -30,8 +30,16 @@ def test_apply_wav_riff_info_tags_inserts_list_inam(tmp_path: Path) -> None:
     apply_wav_riff_info_tags(
         w,
         title="Titre démo",
+        subtitle="Sous titre",
         artist="fr-FR-DeniseNeural",
         album="mon_pack",
+        year="2026",
+        track_number="01",
+        genre="Prospection",
+        media_origin="VocalGuard modem_lab",
+        copyright_text="DanielCraft",
+        parental_control="yes",
+        parental_control_reason="langage",
         comment="intents: flow",
         software="VocalGuard test",
     )
@@ -44,6 +52,13 @@ def test_apply_wav_riff_info_tags_inserts_list_inam(tmp_path: Path) -> None:
     assert "Titre démo".encode("cp1252") in blob
     assert b"IART" in blob
     assert b"IPRD" in blob
+    assert b"ISBJ" in blob
+    assert b"ICRD" in blob
+    assert b"ITRK" in blob
+    assert b"IGNR" in blob
+    assert b"ISRC" in blob
+    assert b"ICOP" in blob
+    assert b"IKEY" in blob
     assert b"ICMT" in blob
     assert b"ISFT" in blob
     # lecture PCM toujours possible

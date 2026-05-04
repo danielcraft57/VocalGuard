@@ -11,8 +11,11 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import sys
 import tempfile
+import time
+import uuid
 import zipfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -77,19 +80,38 @@ def default_cache_root() -> Path:
 
 
 def is_plausible_vosk_dir(path: Path) -> bool:
-    """Heuristique : présence de fichiers typiques d’un modèle Vosk dépaqueté."""
-    if not path.is_dir():
+    """Heuristique : présence de fichiers typiques d’un modèle Vosk dépaqueté.
+
+    Sur Windows, ``.is_file()`` / ``iterdir()`` peuvent lever ``PermissionError`` (fichier
+    verrouillé, antivirus, autre processus) : on les ignore et on teste d’autres marqueurs.
+    """
+    try:
+        if not path.is_dir():
+            return False
+    except (PermissionError, OSError):
         return False
-    for rel in (
+    markers = (
         "am/final.mdl",
         "model.conf",
         "graph/HCLG.fst",
         "graph/Gr.fst",
         "conf/mfcc.conf",
-    ):
-        if (path / rel).is_file():
+    )
+    for rel in markers:
+        try:
+            if (path / rel).is_file():
+                return True
+        except (PermissionError, OSError):
+            continue
+    try:
+        am = path / "am"
+        if not am.is_dir():
+            return False
+        for _ in am.iterdir():
             return True
-    return (path / "am").is_dir() and any((path / "am").iterdir())
+    except (PermissionError, OSError):
+        pass
+    return False
 
 
 def _download(
@@ -125,6 +147,65 @@ def _extract_zip(zip_path: Path, target_dir: Path) -> None:
             if m.startswith("/") or ".." in m.split("/"):
                 raise OSError(f"Entrée zip rejetée (sécurité): {m}")
         zf.extractall(target_dir)
+
+
+def _rmtree_robust(path: Path) -> None:
+    """
+    Supprime un répertoire (Windows : lecture seule, handles partiels).
+
+    Plusieurs passes + ``chmod`` sur échec ; si le nom reste bloqué, renommage en
+    ``*.stale_<timestamp>`` pour libérer le chemin attendu du modèle.
+    """
+    if not path.exists():
+        return
+
+    def _onerror(func: Any, p: str, _exc_info: Any) -> None:
+        try:
+            os.chmod(p, stat.S_IWRITE)
+            func(p)
+        except Exception:
+            pass
+
+    for attempt in range(5):
+        if not path.exists():
+            return
+        try:
+            shutil.rmtree(path, onerror=_onerror)
+        except OSError:
+            pass
+        if not path.exists():
+            return
+        time.sleep(0.2 * (attempt + 1))
+
+    if not path.exists():
+        return
+
+    stale = path.parent / f"{path.name}.stale_{int(time.time())}"
+    try:
+        path.rename(stale)
+        path = stale
+    except OSError as e:
+        logger.error("Suppression impossible « {} » : {}", path, e)
+        raise OSError(
+            f"Impossible de supprimer ou renommer le dossier (fichiers verrouillés ?) : {path}"
+        ) from e
+
+    for attempt in range(3):
+        if not path.exists():
+            return
+        try:
+            shutil.rmtree(path, onerror=_onerror)
+        except OSError:
+            pass
+        if not path.exists():
+            return
+        time.sleep(0.3)
+
+    if path.exists():
+        logger.warning(
+            "Cache Vosk : impossible de tout supprimer « {} » — supprimez ce dossier à la main si besoin.",
+            path,
+        )
 
 
 def ensure_french_model(
@@ -174,24 +255,49 @@ def ensure_french_model(
         if on_progress is None:
             print(flush=True)
 
-    if model_dir.exists():
-        shutil.rmtree(model_dir, ignore_errors=True)
-    with tempfile.TemporaryDirectory(dir=str(root)) as tmp:
-        tmp_p = Path(tmp)
-        _extract_zip(zip_path, tmp_p)
-        extracted: Path | None = None
-        for c in sorted(tmp_p.iterdir()):
-            if c.is_dir() and is_plausible_vosk_dir(c):
-                extracted = c
-                break
-        if extracted is None:
-            for c in tmp_p.rglob("*"):
-                if c.is_dir() and c.parent != tmp_p and is_plausible_vosk_dir(c):
+    # Extraire vers un nom unique sous ``root`` : si ``model_dir`` existe encore,
+    # ``shutil.move(src, model_dir)`` déposerait ``src`` *à l’intérieur* (double dossier + PermissionError).
+    staging: Path | None = None
+    try:
+        with tempfile.TemporaryDirectory(dir=str(root)) as tmp:
+            tmp_p = Path(tmp)
+            _extract_zip(zip_path, tmp_p)
+            extracted: Path | None = None
+            for c in sorted(tmp_p.iterdir()):
+                if c.is_dir() and is_plausible_vosk_dir(c):
                     extracted = c
                     break
-        if extracted is None:
-            raise OSError(f"Archive ZIP sans dossier modèle reconnu: {zip_path.name}")
-        shutil.move(str(extracted), str(model_dir))
+            if extracted is None:
+                for c in tmp_p.rglob("*"):
+                    if c.is_dir() and c.parent != tmp_p and is_plausible_vosk_dir(c):
+                        extracted = c
+                        break
+            if extracted is None:
+                raise OSError(f"Archive ZIP sans dossier modèle reconnu: {zip_path.name}")
+            staging = (root / f"._vosk_extract_{uuid.uuid4().hex[:12]}").resolve()
+            if staging.exists():
+                _rmtree_robust(staging)
+            shutil.move(str(extracted), str(staging))
+
+        if not is_plausible_vosk_dir(staging):
+            raise OSError(f"Archive ZIP corrompue ou incomplète: {zip_path.name}")
+
+        _rmtree_robust(model_dir)
+        if model_dir.exists():
+            raise OSError(
+                f"Impossible de remplacer le dossier (accès refusé) : {model_dir}. "
+                "Fermez les autres processus qui utilisent ce modèle Vosk, puis réessayez."
+            )
+        staging.rename(model_dir)
+        staging = None
+    except Exception:
+        if staging is not None and staging.exists():
+            try:
+                _rmtree_robust(staging)
+            except Exception as e:
+                logger.warning("Nettoyage staging Vosk « {} » : {}", staging, e)
+        raise
+
     if not is_plausible_vosk_dir(model_dir):
         raise OSError(
             f"Extraction incomplète: dossier modèle non reconnu sous {model_dir}. "

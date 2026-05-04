@@ -217,6 +217,8 @@ async def wait_answer_or_voice_activity(
     vad_min_speech_ms: float = 420.0,
     vad_hangover_ms: float = 400.0,
     exit_wait_on_voice: bool = False,
+    on_vrx_pcm_u8: Callable[[bytes], None] | None = None,
+    vrx_hook_only_when_capturing: bool = False,
 ) -> tuple[bool, AnswerReason]:
     """
     Attend d'abord un éventuel signal série de décroché, sinon la 1ère activité vocale VRX.
@@ -241,6 +243,15 @@ async def wait_answer_or_voice_activity(
     **sauf** si ``exit_wait_on_voice`` est True : alors la première voix (ou autre
     déclencheur positif) termine tout de suite la fonction — utile pour enchaîner
     prompt / répondeur sans attendre la fin de fenêtre.
+
+    ``on_vrx_pcm_u8`` : si fourni, chaque chunk PCM u8 non vide lu sur VRX est aussi
+    passé à ce callback (ex. alimenter Vosk pendant l’attente pour ne pas perdre le
+    message « aucun message » avant le menu SVI).
+
+    Si ``vrx_hook_only_when_capturing`` est True, le hook n’est appelé que lorsque
+    ``capturing`` est vrai (même règle que WAV / métriques audio : après
+    ``capture_delay_sec`` et dans ``capture_window_sec`` si > 0). Utile pour aligner
+    STT + WAV Vosk sur ``answer_metrics_probe`` avec le même ``capture_delay_sec``.
     """
     cap_delay = max(0.0, float(capture_delay_sec))
     cap_win = max(0.0, float(capture_window_sec))
@@ -384,6 +395,11 @@ async def wait_answer_or_voice_activity(
             if not chunk:
                 await asyncio.sleep(0.02)
                 continue
+            if on_vrx_pcm_u8 is not None and (not vrx_hook_only_when_capturing or capturing):
+                try:
+                    on_vrx_pcm_u8(chunk)
+                except Exception as e:
+                    logger.warning("wait_answer_or_voice_activity: on_vrx_pcm_u8 hook: {}", e)
             if capturing and wav_out_path is not None:
                 if wav_writer is None:
                     wav_writer = WavPcm8MonoWriter(wav_out_path)

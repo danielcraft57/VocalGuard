@@ -22,6 +22,7 @@ import json
 import shlex
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +36,14 @@ LAST_TTS_VOICE_FILE = LAB_DIR / ".last_tts_voice.txt"
 sys.path.insert(0, str(LAB_DIR))
 
 from labcore.bootstrap import setup_logging
+from labcore.scenario_bookmarks import (
+    bookmarks_file,
+    load_bookmarks,
+    save_bookmarks,
+    validate_bookmark_id,
+)
+
+import cli as modem_lab_cli
 
 # Style Questionary partagé (rempli au démarrage de ``main``).
 _UI: dict[str, Any] = {"q_style": None}
@@ -129,6 +138,20 @@ def _load_presets() -> dict:
         "outbound_prepare_voice": "y",
         "intent_pack_last_rel": "data/intents_prospection_flow.json",
         "intent_pack_out_rel": str(LAB_DIR / "generated" / "prospection_pack" / "ui_pack"),
+        "intent_pack_meta_subtitle": "",
+        "intent_pack_meta_year": "",
+        "intent_pack_meta_track_number": "",
+        "intent_pack_meta_genre": "",
+        "intent_pack_meta_media_origin": "VocalGuard modem_lab",
+        "intent_pack_meta_copyright": "",
+        "intent_pack_meta_parental_control": "",
+        "intent_pack_meta_parental_reason": "",
+        "vosk_model_slug": "small-fr",
+        "answer_vosk_listen_sec": "40",
+        "subtitle_timeline_offset_sec": "0",
+        "answer_vosk_srt_origin_first_ring": "y",
+        "outbound_vad_listen_sec": "90",
+        "prompt_play_sequence": "welcome",
     }
     if not PRESETS_FILE.exists():
         return defaults
@@ -156,6 +179,15 @@ def _run_sub(console, args: list[str]) -> int:
     console.print()
     console.print(Panel(line, title="[bold cyan]Commande[/]", border_style="cyan"))
     return subprocess.call(cmd, cwd=str(PROJECT_ROOT))
+
+
+def _run_cli_target(console, target: str, tail: list[str]) -> int:
+    """Lance un scénario intégré ou un **signet** via ``cli.py``."""
+    args: list[str] = [str(LAB_DIR / "cli.py"), target]
+    if tail:
+        args.append("--")
+        args.extend(str(x) for x in tail)
+    return _run_sub(console, args)
 
 
 def _ask_text(
@@ -384,6 +416,42 @@ def menu_intent_pack_wizard(console, questionary, presets: dict) -> None:
     force = _confirm(questionary, "Régénérer tous les WAV même s’ils existent déjà ?", default=False)
     force_b = bool(force)
 
+    _section_header(console, "Métadonnées WAV (UI pack)", "Champs RIFF additionnels")
+    meta_subtitle = _ask_text(questionary, presets, "Sous-titre (ISBJ)", "intent_pack_meta_subtitle")
+    current_year = str(datetime.now().year)
+    year_default = str(presets.get("intent_pack_meta_year", "")).strip() or current_year
+    meta_year = _ask_text(
+        questionary,
+        presets,
+        "Année (ICRD)",
+        "intent_pack_meta_year",
+        override=year_default,
+    )
+    meta_track = _ask_text(questionary, presets, "N° (ITRK)", "intent_pack_meta_track_number")
+    meta_genre = _ask_text(questionary, presets, "Genre (IGNR)", "intent_pack_meta_genre")
+    meta_origin = _ask_text(questionary, presets, "Origine média (ISRC)", "intent_pack_meta_media_origin")
+    meta_copyright = _ask_text(questionary, presets, "Copyright (ICOP)", "intent_pack_meta_copyright")
+    meta_parental = _ask_text(
+        questionary,
+        presets,
+        "Contenu contrôle parental (ex: yes/no/all_ages)",
+        "intent_pack_meta_parental_control",
+    )
+    meta_parental_reason = _ask_text(
+        questionary,
+        presets,
+        "Motif du contrôle parental",
+        "intent_pack_meta_parental_reason",
+    )
+    presets["intent_pack_meta_subtitle"] = meta_subtitle
+    presets["intent_pack_meta_year"] = meta_year
+    presets["intent_pack_meta_track_number"] = meta_track
+    presets["intent_pack_meta_genre"] = meta_genre
+    presets["intent_pack_meta_media_origin"] = meta_origin
+    presets["intent_pack_meta_copyright"] = meta_copyright
+    presets["intent_pack_meta_parental_control"] = meta_parental
+    presets["intent_pack_meta_parental_reason"] = meta_parental_reason
+
     console.print("[info]Génération en cours (edge-tts + pydub)…[/]")
     try:
 
@@ -394,6 +462,16 @@ def menu_intent_pack_wizard(console, questionary, presets: dict) -> None:
                 placeholders,
                 voice=voice,
                 force=force_b,
+                metadata={
+                    "subtitle": meta_subtitle,
+                    "year": meta_year,
+                    "track_number": meta_track,
+                    "genre": meta_genre,
+                    "media_origin": meta_origin,
+                    "copyright_text": meta_copyright,
+                    "parental_control": meta_parental,
+                    "parental_control_reason": meta_parental_reason,
+                },
             )
 
         asyncio.run(_go())
@@ -417,6 +495,22 @@ def menu_intent_pack_wizard(console, questionary, presets: dict) -> None:
     )
     if vars_json and vars_json.is_file():
         rel_cmd += f' --vars-json "{_rel_to_repo(vars_json)}"'
+    if meta_subtitle.strip():
+        rel_cmd += f" --subtitle {shlex.quote(meta_subtitle.strip())}"
+    if meta_year.strip():
+        rel_cmd += f" --year {shlex.quote(meta_year.strip())}"
+    if meta_track.strip():
+        rel_cmd += f" --track-number {shlex.quote(meta_track.strip())}"
+    if meta_genre.strip():
+        rel_cmd += f" --genre {shlex.quote(meta_genre.strip())}"
+    if meta_origin.strip():
+        rel_cmd += f" --media-origin {shlex.quote(meta_origin.strip())}"
+    if meta_copyright.strip():
+        rel_cmd += f" --copyright-text {shlex.quote(meta_copyright.strip())}"
+    if meta_parental.strip():
+        rel_cmd += f" --parental-control {shlex.quote(meta_parental.strip())}"
+    if meta_parental_reason.strip():
+        rel_cmd += f" --parental-control-reason {shlex.quote(meta_parental_reason.strip())}"
     console.print("[ok]Pack généré.[/]")
     console.print(Panel(rel_cmd, title="Équivalent ligne de commande", border_style="green"))
     _save_presets(presets)
@@ -483,64 +577,248 @@ def menu_audio(console, questionary, presets: dict) -> None:
             _pause(console)
 
 
-def menu_scenarios(console, questionary, presets: dict) -> None:
-    """Menus scénarios (logique inchangée, prompts Questionary)."""
-    port = presets["port"]
-    number = presets["default_number"]
-    delay = presets["answer_delay_ms"]
+def menu_scenario_bookmarks(console, questionary, presets: dict) -> None:
+    """Lister / ajouter / modifier / supprimer / lancer des signets ``cli.py``."""
+    from rich import box
+    from rich.panel import Panel
+    from rich.table import Table
+
+    builtins = set(modem_lab_cli.SCENARIO_MAP.keys())
+    scen_choices = sorted(builtins)
+    fpath = bookmarks_file(LAB_DIR)
+    try:
+        fpath_rel = str(fpath.relative_to(PROJECT_ROOT))
+    except ValueError:
+        fpath_rel = str(fpath)
 
     while True:
-        _section_header(console, "Scénarios modem", "USB / AT+VRX / scripts labscenarios")
+        marks = load_bookmarks(LAB_DIR)
+        _section_header(
+            console,
+            "Signets scénarios",
+            f"Fichier : {fpath_rel} · équivalent CLI : « python scripts/modem_lab/cli.py bookmark -h »",
+        )
         ch = _select(
             console,
             questionary,
-            "Scénario à lancer",
+            "Action",
             [
-                questionary.Choice("Smoke tests AT", value="1"),
-                questionary.Choice("Dialer — appel sortant simple", value="2"),
-                questionary.Choice("Outgoing + clavier DTMF", value="3"),
-                questionary.Choice("Appel entrant (pont audio)", value="4"),
-                questionary.Choice("DTMF keypad (ligne établie)", value="5"),
-                questionary.Choice("Répondeur entrant", value="6"),
-                questionary.Choice("Outbound announce (WAV sur la ligne)", value="7"),
+                questionary.Choice("Afficher la liste (aperçu)", value="list"),
+                questionary.Choice("Ajouter un signet", value="add"),
+                questionary.Choice("Modifier un signet", value="set"),
+                questionary.Choice("Supprimer un signet", value="remove"),
+                questionary.Choice("Lancer un signet (cli.py)", value="run"),
                 questionary.Choice("Retour au menu principal", value="back"),
             ],
         )
         if ch is None or ch == "back":
             return
 
-        if ch == "1":
-            _run_sub(console, [str(LAB_DIR / "labscenarios" / "smoke_tests.py"), "--port", port])
+        if ch == "list":
+            if not marks:
+                console.print(Panel("(aucun signet — « Ajouter » ou copier scenario_bookmarks.example.json)", title="Signets"))
+            else:
+                tbl = Table(box=box.ROUNDED, show_header=True, header_style="bold cyan")
+                tbl.add_column("id", style="green", no_wrap=True)
+                tbl.add_column("scénario", no_wrap=True)
+                tbl.add_column("description", style="dim")
+                tbl.add_column("args figés", style="white")
+                for bid in sorted(marks):
+                    m = marks[bid]
+                    args_s = " ".join(m.get("args") or [])
+                    if len(args_s) > 48:
+                        args_s = args_s[:45] + "…"
+                    tbl.add_row(bid, m.get("scenario", ""), (m.get("description") or "")[:60], args_s)
+                console.print(tbl)
+            _pause(console)
 
-        elif ch == "2":
+        elif ch == "add":
+            bid = _text_raw(questionary, "Identifiant du signet (lettre puis [a-z0-9_-])", default="").strip()
+            err = validate_bookmark_id(bid, builtins)
+            if err:
+                console.print(f"[err]{err}[/]")
+                _pause(console)
+                continue
+            if bid in marks:
+                console.print("[err]Cet identifiant existe déjà — utiliser « Modifier ».[/]")
+                _pause(console)
+                continue
+            scen = _select(
+                console,
+                questionary,
+                "Scénario intégré cible",
+                [questionary.Choice(s, value=s) for s in scen_choices],
+                default=scen_choices[0] if scen_choices else None,
+            )
+            if not scen:
+                continue
+            desc = _text_raw(questionary, "Description (optionnel)", default="")
+            args_s = _text_raw(
+                questionary,
+                "Arguments figés (ex: --hold-seconds 5) — laisser vide si aucun",
+                default="",
+            )
+            try:
+                stored = shlex.split(args_s, posix=False) if args_s.strip() else []
+            except ValueError as e:
+                console.print(f"[err]Découpage des arguments : {e}[/]")
+                _pause(console)
+                continue
+            marks[bid] = {"scenario": scen, "args": stored, "description": desc.strip()}
+            save_bookmarks(LAB_DIR, marks)
+            console.print(f"[ok]Signet « {bid} » enregistré.[/]")
+            _pause(console)
+
+        elif ch == "set":
+            if not marks:
+                console.print("[warn]Aucun signet à modifier.[/]")
+                _pause(console)
+                continue
+            bid = _select(
+                console,
+                questionary,
+                "Signet à modifier",
+                [questionary.Choice(f"{k}  → {marks[k].get('scenario', '')}", value=k) for k in sorted(marks)],
+            )
+            if not bid:
+                continue
+            cur = marks[bid]
+            scen = _select(
+                console,
+                questionary,
+                "Scénario intégré",
+                [questionary.Choice(s, value=s) for s in scen_choices],
+                default=cur.get("scenario") or scen_choices[0],
+            )
+            if not scen:
+                continue
+            desc = _text_raw(questionary, "Description", default=cur.get("description") or "")
+            args_s = _text_raw(
+                questionary,
+                "Arguments figés (remplace l’ancienne liste)",
+                default=" ".join(shlex.quote(a) for a in (cur.get("args") or [])),
+            )
+            try:
+                stored = shlex.split(args_s, posix=False) if args_s.strip() else []
+            except ValueError as e:
+                console.print(f"[err]Découpage des arguments : {e}[/]")
+                _pause(console)
+                continue
+            marks[bid] = {"scenario": scen, "args": stored, "description": desc.strip()}
+            save_bookmarks(LAB_DIR, marks)
+            console.print(f"[ok]Signet « {bid} » mis à jour.[/]")
+            _pause(console)
+
+        elif ch == "remove":
+            if not marks:
+                console.print("[warn]Aucun signet.[/]")
+                _pause(console)
+                continue
+            bid = _select(
+                console,
+                questionary,
+                "Signet à supprimer",
+                [questionary.Choice(f"{k}", value=k) for k in sorted(marks)],
+            )
+            if not bid:
+                continue
+            if not _confirm(questionary, f"Supprimer définitivement « {bid} » ?", default=False):
+                continue
+            del marks[bid]
+            save_bookmarks(LAB_DIR, marks)
+            console.print(f"[ok]Signet « {bid} » supprimé.[/]")
+            _pause(console)
+
+        elif ch == "run":
+            if not marks:
+                console.print("[warn]Aucun signet — créez-en un d’abord.[/]")
+                _pause(console)
+                continue
+            bid = _select(
+                console,
+                questionary,
+                "Signet à lancer",
+                [questionary.Choice(f"{k}  ({marks[k].get('scenario', '')})", value=k) for k in sorted(marks)],
+            )
+            if not bid:
+                continue
+            port = presets.get("port", "COM6")
+            number = presets.get("default_number", "147")
+            default_extra = f"--port {port} --number {number}"
+            extra_s = _text_raw(
+                questionary,
+                "Arguments supplémentaires (ajoutés après les args figés du signet)",
+                default=default_extra,
+            )
+            try:
+                extra = shlex.split(extra_s, posix=False) if extra_s.strip() else []
+            except ValueError as e:
+                console.print(f"[err]Découpage : {e}[/]")
+                _pause(console)
+                continue
+            _run_cli_target(console, bid, extra)
+
+
+def menu_scenarios(console, questionary, presets: dict) -> None:
+    """Menus scénarios : dispatch via ``cli.py`` (aligné sur labscenarios/README)."""
+    port = presets["port"]
+    number = presets["default_number"]
+    delay = presets["answer_delay_ms"]
+    q = questionary
+    Sep = questionary.Separator
+
+    while True:
+        _section_header(console, "Scénarios modem", "USB / AT+VRX · lancement via cli.py")
+        ch = _select(
+            console,
+            questionary,
+            "Scénario à lancer",
+            [
+                Sep("── Basique ──"),
+                q.Choice("Smoke tests AT", value="smoke"),
+                q.Choice("Dialer — appel sortant simple", value="dialer"),
+                q.Choice("Outgoing + clavier DTMF", value="outgoing"),
+                q.Choice("Appel entrant (pont audio)", value="incoming"),
+                q.Choice("DTMF keypad (ligne établie)", value="dtmf"),
+                q.Choice("Répondeur entrant", value="answering"),
+                q.Choice("Outbound announce (WAV sur la ligne)", value="outbound-announce"),
+                Sep("── Sondes, métriques & Vosk ──"),
+                q.Choice("Answer metrics probe (CSV + capture.wav)", value="answer-metrics-probe"),
+                q.Choice("Answer Vosk live probe (STT temps réel + SRT)", value="answer-vosk-live-probe"),
+                q.Choice("Metrics voicemail (sonde + prompt + bip + message)", value="metrics-voicemail"),
+                q.Choice("Prospection outbound (greeting + Vosk + intents)", value="prospection-outbound"),
+                Sep("── Autres sortants ──"),
+                q.Choice("Outbound listen VAD (VRX sans WAV)", value="outbound-listen-vad"),
+                q.Choice("Prompt and play (WAV préchargés / séquence)", value="prompt-and-play"),
+                Sep("──"),
+                q.Choice("Retour au menu principal", value="back"),
+            ],
+        )
+        if ch is None or ch == "back":
+            return
+
+        if ch == "smoke":
+            _run_cli_target(console, "smoke", ["--port", port])
+
+        elif ch == "dialer":
             number = _ask_text(questionary, presets, "Numéro à appeler", "default_number", override=number)
             hold = _ask_text(questionary, presets, "Durée avant raccrochage (s)", "hold_seconds")
             presets["default_number"] = number
             presets["hold_seconds"] = hold
             _save_presets(presets)
-            _run_sub(
+            _run_cli_target(
                 console,
-                [
-                    str(LAB_DIR / "labscenarios" / "dialer.py"),
-                    "--port",
-                    port,
-                    "--number",
-                    number,
-                    "--hold-seconds",
-                    hold,
-                ],
+                "dialer",
+                ["--port", port, "--number", number, "--hold-seconds", hold],
             )
 
-        elif ch == "3":
+        elif ch == "outgoing":
             number = _ask_text(questionary, presets, "Numéro à appeler", "default_number", override=number)
             presets["default_number"] = number
             _save_presets(presets)
-            _run_sub(
-                console,
-                [str(LAB_DIR / "labscenarios" / "outgoing_call.py"), "--port", port, "--number", number],
-            )
+            _run_cli_target(console, "outgoing", ["--port", port, "--number", number])
 
-        elif ch == "4":
+        elif ch == "incoming":
             in_dev = presets.get("audio_input_device", "")
             out_dev = presets.get("audio_output_device", "")
             burst = presets.get("uplink_burst_ms", "260")
@@ -576,35 +854,35 @@ def menu_scenarios(console, questionary, presets: dict) -> None:
                     "ptt_ms": ptt_ms,
                 }
             )
-            args = [str(LAB_DIR / "labscenarios" / "incoming_call.py"), "--port", port]
+            tail = ["--port", port]
             if auto:
                 delay = _ask_text(questionary, presets, "Délai auto answer (ms)", "answer_delay_ms", override=delay)
                 presets["answer_delay_ms"] = delay
-                args.extend(["--auto-answer", "--answer-delay-ms", delay])
+                tail.extend(["--auto-answer", "--answer-delay-ms", delay])
             else:
-                args.append("--manual-answer")
-            args.extend(["--uplink-burst-ms", burst, "--ptt-ms", ptt_ms])
+                tail.append("--manual-answer")
+            tail.extend(["--uplink-burst-ms", burst, "--ptt-ms", ptt_ms])
             if in_dev:
-                args.extend(["--input-device", in_dev])
+                tail.extend(["--input-device", in_dev])
             if out_dev:
-                args.extend(["--output-device", out_dev])
+                tail.extend(["--output-device", out_dev])
             if rx_only.lower().startswith("y"):
-                args.append("--rx-only")
+                tail.append("--rx-only")
             if ptt.lower().startswith("y"):
-                args.append("--push-to-talk")
+                tail.append("--push-to-talk")
             _save_presets(presets)
-            _run_sub(console, args)
+            _run_cli_target(console, "incoming", tail)
 
-        elif ch == "5":
+        elif ch == "dtmf":
             num_in = _text_raw(questionary, "Numéro (vide si ligne déjà établie)", default="")
-            args = [str(LAB_DIR / "labscenarios" / "dtmf_keypad.py"), "--port", port]
+            tail = ["--port", port]
             if num_in.strip():
                 presets["default_number"] = num_in.strip()
-                args.extend(["--number", num_in.strip()])
+                tail.extend(["--number", num_in.strip()])
             _save_presets(presets)
-            _run_sub(console, args)
+            _run_cli_target(console, "dtmf", tail)
 
-        elif ch == "6":
+        elif ch == "answering":
             delay = presets.get("answer_delay_ms", "0")
             greeting = presets.get("voicemail_greeting_wav", "")
             rec_seconds = _text_raw(questionary, "Durée enregistrement message (s)", default="5") or "5"
@@ -616,8 +894,7 @@ def menu_scenarios(console, questionary, presets: dict) -> None:
             vm_beep_hz = presets.get("voicemail_beep_hz", "1000")
             vm_beep2_ms = presets.get("voicemail_beep2_ms", "150")
             vm_beep2_hz = presets.get("voicemail_beep2_hz", "780")
-            args = [
-                str(LAB_DIR / "labscenarios" / "answering_machine.py"),
+            tail = [
                 "--port",
                 port,
                 "--answer-delay-ms",
@@ -636,12 +913,12 @@ def menu_scenarios(console, questionary, presets: dict) -> None:
                 vm_beep2_hz,
             ]
             if greeting:
-                args.extend(["--greeting-wav", greeting])
+                tail.extend(["--greeting-wav", greeting])
             if vm_beep.lower().startswith("y"):
-                args.append("--beep")
-            _run_sub(console, args)
+                tail.append("--beep")
+            _run_cli_target(console, "answering", tail)
 
-        elif ch == "7":
+        elif ch == "outbound-announce":
             number = _ask_text(questionary, presets, "Numéro à appeler", "default_number", override=number)
             msg_wav = _ask_text(
                 questionary,
@@ -673,8 +950,7 @@ def menu_scenarios(console, questionary, presets: dict) -> None:
             presets["outbound_record_seconds"] = rec_s
             presets["outbound_prepare_voice"] = "y" if prep_v else "n"
             presets["outbound_beep_before_record"] = "y" if beep_rec else "n"
-            args = [
-                str(LAB_DIR / "labscenarios" / "outbound_announce.py"),
+            tail = [
                 "--port",
                 port,
                 "--number",
@@ -691,21 +967,165 @@ def menu_scenarios(console, questionary, presets: dict) -> None:
                 ring_sec,
             ]
             if wait_ans:
-                args.append("--wait-remote-answer")
+                tail.append("--wait-remote-answer")
             if not prep_v:
-                args.append("--no-prepare-voice-line")
+                tail.append("--no-prepare-voice-line")
             try:
                 rs = float(rec_s.replace(",", "."))
             except ValueError:
                 rs = 0.0
             if rs > 0:
-                args.extend(["--record-seconds", str(rs)])
+                tail.extend(["--record-seconds", str(rs)])
                 if beep_rec:
-                    args.append("--beep-before-record")
+                    tail.append("--beep-before-record")
             if quiet_h:
-                args.append("--quiet-hangup-tty")
+                tail.append("--quiet-hangup-tty")
             _save_presets(presets)
-            _run_sub(console, args)
+            _run_cli_target(console, "outbound-announce", tail)
+
+        elif ch == "answer-metrics-probe":
+            number = _ask_text(questionary, presets, "Numéro à appeler", "default_number", override=number)
+            presets["default_number"] = number
+            _save_presets(presets)
+            _run_cli_target(console, "answer-metrics-probe", ["--port", port, "--number", number])
+
+        elif ch == "answer-vosk-live-probe":
+            number = _ask_text(questionary, presets, "Numéro à appeler", "default_number", override=number)
+            slug = _ask_text(questionary, presets, "Slug modèle Vosk (ex. small-fr)", "vosk_model_slug")
+            listen_s = _ask_text(questionary, presets, "Écoute STT max (s)", "answer_vosk_listen_sec")
+            sub_off = _ask_text(
+                questionary,
+                presets,
+                "Décalage SRT additionnel (s), après alignement sur 1re tonalité ; 0 = aucun",
+                "subtitle_timeline_offset_sec",
+            )
+            ring_align = _ask_text(
+                questionary,
+                presets,
+                "SRT + WAV : origine t=0 à la 1re tonalité (troncature début WAV) ? (y/n)",
+                "answer_vosk_srt_origin_first_ring",
+            )
+            presets["default_number"] = number
+            presets["vosk_model_slug"] = slug
+            presets["answer_vosk_listen_sec"] = listen_s
+            presets["subtitle_timeline_offset_sec"] = sub_off
+            presets["answer_vosk_srt_origin_first_ring"] = ring_align
+            _save_presets(presets)
+            tail = [
+                "--port",
+                port,
+                "--number",
+                number,
+                "--listen-sec",
+                listen_s.replace(",", "."),
+                "--subtitle-timeline-offset-sec",
+                sub_off.replace(",", "."),
+            ]
+            if str(ring_align).strip().lower() in ("n", "no", "0", "false", "non"):
+                tail.append("--no-srt-origin-first-ring")
+            if slug.strip():
+                tail.extend(["--vosk-model-slug", slug.strip()])
+            _run_cli_target(console, "answer-vosk-live-probe", tail)
+
+        elif ch == "metrics-voicemail":
+            number = _ask_text(questionary, presets, "Numéro à appeler", "default_number", override=number)
+            prompt_wav = _ask_text(
+                questionary,
+                presets,
+                "WAV prompt (après détection voix)",
+                "outbound_announce_wav",
+                override=presets.get(
+                    "outbound_announce_wav",
+                    str(LAB_DIR / "generated" / "default" / "modem_wav" / "welcome.wav"),
+                ),
+            )
+            presets["default_number"] = number
+            presets["outbound_announce_wav"] = prompt_wav
+            _save_presets(presets)
+            _run_cli_target(
+                console,
+                "metrics-voicemail",
+                ["--port", port, "--number", number, "--prompt-wav", prompt_wav],
+            )
+
+        elif ch == "prospection-outbound":
+            number = _ask_text(questionary, presets, "Numéro à appeler", "default_number", override=number)
+            slug = _ask_text(questionary, presets, "Slug modèle Vosk", "vosk_model_slug")
+            pack_rel = (presets.get("intent_pack_out_rel") or "").strip()
+            pack_path = (PROJECT_ROOT / pack_rel).resolve() if pack_rel else None
+            default_greet = ""
+            if pack_path and pack_path.is_dir():
+                cand = pack_path / "greeting_01.wav"
+                if cand.is_file():
+                    default_greet = str(cand)
+            if not default_greet:
+                default_greet = presets.get(
+                    "outbound_announce_wav",
+                    str(LAB_DIR / "generated" / "default" / "modem_wav" / "welcome.wav"),
+                )
+            greeting = _text_raw(
+                questionary,
+                "WAV greeting (ou laisser vide pour --audio-pack-dir = pack intents)",
+                default=default_greet,
+            ).strip()
+            try_reply = _confirm(questionary, "Activer --try-intent-reply (pack + JSON intents) ?", default=False)
+            presets["default_number"] = number
+            presets["vosk_model_slug"] = slug
+            _save_presets(presets)
+            tail = ["--port", port, "--number", number]
+            if slug.strip():
+                tail.extend(["--vosk-model-slug", slug.strip()])
+            if greeting:
+                tail.extend(["--greeting-wav", greeting])
+            elif pack_path and pack_path.is_dir():
+                tail.extend(["--audio-pack-dir", str(pack_path)])
+            else:
+                console.print("[err]Indique un WAV greeting ou un dossier pack intents valide.[/]")
+                _pause(console)
+                continue
+            if try_reply:
+                tail.append("--try-intent-reply")
+                intents_rel = (presets.get("intent_pack_last_rel") or "").strip()
+                if intents_rel:
+                    tail.extend(["--intents-json", str((PROJECT_ROOT / intents_rel).resolve())])
+                if pack_path and pack_path.is_dir() and not any(a == "--audio-pack-dir" for a in tail):
+                    tail.extend(["--audio-pack-dir", str(pack_path)])
+            _run_cli_target(console, "prospection-outbound", tail)
+
+        elif ch == "outbound-listen-vad":
+            number = _ask_text(questionary, presets, "Numéro à appeler", "default_number", override=number)
+            listen_s = _ask_text(questionary, presets, "Écoute VAD max (s)", "outbound_vad_listen_sec")
+            presets["default_number"] = number
+            presets["outbound_vad_listen_sec"] = listen_s
+            _save_presets(presets)
+            _run_cli_target(
+                console,
+                "outbound-listen-vad",
+                ["--port", port, "--number", number, "--listen-sec", listen_s.replace(",", ".")],
+            )
+
+        elif ch == "prompt-and-play":
+            number = _ask_text(questionary, presets, "Numéro à appeler", "default_number", override=number)
+            wav_path = _ask_text(
+                questionary,
+                presets,
+                "Fichier WAV (clé « welcome »)",
+                "outbound_announce_wav",
+                override=presets.get(
+                    "outbound_announce_wav",
+                    str(LAB_DIR / "generated" / "default" / "modem_wav" / "welcome.wav"),
+                ),
+            )
+            seq = _ask_text(questionary, presets, "Séquence de clés (CSV)", "prompt_play_sequence")
+            presets["default_number"] = number
+            presets["outbound_announce_wav"] = wav_path
+            presets["prompt_play_sequence"] = seq
+            _save_presets(presets)
+            binding = f"welcome:{wav_path}"
+            tail = ["--port", port, "--number", number, "--wav", binding]
+            if seq.strip():
+                tail.extend(["--sequence", seq.strip()])
+            _run_cli_target(console, "prompt-and-play", tail)
 
 
 def menu_config(console, questionary, presets: dict) -> None:
@@ -764,7 +1184,8 @@ def main() -> int:
             questionary,
             "Que veux-tu faire ?",
             [
-                questionary.Choice("Scénarios modem (smoke, dialer, entrant, DTMF…)", value="scen"),
+                questionary.Choice("Scénarios modem (basique, sondes Vosk, prospection…)", value="scen"),
+                questionary.Choice("Signets scénarios (raccourcis cli.py, JSON local)", value="bkm"),
                 questionary.Choice("Audio, TTS & packs WAV (intents data/)", value="audio"),
                 questionary.Choice("Réglages port / numéro / voix / WAV", value="cfg"),
                 questionary.Choice("Lire un extrait du README modem_lab", value="readme"),
@@ -779,6 +1200,8 @@ def main() -> int:
         if ch == "scen":
             menu_scenarios(console, questionary, presets)
             _save_presets(presets)
+        elif ch == "bkm":
+            menu_scenario_bookmarks(console, questionary, presets)
         elif ch == "audio":
             menu_audio(console, questionary, presets)
             _save_presets(presets)

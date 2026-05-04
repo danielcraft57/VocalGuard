@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "bookmarks": {
+    "dialer-court": {
+      "scenario": "dialer",
+      "args": ["--hold-seconds", "5"],
+      "description": "Exemple : numéro et port passés à l'exécution (après --)"
+    }
+  }
+}

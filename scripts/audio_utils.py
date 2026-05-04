@@ -86,8 +86,16 @@ def apply_wav_riff_info_tags(
     wav_path: Path,
     *,
     title: str = "",
+    subtitle: str = "",
     artist: str = "",
     album: str = "",
+    year: str = "",
+    track_number: str = "",
+    genre: str = "",
+    media_origin: str = "",
+    copyright_text: str = "",
+    parental_control: str = "",
+    parental_control_reason: str = "",
     comment: str = "",
     software: str = "VocalGuard",
 ) -> None:
@@ -100,10 +108,37 @@ def apply_wav_riff_info_tags(
     fields: dict[str, str] = {}
     if title.strip():
         fields["INAM"] = title.strip()
+    if subtitle.strip():
+        # "Subject": pratique comme sous-titre dans LIST/INFO.
+        fields["ISBJ"] = subtitle.strip()
     if artist.strip():
         fields["IART"] = artist.strip()
     if album.strip():
         fields["IPRD"] = album.strip()
+    if year.strip():
+        fields["ICRD"] = year.strip()
+    if track_number.strip():
+        # ITRK est non standard mais largement utilisé pour le n° de piste.
+        fields["ITRK"] = track_number.strip()
+    if genre.strip():
+        fields["IGNR"] = genre.strip()
+    if media_origin.strip():
+        # Source/origine média.
+        fields["ISRC"] = media_origin.strip()
+    if copyright_text.strip():
+        fields["ICOP"] = copyright_text.strip()
+
+    parental = parental_control.strip().lower()
+    parental_reason = parental_control_reason.strip()
+    parental_tokens: list[str] = []
+    if parental:
+        parental_tokens.append(f"parental_control={parental}")
+    if parental_reason:
+        parental_tokens.append(f"parental_reason={parental_reason}")
+    if parental_tokens:
+        # Champ mots-clés : facile à lire/filtrer même si l'explorateur ne l'affiche pas.
+        fields["IKEY"] = " ; ".join(parental_tokens)[:_INFO_MAX_FIELD]
+
     if comment.strip():
         fields["ICMT"] = comment.strip()[:_INFO_MAX_FIELD]
     if software.strip():

@@ -6,7 +6,9 @@ Sonde « live STT » (style answer_metrics_probe) :
 - attend décroché ou activité voix (même pipeline VRX/métriques que answer_metrics_probe)
 - ré-ouvre VRX en voix et lance Vosk dans un thread (8 kHz)
 - affiche en CLI ce qui est reconnu (partials + phrases finalisées)
-- écrit un ``transcript.srt`` au fil de l’eau (flush périodique)
+- écrit un ``transcript.srt`` au fil de l’eau (flush périodique), puis recalé sur la **1re tonalité**
+  du WAV (comme ``t_first_ring`` du rapport ``answer_metrics_probe``) ; le **WAV** est tronqué au même
+  instant pour que l’audio et le SRT partagent la même origine t≈0.
 
 But : tester Vosk sur un appel réel en parlant et en voyant le texte apparaître.
 """
@@ -15,7 +17,9 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import shutil
 import sys
+from typing import Callable
 import time
 import wave
 from datetime import datetime
@@ -34,12 +38,37 @@ from labaudio.vosk_lab import (
     resolve_vosk_model_dir,
     run_configure_only_flow,
 )
-from labaudio.vosk_stt import VoskRealtimeWorker, preload_vosk_model, pump_vrx_pcm16_to_vosk, write_subrip
-from labcore.answer_wait_common import AnswerWaitConfigError, effective_vrx_timeout, run_answer_wait_phase
+from labaudio.vosk_stt import (
+    VoskRealtimeWorker,
+    format_timestamp_sub,
+    offset_timed_utterances,
+    preload_vosk_model,
+    pump_vrx_pcm16_to_vosk,
+    write_subrip,
+)
+from labcore.answer_wait_common import (
+    AnswerWaitConfigError,
+    effective_vrx_timeout,
+    run_answer_wait_phase,
+)
+from labcore.capture_wav_report import analyze_answer_wav
+from labcore.live_audio import u8_pcm_to_s16le
 from labcore.bootstrap import add_modem_args, build_modem, setup_logging
 from labcore.call_control import CallController, HangupStyle
 from labcore.call_watch import wait_remote_line_end_optional
 from labcore.hangup import turbo_hangup
+
+
+def _one_line_display(s: str) -> str:
+    """Une seule ligne pour terminal / pas de retours chariot parasites."""
+    return " ".join((s or "").replace("\n", " ").replace("\r", " ").split())
+
+
+def _terminal_columns() -> int:
+    try:
+        return max(48, shutil.get_terminal_size((100, 20)).columns)
+    except OSError:
+        return 100
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,8 +125,33 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--record-wav-mode", choices=("inline", "thread"), default="inline")
     p.add_argument("--record-wav-out", type=Path, default=Path("scripts/modem_lab/generated/answer_vosk_live_probe/capture.wav"))
     p.add_argument("--record-wav-sec", type=float, default=-1.0)
-    p.add_argument("--capture-delay-sec", type=float, default=0.0)
-    p.add_argument("--capture-window-sec", type=float, default=0.0)
+    p.add_argument(
+        "--capture-delay-sec",
+        type=float,
+        default=0.0,
+        help="Début de la fenêtre métriques/WAV (si activés) après ouverture VRX — identique answer_metrics_probe.",
+    )
+    p.add_argument(
+        "--capture-window-sec",
+        type=float,
+        default=0.0,
+        help="Durée fenêtre capture (0 = pas de maintien calibrage). Avec >0, coupler à --wait-full-capture-window.",
+    )
+    p.add_argument(
+        "--extend-wait-beyond-capture",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Si oui : timeout VRX peut dépasser delay+fenêtre (comme metrics_voicemail).",
+    )
+    p.add_argument(
+        "--wait-full-capture-window",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Si oui et --capture-window-sec>0 : garde VRX jusqu'à la fin de la fenêtre (sonde complète) "
+            "avant le STT. Défaut **non** : quitte dès voix/décroché pour démarrer Vosk plus tôt."
+        ),
+    )
 
     # Live STT
     p.add_argument("--listen-sec", type=float, default=40.0, help="Durée max d’écoute STT après décroché/voix.")
@@ -108,6 +162,44 @@ def parse_args() -> argparse.Namespace:
         help="Stop STT si aucun chunk VRX reçu pendant N secondes (0 = désactiver).",
     )
     p.add_argument("--subtitle-flush-sec", type=float, default=0.7, help="Intervalle de réécriture transcript.srt.")
+    p.add_argument(
+        "--subtitle-timeline-offset-sec",
+        type=float,
+        default=0.0,
+        help=(
+            "Ajouté aux horodatages SRT après recalage éventuel sur la 1re tonalité "
+            "(ex. correction fine vs rapport métriques)."
+        ),
+    )
+    p.add_argument(
+        "--srt-origin-first-ring",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Après l’appel : analyse le WAV STT (même heuristique que answer_metrics_probe) ; "
+            "réécrit le SRT et **tronque le WAV** pour que t≈0 = 1re tonalité (même repère que le STT). "
+            "Désactiver avec --no-srt-origin-first-ring."
+        ),
+    )
+    p.add_argument(
+        "--vosk-feed-during-wait",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Pendant l’attente décroché/voix, envoie chaque chunk VRX au modèle Vosk. "
+            "Indispensable pour transcrire l’annonce « aucun message » avant le menu SVI."
+        ),
+    )
+    p.add_argument(
+        "--vosk-wait-hook-respect-capture-gate",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Pendant l’attente : n’envoie au Vosk / au WAV capture que dans la même fenêtre "
+            "que les métriques (après --capture-delay-sec, etc.), comme le WAV de answer_metrics_probe. "
+            "Désactivé par défaut : sinon l’audio avant le délai n’atteint pas le STT (perte annonce si delay>0)."
+        ),
+    )
     p.add_argument("--print-partials", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--dated-outfiles", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--transcript-dir", type=Path, default=None, help="Dossier de sortie (défaut: dossier session).")
@@ -134,18 +226,19 @@ async def _subtitle_flusher(
     out_srt: Path,
     flush_sec: float,
     stop_event: asyncio.Event,
+    timeline_offset_sec: float,
 ) -> None:
     last_n = -1
     while not stop_event.is_set():
         uts = worker.snapshot_utterances()
         if len(uts) != last_n and uts:
-            write_subrip(out_srt, uts)
+            write_subrip(out_srt, offset_timed_utterances(uts, float(timeline_offset_sec)))
             last_n = len(uts)
         await asyncio.sleep(max(0.15, float(flush_sec)))
     # flush final
     uts = worker.snapshot_utterances()
     if uts:
-        write_subrip(out_srt, uts)
+        write_subrip(out_srt, offset_timed_utterances(uts, float(timeline_offset_sec)))
 
 
 async def run() -> int:
@@ -230,7 +323,55 @@ async def run() -> int:
             float(args.wait_answer_or_voice_sec),
             float(args.capture_delay_sec),
             float(args.capture_window_sec),
+            voice_wait_caps_at_capture_span=not bool(args.extend_wait_beyond_capture),
         )
+        report_session_extra = {
+            "scenario": "answer_vosk_live_probe",
+            "wait_full_capture_window": bool(args.wait_full_capture_window),
+            "extend_wait_beyond_capture": bool(args.extend_wait_beyond_capture),
+            "subtitle_timeline_offset_sec": float(args.subtitle_timeline_offset_sec),
+            "vosk_feed_during_wait": bool(args.vosk_feed_during_wait),
+            "vosk_wait_hook_respect_capture_gate": bool(args.vosk_wait_hook_respect_capture_gate),
+            "srt_origin_first_ring": bool(args.srt_origin_first_ring),
+        }
+
+        # Même timeline que le STT : PCM u8 depuis le premier chunk envoyé à Vosk (attente + pump).
+        capture_raw_u8 = bytearray()
+
+        last_partial: dict[str, str] = {"t": ""}
+
+        def on_partial(t: str) -> None:
+            if not bool(args.print_partials):
+                return
+            last_partial["t"] = t
+
+        worker = VoskRealtimeWorker(
+            Path(model_dir),
+            sample_rate=8000,
+            on_partial=on_partial,
+            preloaded_model=preloaded_model,
+        )
+
+        def _vosk_set_log_level() -> None:
+            try:
+                from vosk import SetLogLevel  # type: ignore
+
+                SetLogLevel(-1)
+            except Exception:
+                pass
+
+        wait_pcm_hook: Callable[[bytes], None] | None = None
+        if bool(args.vosk_feed_during_wait):
+            _vosk_set_log_level()
+            worker.start()
+
+            def _feed_wait_pcm_u8(chunk: bytes) -> None:
+                if chunk:
+                    capture_raw_u8.extend(chunk)
+                    worker.push_pcm16(u8_pcm_to_s16le(chunk))
+
+            wait_pcm_hook = _feed_wait_pcm_u8
+            logger.info("Vosk : flux PCM de la phase attente aussi envoyé au STT (annonce avant menu SVI).")
 
         try:
             ready, why = await run_answer_wait_phase(
@@ -266,17 +407,35 @@ async def run() -> int:
                 auto_report=False,
                 report_frame_ms=80.0,
                 report_hop_ms=40.0,
-                report_session_extra={"scenario": "answer_vosk_live_probe", "vosk_slug": vosk_slug or ""},
+                exit_wait_on_voice=not bool(args.wait_full_capture_window),
+                report_session_extra={
+                    **report_session_extra,
+                    "vosk_slug": vosk_slug or "",
+                },
+                on_vrx_pcm_u8=wait_pcm_hook,
+                vrx_hook_only_when_capturing=bool(args.vosk_wait_hook_respect_capture_gate),
             )
         except AnswerWaitConfigError as e:
             logger.error("{}", e)
+            if wait_pcm_hook is not None:
+                worker.close_input()
+                try:
+                    worker.join_utterances(timeout=5.0)
+                except Exception:
+                    pass
             return 7
 
         logger.info("Attente décroché/voix -> ready={} reason={}", ready, why)
         if not ready:
+            if wait_pcm_hook is not None:
+                worker.close_input()
+                try:
+                    worker.join_utterances(timeout=5.0)
+                except Exception:
+                    pass
             return 8
 
-        # VRX : on ré-ouvre en mode voix pour l’écoute live (comme prospection_outbound)
+        # VRX : on ré-ouvre en mode voix pour la suite du STT (même worker Vosk si déjà alimenté)
         try:
             await modem.end_outgoing_vrx_stream()
         except Exception:
@@ -284,31 +443,19 @@ async def run() -> int:
         opened = await modem.start_outgoing_vrx_stream(already_in_voice_mode=True)
         if not opened:
             logger.error("Impossible d’ouvrir VRX pour l’écoute STT")
+            if wait_pcm_hook is not None:
+                worker.close_input()
+                try:
+                    worker.join_utterances(timeout=5.0)
+                except Exception:
+                    pass
             return 9
 
-        # A: terminal clean — coupe les logs Vosk/Kaldi sur stderr
-        try:
-            from vosk import SetLogLevel  # type: ignore
+        if wait_pcm_hook is None:
+            _vosk_set_log_level()
+            worker.start()
 
-            SetLogLevel(-1)
-        except Exception:
-            pass
-
-        last_partial: dict[str, str] = {"t": ""}
         last_final_idx = 0
-
-        def on_partial(t: str) -> None:
-            if not bool(args.print_partials):
-                return
-            last_partial["t"] = t
-
-        worker = VoskRealtimeWorker(
-            Path(model_dir),
-            sample_rate=8000,
-            on_partial=on_partial,
-            preloaded_model=preloaded_model,
-        )
-        worker.start()
 
         stop_flush = asyncio.Event()
         flush_task = asyncio.create_task(
@@ -317,6 +464,7 @@ async def run() -> int:
                 out_srt=transcript_path,
                 flush_sec=float(args.subtitle_flush_sec),
                 stop_event=stop_flush,
+                timeline_offset_sec=float(args.subtitle_timeline_offset_sec),
             )
         )
 
@@ -326,23 +474,27 @@ async def run() -> int:
             logger.info("Sous-titres: {}", transcript_path)
 
             def _render_partial_line(text: str) -> None:
-                # B: “live caption” : une seule ligne qui se réécrit
-                s = (text or "").strip()
+                # Une seule ligne physique : évite les « trous » si le texte wrappe (\\r ne nettoie qu’une ligne).
+                s = _one_line_display(text).strip()
                 if not s:
                     return
-                # limite de largeur (évite les retours à la ligne)
-                s = s.replace("\n", " ").replace("\r", " ")
-                if len(s) > 140:
-                    s = s[:137] + "..."
-                sys.stdout.write("\r" + (" " * 160) + "\r" + f"[PARTIAL] {s}")
+                cols = _terminal_columns()
+                elapsed = max(0.0, time.monotonic() - t0)
+                prefix = f"[PARTIAL {format_timestamp_sub(elapsed)}] "
+                max_body = max(12, cols - len(prefix) - 1)
+                if len(s) > max_body:
+                    s = s[: max(max_body - 3, 1)] + "..."
+                line = prefix + s
+                pad = max(0, cols - len(line) - 1)
+                sys.stdout.write("\r" + (" " * (cols - 1)) + "\r" + line + (" " * pad))
                 sys.stdout.flush()
 
             def _clear_partial_line() -> None:
-                sys.stdout.write("\r" + (" " * 180) + "\r")
+                cols = _terminal_columns()
+                sys.stdout.write("\r" + (" " * (cols - 1)) + "\r")
                 sys.stdout.flush()
 
             last_partial_printed = ""
-            capture_raw_u8 = bytearray()
 
             def _capture_chunk_u8(chunk: bytes) -> None:
                 if chunk:
@@ -361,15 +513,26 @@ async def run() -> int:
                 uts = worker.snapshot_utterances()
                 if len(uts) > last_final_idx:
                     _clear_partial_line()
+                    cols = _terminal_columns()
+                    t_off = float(args.subtitle_timeline_offset_sec)
                     for u in uts[last_final_idx:]:
-                        print(f"[FINAL] {u.text}")
+                        body = _one_line_display(u.text).strip()
+                        head = (
+                            f"[FINAL {format_timestamp_sub(u.start_sec + t_off)} -> "
+                            f"{format_timestamp_sub(u.end_sec + t_off)}] "
+                        )
+                        room = max(24, cols - len(head) - 1)
+                        if len(body) > room:
+                            body = body[: max(room - 3, 1)] + "..."
+                        print(head + body, flush=True)
                     last_final_idx = len(uts)
                 p = last_partial.get("t") or ""
                 if p:
                     # n’afficher que si le partial change réellement
-                    if p.strip() and p.strip() != last_partial_printed:
+                    p1 = _one_line_display(p).strip()
+                    if p1 and p1 != last_partial_printed:
                         _render_partial_line(p)
-                        last_partial_printed = p.strip()
+                        last_partial_printed = p1
                     last_partial["t"] = ""
                 await asyncio.sleep(0.20)
 
@@ -400,7 +563,7 @@ async def run() -> int:
             except Exception:
                 pass
 
-            # Capture WAV alignée exactement sur la fenêtre STT.
+            # WAV : même PCM u8 que celui vu par Vosk (phase attente si --vosk-feed-during-wait, puis pump).
             try:
                 out_wav = Path(args.record_wav_out)
                 out_wav.parent.mkdir(parents=True, exist_ok=True)
@@ -412,6 +575,59 @@ async def run() -> int:
                 logger.info("WAV STT: {} ({} octets PCM)", out_wav, len(capture_raw_u8))
             except Exception as e:
                 logger.warning("Écriture WAV STT échouée: {}", e)
+
+            if bool(args.srt_origin_first_ring):
+                try:
+                    uts_final = worker.snapshot_utterances()
+                    wav_p = Path(args.record_wav_out)
+                    # Au moins ~0,5 s de PCM u8 mono pour que l’analyse tonalité soit fiable.
+                    if uts_final and wav_p.is_file() and wav_p.stat().st_size > 4000:
+                        # Même fenêtre 80/40 ms que le rapport auto answer_metrics_probe.
+                        rep = analyze_answer_wav(wav_p, frame_ms=80.0, hop_ms=40.0)
+                        if rep.get("error"):
+                            logger.debug("SRT recalage tonalité: analyse WAV: {}", rep.get("error"))
+                        else:
+                            tr = rep.get("t_first_ring")
+                            if tr is not None:
+                                off = float(args.subtitle_timeline_offset_sec) - float(tr)
+                                write_subrip(
+                                    transcript_path,
+                                    offset_timed_utterances(uts_final, off),
+                                )
+                                logger.info(
+                                    "SRT aligné sur 1re tonalité (t_first_ring={}s), offset combiné={:.3f}s "
+                                    "(dont décalage CLI {:.3f}s).",
+                                    tr,
+                                    off,
+                                    float(args.subtitle_timeline_offset_sec),
+                                )
+                                # WAV : même origine que le SRT (retirer le préambule avant la 1re tonalité).
+                                trim_idx = int(round(float(tr) * 8000.0))
+                                trim_idx = max(0, min(trim_idx, len(capture_raw_u8)))
+                                if trim_idx > 0 and trim_idx < len(capture_raw_u8):
+                                    tail_pcm = bytes(capture_raw_u8[trim_idx:])
+                                    with wave.open(str(wav_p), "wb") as wf:
+                                        wf.setnchannels(1)
+                                        wf.setsampwidth(1)
+                                        wf.setframerate(8000)
+                                        wf.writeframes(tail_pcm)
+                                    logger.info(
+                                        "WAV aligné sur 1re tonalité : {:.3f}s ({:.0f} octets) retirés au début.",
+                                        float(tr),
+                                        float(trim_idx),
+                                    )
+                                elif trim_idx >= len(capture_raw_u8):
+                                    logger.warning(
+                                        "WAV : t_first_ring={}s dépasse la durée capture — pas de troncature.",
+                                        tr,
+                                    )
+                            else:
+                                logger.info(
+                                    "SRT : pas de t_first_ring sur le WAV — horodatages inchangés "
+                                    "(hors --subtitle-timeline-offset-sec appliqué pendant le flush)."
+                                )
+                except Exception as e:
+                    logger.warning("SRT recalage sur 1re tonalité échoué: {}", e)
 
         logger.info("Durée écoute STT: {:.1f}s", time.monotonic() - t0)
 

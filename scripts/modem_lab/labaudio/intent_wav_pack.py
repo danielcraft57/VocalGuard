@@ -12,6 +12,7 @@ import json
 import re
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable, Iterator, Optional, Tuple
 
@@ -27,6 +28,7 @@ if str(_PROJECT_ROOT / "scripts") not in sys.path:
 from audio_utils import apply_wav_riff_info_tags, export_wav_8k_8bit
 
 _RE_VARS = re.compile(r"\{\{\s*(\w+)\s*\}\}")
+IntentPackMeta = dict[str, str]
 
 
 def substitute_intent_placeholders(text: str, mapping: dict[str, str]) -> str:
@@ -60,8 +62,11 @@ def apply_intent_pack_wav_metadata(
     riff_intent_json_stem: str,
     voice: str,
     text: str,
+    metadata: IntentPackMeta | None = None,
 ) -> None:
     """Écrit les tags RIFF LIST/INFO (sans régénérer l’audio)."""
+    meta = metadata or {}
+    year_value = meta.get("year", "").strip() or str(datetime.now().year)
     comment_bits: list[str] = []
     if riff_intent_json_stem:
         comment_bits.append(f"intents: {riff_intent_json_stem}")
@@ -72,6 +77,14 @@ def apply_intent_pack_wav_metadata(
         title=_riff_title_for_base(riff_base),
         artist=voice,
         album=riff_album,
+        subtitle=meta.get("subtitle", "").strip(),
+        year=year_value,
+        track_number=meta.get("track_number", "").strip(),
+        genre=meta.get("genre", "").strip(),
+        media_origin=meta.get("media_origin", "").strip(),
+        copyright_text=meta.get("copyright_text", "").strip(),
+        parental_control=meta.get("parental_control", "").strip(),
+        parental_control_reason=meta.get("parental_control_reason", "").strip(),
         comment=" · ".join(comment_bits) if comment_bits else "",
         software="VocalGuard intent_wav_pack",
     )
@@ -104,17 +117,42 @@ async def render_response_to_wav_edge(
     riff_base: str,
     riff_album: str,
     riff_intent_json_stem: str,
+    metadata: IntentPackMeta | None = None,
+    max_retries: int = 4,
 ) -> None:
     import edge_tts
     from pydub import AudioSegment
 
-    with tempfile.TemporaryDirectory(prefix="vg_intent_wav_") as tmp:
-        tmp_path = Path(tmp)
-        mp3 = tmp_path / "tts.mp3"
-        comm = edge_tts.Communicate(text, voice)
-        await comm.save(str(mp3))
-        seg = AudioSegment.from_file(str(mp3))
-        export_wav_8k_8bit(seg, out_wav)
+    attempts = max(1, int(max_retries))
+    last_err: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            with tempfile.TemporaryDirectory(prefix="vg_intent_wav_") as tmp:
+                tmp_path = Path(tmp)
+                mp3 = tmp_path / "tts.mp3"
+                comm = edge_tts.Communicate(text, voice)
+                await comm.save(str(mp3))
+                seg = AudioSegment.from_file(str(mp3))
+                export_wav_8k_8bit(seg, out_wav)
+            last_err = None
+            break
+        except Exception as e:
+            last_err = e
+            if attempt >= attempts:
+                break
+            wait_s = min(8.0, 0.8 * (2 ** (attempt - 1)))
+            logger.warning(
+                "TTS edge échoué pour {} (tentative {}/{}): {} — retry dans {:.1f}s",
+                out_wav.name,
+                attempt,
+                attempts,
+                e,
+                wait_s,
+            )
+            await asyncio.sleep(wait_s)
+
+    if last_err is not None:
+        raise RuntimeError(f"edge_tts indisponible pour {out_wav.name} après {attempts} tentatives") from last_err
 
     apply_intent_pack_wav_metadata(
         out_wav,
@@ -123,6 +161,7 @@ async def render_response_to_wav_edge(
         riff_intent_json_stem=riff_intent_json_stem,
         voice=voice,
         text=text,
+        metadata=metadata,
     )
 
 
@@ -134,6 +173,7 @@ async def build_pack_from_json(
     voice: str = "fr-FR-DeniseNeural",
     force: bool = False,
     album: str | None = None,
+    metadata: IntentPackMeta | None = None,
 ) -> list[Path]:
     """
     Génère un fichier ``.wav`` par réponse dans ``out_dir``.
@@ -145,6 +185,7 @@ async def build_pack_from_json(
     album_label = (album or "").strip() or out_dir.name
     intent_stem = intent_json.stem
     written: list[Path] = []
+    failed: list[str] = []
     for base, text in iter_intent_response_jobs(intent_json, placeholders):
         target = out_dir / f"{base}.wav"
         if target.exists() and not force:
@@ -156,19 +197,28 @@ async def build_pack_from_json(
                 riff_intent_json_stem=intent_stem,
                 voice=voice,
                 text=text,
+                metadata=metadata,
             )
             written.append(target)
             continue
         logger.info("TTS -> {} ({})", target.name, text[:72] + ("…" if len(text) > 72 else ""))
-        await render_response_to_wav_edge(
-            text,
-            voice,
-            target,
-            riff_base=base,
-            riff_album=album_label,
-            riff_intent_json_stem=intent_stem,
-        )
-        written.append(target)
+        try:
+            await render_response_to_wav_edge(
+                text,
+                voice,
+                target,
+                riff_base=base,
+                riff_album=album_label,
+                riff_intent_json_stem=intent_stem,
+                metadata=metadata,
+            )
+            written.append(target)
+        except Exception as e:
+            failed.append(target.name)
+            logger.error("TTS KO pour {}: {}", target.name, e)
+            continue
+    if failed:
+        logger.warning("Pack intents partiel: {} fichier(s) en échec TTS: {}", len(failed), ", ".join(failed))
     return written
 
 

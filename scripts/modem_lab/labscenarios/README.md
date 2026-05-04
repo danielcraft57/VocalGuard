@@ -4,9 +4,13 @@ Scripts modem USB (USR / Conexant). **Préférer** la CLI :
 
 `python scripts/modem_lab/cli.py <sous-commande> -- --port COM6 ...`
 
+**Signets (raccourcis perso)** : même `cli.py`, mais la première position peut être un **identifiant** défini dans `scripts/modem_lab/scenario_bookmarks.json` (scénario intégré + arguments figés). Gestion : `python scripts/modem_lab/cli.py bookmark -h` ou menu **Signets scénarios** dans `modem_lab_ui.py`. Modèle versionné : `scenario_bookmarks.example.json`.
+
+**Inventaire** : chaque fichier `*.py` ici (hors `__init__.py`) correspond à une sous-commande de `cli.py` — pas de scénario « mort » conservé dans ce dossier. Les sections ci-dessous classent par **usage**, pas par ancienneté.
+
 ---
 
-## Prioritaires (VRX / métriques)
+## Prioritaires (VRX / métriques / Vosk)
 
 | CLI | Fichier | Rôle |
 |-----|---------|------|

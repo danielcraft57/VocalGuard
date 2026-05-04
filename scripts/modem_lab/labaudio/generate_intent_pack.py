@@ -67,6 +67,22 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Métadonnée « album » (IPRD) ; défaut = dernier segment du dossier --out.",
     )
+    p.add_argument("--subtitle", default="", help="Métadonnée sous-titre (ISBJ).")
+    p.add_argument("--year", default="", help="Métadonnée année (ICRD).")
+    p.add_argument("--track-number", default="", help="Métadonnée numéro/piste (ITRK).")
+    p.add_argument("--genre", default="", help="Métadonnée genre (IGNR).")
+    p.add_argument("--media-origin", default="", help="Métadonnée origine média (ISRC).")
+    p.add_argument("--copyright-text", default="", help="Métadonnée copyright (ICOP).")
+    p.add_argument(
+        "--parental-control",
+        default="",
+        help="Contrôle parental (ex: yes/no/all_ages).",
+    )
+    p.add_argument(
+        "--parental-control-reason",
+        default="",
+        help="Motif contrôle parental (stocké en mots-clés RIFF).",
+    )
     return p.parse_args()
 
 
@@ -87,6 +103,16 @@ async def run(args: argparse.Namespace | None = None) -> int:
         voice=str(args.voice),
         force=bool(args.force),
         album=args.album,
+        metadata={
+            "subtitle": str(args.subtitle or ""),
+            "year": str(args.year or ""),
+            "track_number": str(args.track_number or ""),
+            "genre": str(args.genre or ""),
+            "media_origin": str(args.media_origin or ""),
+            "copyright_text": str(args.copyright_text or ""),
+            "parental_control": str(args.parental_control or ""),
+            "parental_control_reason": str(args.parental_control_reason or ""),
+        },
     )
     print(f"OK — pack dans {args.out}")
     return 0
