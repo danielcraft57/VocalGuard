@@ -29,6 +29,8 @@ def _buffer_has_hangup_marker(blob: bytes) -> bool:
         or b"NO ANSWER" in u
         or b"NO DIALTONE" in u
         or b"NO DIAL TONE" in u
+        or b"BUSY" in u
+        or b"ERROR" in u
     )
 
 
@@ -66,6 +68,17 @@ def _buffer_has_dle_answer_marker(blob: bytes) -> bool:
     if not blob:
         return False
     return (b"\x10a" in blob) or (b"\x10H" in blob)
+
+
+def _buffer_has_dle_hangup_marker(blob: bytes) -> bool:
+    """
+    Détection fin de ligne via événements DLE dans le flux VRX.
+
+    DLE + 'b' : souvent remonté comme tonalité occupé / busy par les modems voix.
+    """
+    if not blob:
+        return False
+    return b"\x10b" in blob
 
 
 def _chunk_activity_score_u8(chunk: bytes) -> float:
@@ -534,7 +547,14 @@ async def wait_remote_hangup(
     """
     tmo = max(0.5, float(timeout_sec))
     hb = max(0.5, float(dcd_log_heartbeat_sec))
-    opened = await modem.start_outgoing_vrx_stream(already_in_voice_mode=already_in_voice_mode)
+    try:
+        opened = await modem.start_outgoing_vrx_stream(already_in_voice_mode=already_in_voice_mode)
+    except asyncio.CancelledError:
+        raise
+    except Exception as e:
+        # Le modem peut être déjà raccroché / dans un état instable, et lever lors du CONNECT.
+        logger.warning("wait_remote_hangup: ouverture VRX échouée: {}", e)
+        return False, "no_vrx"
     if not opened:
         return False, "no_vrx"
     read_fn = getattr(modem, "read_vrx_chunk", None) or getattr(modem, "read_outgoing_vrx_chunk", None)
@@ -618,4 +638,40 @@ async def wait_remote_line_end_optional(
         already_in_voice_mode=already_in_voice_mode,
         dcd_log_heartbeat_sec=float(dcd_log_heartbeat_sec),
     )
+
+
+async def probe_remote_hangup_on_active_vrx(
+    modem: Any,
+    *,
+    chunk_tail: bytes,
+    carrier_initial: bool | None,
+) -> bool:
+    """
+    Sonde de fin de ligne distante **sans** ouvrir/fermer de VRX.
+
+    À utiliser dans une boucle qui lit déjà le flux VRX (ex: pump STT live).
+    Réutilise la même logique que ``wait_remote_hangup`` :
+    - signal modem ``vrx_remote_line_end_detected`` si dispo
+    - transition DCD True -> False
+    - marqueurs texte ``NO CARRIER`` / ``NO ANSWER`` dans le flux
+    """
+    hangup_fn = getattr(modem, "vrx_remote_line_end_detected", None)
+    if callable(hangup_fn):
+        try:
+            if await hangup_fn():
+                return True
+        except Exception:
+            pass
+
+    carrier_now = _read_carrier_cd(modem)
+    if carrier_initial is True and carrier_now is False:
+        return True
+
+    if _buffer_has_hangup_marker(chunk_tail):
+        return True
+
+    if _buffer_has_dle_hangup_marker(chunk_tail):
+        return True
+
+    return False
 

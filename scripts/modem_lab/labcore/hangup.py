@@ -36,8 +36,18 @@ async def turbo_hangup(
         for cmd in ("AT+VLS=0", "AT+FCLASS=0", "ATH", "ATH0", "AT+CHUP", "ATH"):
             try:
                 raw = await modem.send_command_full(cmd, timeout=cmd_timeout, stop_on_ring=False)
-                text = raw.decode("utf-8", errors="ignore").strip().replace("\r\n", " | ")
-                logger.info("Hangup sequence {} -> {}", cmd, text or "(vide)")
+                # Certaines implémentations modem renvoient des caractères non imprimables (ex. "⌂")
+                # qui polluent complètement le terminal. On logge une forme compacte.
+                text = raw.decode("utf-8", errors="ignore")
+                has_ok = "OK" in text
+                has_nc = "NO CARRIER" in text
+                logger.info(
+                    "Hangup sequence {} -> ok={} no_carrier={} ({} octets)",
+                    cmd,
+                    has_ok,
+                    has_nc,
+                    len(raw),
+                )
                 if b"NO CARRIER" in raw:
                     got_no_carrier = True
                 if b"OK" in raw:

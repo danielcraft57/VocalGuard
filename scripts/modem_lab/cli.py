@@ -37,7 +37,9 @@ SCENARIO_MAP = {
     "outbound-listen-vad": LAB_DIR / "labscenarios" / "outbound_listen_vad.py",
     "prompt-and-play": LAB_DIR / "labscenarios" / "prompt_and_play.py",
     "answer-metrics-probe": LAB_DIR / "labscenarios" / "answer_metrics_probe.py",
+    "answer-vosk-live-probe": LAB_DIR / "labscenarios" / "answer_vosk_live_probe.py",
     "metrics-voicemail": LAB_DIR / "labscenarios" / "metrics_voicemail.py",
+    "prospection-outbound": LAB_DIR / "labscenarios" / "prospection_outbound.py",
 }
 
 
@@ -46,7 +48,9 @@ def build_parser() -> argparse.ArgumentParser:
     epilog = """
 Scénarios (détail : scripts/modem_lab/labscenarios/README.md) :
   answer-metrics-probe   Sonde VRX : métriques + capture.wav + rapport timing.
+  answer-vosk-live-probe Compose + STT Vosk live (partials/finals) + transcript.srt en continu.
   metrics-voicemail      Sonde puis prompt WAV, bips, message répondeur (sortant).
+  prospection-outbound   Sonde + greeting + STT Vosk (SUB/VTT) + réponse intent optionnelle.
   smoke                    Fumée AT / modem prêt.
   dialer                   Compose, maintient la ligne, raccroche.
   outgoing                 Compose puis DTMF interactif (clavier).

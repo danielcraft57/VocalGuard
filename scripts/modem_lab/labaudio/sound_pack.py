@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
-from audio_utils import export_wav_8k_8bit
+from audio_utils import apply_wav_riff_info_tags, export_wav_8k_8bit
 
 
 # Presets de voix utiles (decommente/choisis celle que tu preferes):
@@ -119,6 +119,14 @@ async def run() -> int:
             str(listen_path), format="wav"
         )
         export_wav_8k_8bit(audio, modem_path)
+        apply_wav_riff_info_tags(
+            modem_path,
+            title=name.replace("_", " "),
+            artist=str(args.voice),
+            album=str(args.pack_name),
+            comment=(text or "")[:800],
+            software="VocalGuard sound_pack",
+        )
         logger.info("Prompt '{}' converti -> {}", name, modem_path)
 
         print(f"[OK] {name}: {modem_path}")

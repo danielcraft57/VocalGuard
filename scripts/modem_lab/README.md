@@ -49,12 +49,16 @@ python scripts/modem_lab/cli.py dialer -- --port COM6 --number 147
 python scripts/modem_lab/cli.py outbound-announce -- --port COM6 --number 0780833873 --message-wav scripts/modem_lab/generated/default/modem_wav/welcome.wav
 ```
 
-L'interface `modem_lab_ui.py` est organisee en sous-menus:
-- **Scenarios telephonie** (entrant/sortant/dtmf/smoke)
-- **Audio / TTS** (voix + packs audio)
-- **Configuration** (port/voix/numero sauvegardes dans `.presets.json`)
-- les choix audio et repondeur (devices, rx-only, PTT, greeting WAV, duree enregistrement) sont aussi memorises dans `.presets.json`
-- quand une voix est choisie via le menu TTS, elle devient automatiquement la nouvelle voix par defaut
+L'interface **`modem_lab_ui.py`** (Rich + Questionary) propose :
+- **Scénarios téléphonie** (entrant / sortant / DTMF / smoke)
+- **Audio / TTS** : menu voix edge-tts, génération pack modem, **assistant pack WAV d’intents** (`data/*.json` → `greeting_01.wav`, etc.) et rappel CLI « intents vs prospection »
+- **Configuration** (port, voix, numéro… dans `.presets.json`)
+
+Prérequis TUI : `pip install rich questionary` (voir `requirements.txt`).
+
+Pour générer les WAV **sans** l’UI : **`labaudio/generate_intent_pack.py`** — pas `prospection_outbound` (`--out` / `--var` sont réservés au script de génération).
+
+Quand une voix est choisie via le menu TTS, elle devient la voix par défaut des presets.
 
 ## Logging (niveaux + date)
 

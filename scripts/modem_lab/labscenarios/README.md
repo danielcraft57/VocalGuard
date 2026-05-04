@@ -11,7 +11,9 @@ Scripts modem USB (USR / Conexant). **Préférer** la CLI :
 | CLI | Fichier | Rôle |
 |-----|---------|------|
 | `answer-metrics-probe` | `answer_metrics_probe.py` | Sonde seule : CSV, `capture.wav`, `report.json` / timing. |
+| `answer-vosk-live-probe` | `answer_vosk_live_probe.py` | Compose puis écoute **STT Vosk** en temps réel (thread) : affiche `PARTIAL`/`FINAL` en console et écrit `transcript.srt` en continu. |
 | `metrics-voicemail` | `metrics_voicemail.py` | Même sonde puis prompt WAV, bips, message, option `wait_remote_hangup`. Défauts delay/fenêtre capture ; plafond d’attente voix = delay+fenêtre sauf `--extend-wait-beyond-capture`. |
+| `prospection-outbound` | `prospection_outbound.py` | Démarchage : sonde comme ci-dessus, lecture **greeting** (WAV ou `greeting_01.wav` d’un pack), **STT Vosk** (thread) → `transcript.srt` / `transcript.vtt`, option `--try-intent-reply` + `intents_*.json` + pack audio. Modèles FR : `--vosk-list-models`, téléchargement via `--vosk-model-slug` / profil `generated/vosk_lab_profile.json`, config seule : `--vosk-configure-only`. Génération pack : `labaudio/generate_intent_pack.py`. |
 
 Partagent `labcore.answer_wait_common` + `labcore.call_watch`.
 
