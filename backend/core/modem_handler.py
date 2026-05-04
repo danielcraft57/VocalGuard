@@ -13,6 +13,7 @@ import errno
 import time
 import wave
 import re
+from functools import partial
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -34,6 +35,42 @@ _DTE_END_VOICE_TX_CONEXANT = (chr(16) * 3 + chr(3)).encode()   # DLE DLE DLE ETX
 _DTE_END_VOICE_RX_CONEXANT = (chr(16) * 3 + chr(33)).encode()   # DLE DLE DLE ! (Conexant)
 _VRX_SAMPLE_RATE = 8000
 _VRX_BYTES_PER_SEC = 8000  # 8 kHz, 8-bit mono
+
+
+def _vrx_buffer_has_hangup_marker(blob: bytes) -> bool:
+    """Marqueurs AT pouvant apparaître quand le modem quitte le flux VRX transparent."""
+    if not blob:
+        return False
+    u = blob.upper()
+    return (
+        b"NO CARRIER" in u
+        or b"NO ANSWER" in u
+        or b"NO DIALTONE" in u
+        or b"NO DIAL TONE" in u
+    )
+
+
+# Alias et helpers exposés pour tests sans matériel (scripts/modem_lab/tests/test_modem_handler_smoke.py).
+_vrx_stream_contains_hangup_marker = _vrx_buffer_has_hangup_marker
+
+
+def _serial_buffer_shows_remote_pickup(blob: bytes) -> bool:
+    """Indice série de décroché distant : DLE+a (answer tone) ou réponse VCON."""
+    if not blob:
+        return False
+    if b"\x10a" in blob:
+        return True
+    return b"VCON" in blob.upper()
+
+
+def _response_has_numeric_at_result(raw: bytes, allowed: tuple[int, ...]) -> bool:
+    """True si une ligne du buffer est un entier exactement égal à un code AT résultat autorisé."""
+    text = raw.decode("utf-8", errors="ignore").replace("\r\n", "\n")
+    for line in text.split("\n"):
+        s = line.strip()
+        if s.isdigit() and int(s) in allowed:
+            return True
+    return False
 
 
 class ModemHandler:
@@ -357,6 +394,23 @@ class ModemHandler:
             logger.error("Erreur lors du raccrochage: {}", e)
             return False
 
+    @staticmethod
+    def _normalize_phone_for_command(phone_number: str) -> str:
+        """
+        Chiffres seuls pour ATD, avec conversion courante +33 / 0033 -> national francais (0...).
+        """
+        s = (phone_number or "").strip()
+        if not s:
+            return ""
+        digits = "".join(c for c in s if c.isdigit())
+        if not digits:
+            return ""
+        if digits.startswith("0033") and len(digits) > 4:
+            return "0" + digits[4:]
+        if digits.startswith("33") and len(digits) >= 11:
+            return "0" + digits[2:]
+        return digits
+
     async def dial_number(self, phone_number: str, timeout: float = 25.0) -> tuple[bool, str]:
         """
         Compose un numero sortant via ATD et attend un etat modem.
@@ -365,9 +419,10 @@ class ModemHandler:
         @param timeout Delai max d'attente de reponse modem.
         @returns Tuple (succes, reponse_brute).
         """
-        if not phone_number:
+        normalized = self._normalize_phone_for_command(phone_number)
+        if not normalized:
             return (False, "numero vide")
-        command = f"ATD{phone_number};"
+        command = f"ATD{normalized};"
         response = await self.send_command_full(command, timeout=timeout, stop_on_ring=False)
         raw = response.decode("utf-8", errors="ignore").strip()
         success = b"CONNECT" in response or b"OK" in response
@@ -511,8 +566,22 @@ class ModemHandler:
             logger.exception("Erreur lecture WAV via serie: {}", e)
             return False
 
+    def _serial_carrier_cd_sync(self) -> Optional[bool]:
+        """Lit DCD/cd si pyserial l'expose (USB sortant : souvent toujours False)."""
+        conn = self.serial_connection
+        if conn is None:
+            return None
+        try:
+            return bool(conn.cd)
+        except Exception:
+            return None
+
     def _record_wav_serial_impl(
-        self, duration_sec: float, out_path: Path, already_in_voice_mode: bool = False
+        self,
+        duration_sec: float,
+        out_path: Path,
+        already_in_voice_mode: bool = False,
+        stop_on_remote_hangup: bool = False,
     ) -> bool:
         """
         Enregistre l'audio depuis la ligne telephonique via le mode voix (AT+VRX).
@@ -551,9 +620,17 @@ class ModemHandler:
             if not self._send_command_sync(_VOICE_RX, expect="CONNECT", timeout=10.0):
                 logger.warning("record_wav_serial: AT+VRX (CONNECT) a echoue")
                 return False
-            logger.info("Enregistrement ligne (VRX) pendant {} s...", duration_sec)
+            if stop_on_remote_hangup:
+                logger.info(
+                    "Enregistrement ligne (VRX) max {} s — arret anticipe si raccrochage (marqueurs / DCD si disponible)",
+                    duration_sec,
+                )
+            else:
+                logger.info("Enregistrement ligne (VRX) pendant {} s...", duration_sec)
             chunks = []
             deadline = time.monotonic() + duration_sec
+            carrier_initial = self._serial_carrier_cd_sync() if stop_on_remote_hangup else None
+            hangup_tail = bytearray()
             old_timeout = self.serial_connection.timeout
             self.serial_connection.timeout = 0.2
             io_error = False
@@ -563,9 +640,26 @@ class ModemHandler:
                         logger.warning("Enregistrement VRX interrompu: port serie ferme")
                         break
                     try:
+                        if stop_on_remote_hangup:
+                            carrier_now = self._serial_carrier_cd_sync()
+                            if carrier_initial is True and carrier_now is False:
+                                logger.info(
+                                    "Enregistrement VRX interrompu: perte porteuse DCD (raccrochage probable)"
+                                )
+                                break
                         n = self.serial_connection.in_waiting
                         if n > 0:
-                            chunks.append(self.serial_connection.read(n))
+                            raw = self.serial_connection.read(n)
+                            chunks.append(raw)
+                            if stop_on_remote_hangup:
+                                hangup_tail.extend(raw)
+                                if len(hangup_tail) > 4096:
+                                    del hangup_tail[:-4096]
+                                if _vrx_buffer_has_hangup_marker(bytes(hangup_tail)):
+                                    logger.info(
+                                        "Enregistrement VRX interrompu: marqueur fin de ligne dans le flux serie"
+                                    )
+                                    break
                         else:
                             time.sleep(0.02)
                     except (OSError, serial.SerialException) as e:
@@ -716,19 +810,27 @@ class ModemHandler:
         duration_sec: float,
         out_path: Path,
         already_in_voice_mode: bool = False,
+        *,
+        stop_on_remote_hangup: bool = False,
     ) -> bool:
         """
         Enregistre l'audio depuis la ligne téléphonique via le port série (AT+VRX).
         Passer already_in_voice_mode=True si on vient de answer_call + play pour ne pas recouper l'appel.
+
+        Si ``stop_on_remote_hangup`` est True, coupe l'enregistrement dès détection d'un marqueur type
+        NO CARRIER dans le flux ou d'une perte DCD quand la porteuse était True au départ.
         """
         loop = asyncio.get_event_loop()
         async with self._serial_io_lock:
             return await loop.run_in_executor(
                 None,
-                self._record_wav_serial_impl,
-                duration_sec,
-                out_path,
-                already_in_voice_mode,
+                partial(
+                    self._record_wav_serial_impl,
+                    duration_sec,
+                    out_path,
+                    already_in_voice_mode,
+                    stop_on_remote_hangup,
+                ),
             )
 
     async def start_outgoing_vrx_stream(self, already_in_voice_mode: bool = False) -> bool:

@@ -5,24 +5,18 @@ Ce dossier regroupe des scripts de laboratoire pour tester le modem USB de manie
 ## Architecture
 
 - `labcore/` : bootstrap commun (config, logging, creation modem)
-- `labscenarios/` : scenarios telephonie (entrant, sortant, dtmf, smoke tests)
+- `labscenarios/` : scénarios téléphonie — **index et rôles** : [labscenarios/README.md](labscenarios/README.md)
 - `labaudio/` : outillage TTS et generation de packs audio modem
 - `modem_lab_ui.py` : interface CLI centralisee pour piloter le lab
 - `.presets.json` : preferences locales de l'interface (port, voix, numero, etc.)
 - `logs/` : logs dates par execution (console + fichier)
 
-## Scripts
+## Scripts (aperçu)
 
-- `labscenarios/dialer.py` : numerotation simple (sortant) + raccrochage.
-- `labscenarios/outgoing_call.py` : appel sortant interactif (clavier DTMF, hangup).
-- `labscenarios/incoming_call.py` : attente d'appel entrant + decrochage manuel.
-- `labscenarios/answering_machine.py` : repondeur (auto-answer, message d'accueil WAV, enregistrement du message).
-- `labscenarios/dtmf_keypad.py` : envoi de touches DTMF sur appel en cours.
-- `labscenarios/smoke_tests.py` : tests rapides des commandes AT de base.
-- `cli.py` : lanceur unique avec sous-commandes (`smoke`, `dialer`, `incoming`, etc.).
-- `tts_engine_copy.py` : copie locale du menu TTS (voix edge-tts + sample).
-- `generate_modem_sounds.py` : generation d'un pack de prompts au format modem.
-- `modem_lab_ui.py` : interface CLI interactive (menu unique).
+- **`cli.py`** : point d’entrée unique — `python scripts/modem_lab/cli.py -h` pour la liste des sous-commandes.
+- **`labscenarios/*.py`** : un fichier par scénario ; détail, tableau par usage et pièges courants → **[labscenarios/README.md](labscenarios/README.md)**.
+- **`tts_engine_copy.py`**, **`generate_modem_sounds.py`** : voix / packs WAV modem.
+- **`modem_lab_ui.py`** : menu interactif (réutilise les mêmes chemins que les scénarios).
 
 ## Documentation modem
 
@@ -45,10 +39,12 @@ python scripts/modem_lab/modem_lab_ui.py
 python scripts/modem_lab/labscenarios/answering_machine.py --port COM6 --greeting-wav scripts/modem_lab/generated/default/modem_wav/welcome.wav --record-seconds 25
 ```
 
-Alternative compacte via la CLI unifiée :
+Exemples via **`cli.py`** (recommandé) :
 
 ```powershell
 python scripts/modem_lab/cli.py smoke -- --port COM6
+python scripts/modem_lab/cli.py answer-metrics-probe -- --port COM6 --number 0780833873
+python scripts/modem_lab/cli.py metrics-voicemail -- --port COM6 --number 0780833873 --prompt-wav scripts/modem_lab/generated/default/modem_wav/welcome.wav
 python scripts/modem_lab/cli.py dialer -- --port COM6 --number 147
 python scripts/modem_lab/cli.py outbound-announce -- --port COM6 --number 0780833873 --message-wav scripts/modem_lab/generated/default/modem_wav/welcome.wav
 ```
@@ -111,20 +107,12 @@ Sorties:
 - `generated/<pack-name>/modem_wav` (8 kHz, 8-bit, pour le modem)
 - `generated/<pack-name>/listen_wav` (ecoute confortable)
 
-## Appel sortant / entrant
+## Appels sortant / entrant (exemples directs)
 
-- Sortant simple:
-  - `python scripts/modem_lab/labscenarios/dialer.py --port COM6 --number 147`
-- Sortant interactif DTMF:
-  - `python scripts/modem_lab/labscenarios/outgoing_call.py --port COM6 --number 147`
-- Entrant auto-answer (immediat):
-  - `python scripts/modem_lab/labscenarios/incoming_call.py --port COM6 --auto-answer --answer-delay-ms 0 --rx-only`
-- Entrant manuel:
-  - `python scripts/modem_lab/labscenarios/incoming_call.py --port COM6 --manual-answer`
-- Repondeur (accueil + enregistrement):
-  - `python scripts/modem_lab/labscenarios/answering_machine.py --port COM6 --answer-delay-ms 0 --greeting-wav scripts/modem_lab/generated/default/modem_wav/welcome.wav --record-seconds 25 --beep`
-  - options utiles: `--beep-ms 300 --beep-hz 1000`
-  - mode double bip (pro): `--beep --beep-pattern double --beep-ms 220 --beep-hz 1200 --beep2-ms 150 --beep2-hz 780`
+Les équivalents `python .../labscenarios/<script>.py` restent valides ; la matrice complète (éviter de confondre répondeur **entrant** vs **metrics_voicemail** sortant) est dans **[labscenarios/README.md](labscenarios/README.md)**.
+
+- Répondeur **entrant** : `answering_machine.py` (greeting + bip + enregistrement).
+- Sonde + répondeur **sortant** : `metrics_voicemail.py` via `cli.py metrics-voicemail`.
 
 ## Notes
 

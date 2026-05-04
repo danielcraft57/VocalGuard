@@ -8,9 +8,13 @@ from unittest.mock import AsyncMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from labcore.voice_line import play_wav_line_fallback, record_wav_line_fallback  # noqa: E402
+import wave
 
-_PCM_KW = {"pcm_u8": None, "pcm_rate": None}
+from labcore.voice_line import (  # noqa: E402
+    play_wav_line_fallback,
+    record_wav_line_fallback,
+    wav_file_to_mono_u8_pcm,
+)
 
 
 class VoiceLineTests(unittest.TestCase):
@@ -36,9 +40,7 @@ class VoiceLineTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertEqual(modem.play_wav_via_serial.await_count, 1)
-        modem.play_wav_via_serial.assert_any_call(
-            wav, already_in_voice_mode=False, **_PCM_KW
-        )
+        modem.play_wav_via_serial.assert_any_call(wav, already_in_voice_mode=False)
 
     def test_fallback_deuxieme_appel(self) -> None:
         modem = AsyncMock()
@@ -53,8 +55,8 @@ class VoiceLineTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertEqual(modem.play_wav_via_serial.await_count, 2)
-        modem.play_wav_via_serial.assert_any_call(wav, already_in_voice_mode=False, **_PCM_KW)
-        modem.play_wav_via_serial.assert_any_call(wav, already_in_voice_mode=True, **_PCM_KW)
+        modem.play_wav_via_serial.assert_any_call(wav, already_in_voice_mode=False)
+        modem.play_wav_via_serial.assert_any_call(wav, already_in_voice_mode=True)
 
     def test_les_deux_echec(self) -> None:
         modem = AsyncMock()
@@ -82,9 +84,7 @@ class VoiceLineTests(unittest.TestCase):
             wav.unlink(missing_ok=True)
 
         self.assertTrue(ok)
-        modem.play_wav_via_serial.assert_called_once_with(
-            wav, already_in_voice_mode=True, **_PCM_KW
-        )
+        modem.play_wav_via_serial.assert_called_once_with(wav, already_in_voice_mode=True)
 
     def test_prefer_already_in_voice_fallback_false(self) -> None:
         modem = AsyncMock()
@@ -99,8 +99,21 @@ class VoiceLineTests(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertEqual(modem.play_wav_via_serial.await_count, 2)
-        modem.play_wav_via_serial.assert_any_call(wav, already_in_voice_mode=True, **_PCM_KW)
-        modem.play_wav_via_serial.assert_any_call(wav, already_in_voice_mode=False, **_PCM_KW)
+        modem.play_wav_via_serial.assert_any_call(wav, already_in_voice_mode=True)
+        modem.play_wav_via_serial.assert_any_call(wav, already_in_voice_mode=False)
+
+    def test_wav_file_to_mono_u8_pcm(self) -> None:
+        wav = Path(__file__).resolve().parent / "__voice_line_pcm__.wav"
+        with wave.open(str(wav), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(1)
+            wf.setframerate(8000)
+            wf.writeframes(b"\x80\x90\x70")
+        try:
+            pcm = wav_file_to_mono_u8_pcm(wav)
+            self.assertEqual(pcm, b"\x80\x90\x70")
+        finally:
+            wav.unlink(missing_ok=True)
 
     def test_record_prefer_voice_true_dabord(self) -> None:
         modem = AsyncMock()

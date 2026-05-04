@@ -11,6 +11,7 @@ Fonctions principales:
 """
 import argparse
 import asyncio
+import sys
 from datetime import datetime
 from pathlib import Path
 import math
@@ -18,6 +19,11 @@ import tempfile
 import wave
 
 from loguru import logger
+
+# Permet d'executer ce script directement depuis la racine du depot.
+_MODEM_LAB_ROOT = Path(__file__).resolve().parents[1]
+if str(_MODEM_LAB_ROOT) not in sys.path:
+    sys.path.insert(0, str(_MODEM_LAB_ROOT))
 
 from labcore.answer import fast_answer_incoming
 from labcore.bootstrap import add_modem_args, build_modem, setup_logging

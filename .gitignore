@@ -80,6 +80,14 @@ french_phone_data/
 .vscode/
 .idea/
 .cursor/
+
+# Consignes locales pour agents IA (Cursor, etc.) — personnaliser sans versionner
+AGENTS.md
+
+# modem_lab : artefacts et préférences locales
+scripts/modem_lab/generated/
+scripts/modem_lab/.presets.json
+scripts/modem_lab/.last_tts_voice.txt
 *.swp
 *.swo
 *~

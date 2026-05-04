@@ -19,6 +19,7 @@ Exemples de commandes à lancer : voir la fin de ``python scripts/modem_lab/labs
 
 import argparse
 import asyncio
+import sys
 import tempfile
 import wave
 from datetime import datetime
@@ -26,10 +27,18 @@ from pathlib import Path
 
 from loguru import logger
 
+# Permet d'executer ce script directement depuis la racine du depot.
+_MODEM_LAB_ROOT = Path(__file__).resolve().parents[1]
+if str(_MODEM_LAB_ROOT) not in sys.path:
+    sys.path.insert(0, str(_MODEM_LAB_ROOT))
+
 from labcore.bootstrap import add_modem_args, build_modem, setup_logging
-from backend.core.modem_handler import wav_file_to_u8_pcm_for_modem
 from labcore.hangup import turbo_hangup
-from labcore.voice_line import play_wav_line_fallback, record_wav_line_fallback
+from labcore.voice_line import (
+    play_wav_line_fallback,
+    record_wav_line_fallback,
+    wav_file_to_mono_u8_pcm,
+)
 from labscenarios.answering_machine import _enforce_wav_duration, _generate_beep_u8, _write_u8_wav
 
 
@@ -245,7 +254,11 @@ async def run() -> int:
             logger.error("Message WAV introuvable: {}", wav)
             return 1
         try:
-            pcm_message, pcm_message_rate = wav_file_to_u8_pcm_for_modem(wav)
+            with wave.open(str(wav), "rb") as _wf_rate:
+                pcm_message_rate = float(_wf_rate.getframerate())
+            pcm_message = wav_file_to_mono_u8_pcm(wav)
+            if not pcm_message:
+                raise ValueError("PCM vide ou WAV non supporte pour le modem")
         except (ValueError, OSError, wave.Error) as e:
             logger.error("Message WAV invalide ou illisible: {}", e)
             return 1

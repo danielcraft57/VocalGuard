@@ -13,6 +13,7 @@ Ce module couvre deux usages complémentaires:
 from __future__ import annotations
 
 import asyncio
+import tempfile
 import wave
 from dataclasses import dataclass
 from pathlib import Path
@@ -94,12 +95,28 @@ class LineAudioPlayer:
         if not pcm_u8:
             logger.warning("play_pcm_u8: buffer vide")
             return False
-        return await self._modem.play_wav_via_serial(
-            Path(logical_name),
-            already_in_voice_mode=prefer_already_in_voice,
-            pcm_u8=pcm_u8,
-            pcm_rate=float(sample_rate_hz),
-        )
+        try:
+            return await self._modem.play_wav_via_serial(
+                Path(logical_name),
+                already_in_voice_mode=prefer_already_in_voice,
+                pcm_u8=pcm_u8,
+                pcm_rate=float(sample_rate_hz),
+            )
+        except TypeError:
+            # Compatibilité ModemHandler legacy: pas de kwargs pcm_u8/pcm_rate.
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+            try:
+                self._write_u8_wav(tmp_path, pcm_u8, int(sample_rate_hz))
+                return await self._modem.play_wav_via_serial(
+                    tmp_path,
+                    already_in_voice_mode=prefer_already_in_voice,
+                )
+            finally:
+                try:
+                    tmp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     def preload_wav(
         self,
@@ -139,6 +156,14 @@ class LineAudioPlayer:
             prefer_already_in_voice=prefer_already_in_voice,
             logical_name=wav.logical_name,
         )
+
+    @staticmethod
+    def _write_u8_wav(path: Path, raw_u8: bytes, rate: int) -> None:
+        with wave.open(str(path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(1)
+            wf.setframerate(max(1, int(rate)))
+            wf.writeframes(raw_u8)
 
 
 def _play_s16_blocking(int16_pcm: bytes, sample_rate: int) -> None:

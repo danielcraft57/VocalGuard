@@ -226,9 +226,12 @@ Les chemins sont relatifs à la **racine du dépôt** VocalGuard.
 
 | Fichier | Rôle |
 |---------|------|
-| `labscenarios/answering_machine.py` | Répondeur : auto-réponse, message d’accueil WAV, bip, enregistrement message. |
+| `labscenarios/answering_machine.py` | Répondeur **entrant** : auto-réponse, message d’accueil WAV, bip, enregistrement message. |
+| `labscenarios/answer_metrics_probe.py` | Sonde **sortante** seule : VRX, métriques CSV, `capture.wav`, rapport timing (`labcore.answer_wait_common`). |
+| `labscenarios/metrics_voicemail.py` | Même sonde sortante puis prompt WAV, bips, enregistrement message (répondeur **sortant** ; ne pas confondre avec `answering_machine`). |
 | `labscenarios/outbound_announce.py` | Appel sortant : annonce WAV, options **`--wait-answer-tone`**, **`--voice-blind-dial`**, délais sonnerie — voir docstring (composition voix vs données). |
 | `labscenarios/outbound_listen_vad.py` | Appel **sans WAV** : après dial / attentes, **VRX + VAD** uniquement (logs « ça parle »). |
+| `labscenarios/prompt_and_play.py` | Séquences audio / touches ; option branchement sonde (`--dated-answer-capture`). |
 | `labscenarios/outgoing_call.py` | Appel sortant interactif (DTMF après composition). |
 | `labscenarios/dialer.py` | Numérotation simple + maintien ligne puis raccrochage. |
 | `labscenarios/incoming_call.py` | Appel entrant + pont audio **`LiveAudioBridge`** (`labcore/live_audio.py`). |

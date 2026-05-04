@@ -10,6 +10,7 @@ from typing import List, Optional
 
 import sys
 from loguru import logger
+from labcore.line_audio_player import preview_wav_on_host
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -58,16 +59,56 @@ def input_voice_index(voices: List[dict]) -> Optional[str]:
         print("Numero invalide.")
 
 
-async def generate_sample(voice_name: str, out_path: Path) -> None:
+async def generate_sample(voice_name: str, out_path: Path) -> Optional[Path]:
     import edge_tts
 
     logger.info("Generation sample TTS avec voix {}", voice_name)
-    text = "Bonjour, ceci est un test de synthese vocale pour le modem VocalGuard."
+    text = (
+        "Bonjour Loic. "
+        "Ici VocalGuard, version test avec une voix IA plus naturelle. "
+        "Le but est simple: verifier si le timbre est clair, le rythme fluide, "
+        "et l'articulation propre sur chaque mot. "
+        "Si le rendu te plait, on peut ensuite generer tout le pack audio avec cette meme voix."
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    comm = edge_tts.Communicate(text, voice_name)
+    comm = edge_tts.Communicate(
+        text,
+        voice_name,
+        rate="+3%",
+        pitch="+2Hz",
+    )
     await comm.save(str(out_path))
     logger.info("Sample TTS genere: {}", out_path)
     print(f"Fichier genere: {out_path}")
+    wav_path = out_path.with_suffix(".wav")
+    try:
+        from pydub import AudioSegment
+    except ImportError:
+        logger.warning("pydub non installe: conversion WAV impossible")
+        print("pydub non installe: lecture interne indisponible (pip install pydub).")
+        return None
+    try:
+        audio = AudioSegment.from_file(str(out_path))
+        audio.set_channels(1).set_frame_rate(16000).set_sample_width(2).export(str(wav_path), format="wav")
+        logger.info("Sample WAV genere: {}", wav_path)
+        return wav_path
+    except Exception as e:
+        logger.warning("Conversion MP3->WAV impossible: {}", e)
+        print("Conversion en WAV impossible, lecture interne annulee.")
+        return None
+
+
+async def play_sample_on_host(sample_wav_path: Optional[Path]) -> bool:
+    """Lit directement le sample sur la sortie audio locale (sans lecteur externe)."""
+    if sample_wav_path is None or not sample_wav_path.is_file():
+        logger.warning("Lecture interne impossible, sample WAV absent")
+        return False
+    ok = await preview_wav_on_host(sample_wav_path)
+    if ok:
+        print("Lecture interne terminee.")
+    else:
+        print("Lecture interne impossible (verifiez sounddevice/pyaudio).")
+    return ok
 
 
 async def run(selection_file: Optional[Path] = None, initial_voice: Optional[str] = None) -> None:
@@ -82,8 +123,8 @@ async def run(selection_file: Optional[Path] = None, initial_voice: Optional[str
         print("\n--- Menu TTS (copie) ---")
         print("1. Afficher toutes les voix")
         print("2. Afficher les voix francaises")
-        print("3. Choisir une voix")
-        print("4. Generer un sample MP3")
+        print("3. Choisir une voix (genere et lit un sample)")
+        print("4. Generer un sample MP3 puis lire")
         print("5. Quitter")
         if chosen_voice:
             print(f"[Voix actuelle: {chosen_voice}]")
@@ -103,11 +144,14 @@ async def run(selection_file: Optional[Path] = None, initial_voice: Optional[str
                     selection_file.parent.mkdir(parents=True, exist_ok=True)
                     selection_file.write_text(chosen_voice, encoding="utf-8")
                     logger.debug("Voix sauvegardee dans {}", selection_file)
+                sample_wav = await generate_sample(chosen_voice, out_file)
+                await play_sample_on_host(sample_wav)
         elif choice == "4":
             if not chosen_voice:
                 print("Choisissez d'abord une voix.")
                 continue
-            await generate_sample(chosen_voice, out_file)
+            sample_wav = await generate_sample(chosen_voice, out_file)
+            await play_sample_on_host(sample_wav)
         elif choice == "5":
             return
         else:

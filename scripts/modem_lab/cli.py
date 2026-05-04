@@ -11,6 +11,8 @@ Conception
 Exemple
 -------
 `python scripts/modem_lab/cli.py dialer -- --port COM6 --number 147`
+
+Voir aussi ``labscenarios/README.md`` (rôles des scénarios, sonde vs répondeur entrant/sortant).
 """
 
 from __future__ import annotations
@@ -34,13 +36,32 @@ SCENARIO_MAP = {
     "outbound-announce": LAB_DIR / "labscenarios" / "outbound_announce.py",
     "outbound-listen-vad": LAB_DIR / "labscenarios" / "outbound_listen_vad.py",
     "prompt-and-play": LAB_DIR / "labscenarios" / "prompt_and_play.py",
+    "answer-metrics-probe": LAB_DIR / "labscenarios" / "answer_metrics_probe.py",
+    "metrics-voicemail": LAB_DIR / "labscenarios" / "metrics_voicemail.py",
 }
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Construit le parser de la CLI racine."""
+    epilog = """
+Scénarios (détail : scripts/modem_lab/labscenarios/README.md) :
+  answer-metrics-probe   Sonde VRX : métriques + capture.wav + rapport timing.
+  metrics-voicemail      Sonde puis prompt WAV, bips, message répondeur (sortant).
+  smoke                    Fumée AT / modem prêt.
+  dialer                   Compose, maintient la ligne, raccroche.
+  outgoing                 Compose puis DTMF interactif (clavier).
+  outbound-announce        Compose, attentes, lecture WAV vers la ligne.
+  outbound-listen-vad      VRX + VAD sans WAV (logs parole).
+  incoming                 Attente RING, décrochage, pont audio.
+  answering                Répondeur entrant (greeting + enregistrement).
+  dtmf                     DTMF sur ligne établie.
+  prompt-and-play          Séquences audio / touches (avancé).
+"""
+
     parser = argparse.ArgumentParser(
-        description="CLI unifiée modem_lab (dispatch vers scripts labscenarios/*)."
+        description="CLI unifiée modem_lab (dispatch vers scripts labscenarios/*).",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=epilog.strip(),
     )
     parser.add_argument(
         "scenario",

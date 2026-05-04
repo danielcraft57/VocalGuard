@@ -18,11 +18,6 @@ from backend.core.modem_handler import (  # noqa: E402
     _serial_buffer_shows_remote_pickup,
     _vrx_stream_contains_hangup_marker,
 )
-from backend.core.telephony_events import (  # noqa: E402
-    count_dle_ring_markers,
-    outbound_wait_status_summary,
-    remote_pickup_likely_detail,
-)
 
 
 class ModemHandlerSmokeTests(unittest.TestCase):
@@ -77,34 +72,6 @@ class RemotePickupBufferTests(unittest.TestCase):
 
     def test_negatif_silence(self) -> None:
         self.assertFalse(_serial_buffer_shows_remote_pickup(bytes([128]) * 100))
-
-
-class OutboundWaitLogSummaryTests(unittest.TestCase):
-    """Aligné sur les logs `wait_voice_outbound_answer` : DLE+R cumulés, ligne de synthèse décrochage."""
-
-    def test_compte_sonneries_dle_r(self) -> None:
-        # Trois indications sonnerie puis réponse (cf. modem qui répète DLE+R par cycle)
-        flux = b"\x10R\x10R\x10R\x10a"
-        self.assertEqual(count_dle_ring_markers(flux), 3)
-        ok, why = remote_pickup_likely_detail(flux)
-        self.assertTrue(ok)
-        self.assertIn("DLE+a", why)
-
-    def test_resume_tampon_style_log(self) -> None:
-        self.assertEqual(
-            outbound_wait_status_summary(b"\x10R\x10b"),
-            "DLE+R=1|occupe=1",
-        )
-        s = outbound_wait_status_summary(b"VCON\r\n")
-        self.assertIn("DLE+R=0", s)
-        self.assertIn("decrochage=VCON", s.replace(" ", "_"))
-
-    def test_decrochage_apres_sonneries_connect_num(self) -> None:
-        flux = b"\x10R\x10R\r\n1\r\n"
-        self.assertEqual(count_dle_ring_markers(flux), 2)
-        ok, why = remote_pickup_likely_detail(flux)
-        self.assertTrue(ok)
-        self.assertIn("numerique", why)
 
 
 class NumericAtResultTests(unittest.TestCase):

@@ -110,7 +110,11 @@ class CallController:
 
         ``blind=True`` => ATDT...; (retour rapide), ``blind=False`` => attente de statut de connexion.
         """
-        return await self._modem.dial_number(number, timeout=timeout_sec, blind=blind)
+        # Compatibilité: certains ModemHandler historiques n'acceptent pas l'arg `blind`.
+        try:
+            return await self._modem.dial_number(number, timeout=timeout_sec, blind=blind)
+        except TypeError:
+            return await self._modem.dial_number(number, timeout=timeout_sec)
 
     async def send_dtmf(
         self,
@@ -136,11 +140,29 @@ class CallController:
 
     async def prepare_voice_for_blind_dial(self) -> bool:
         """+FCLASS=8 + codec sans +VLS=1 (composition ``ATDT…;``)."""
-        return await self._modem.enter_voice_codec_before_dial()
+        if hasattr(self._modem, "enter_voice_codec_before_dial"):
+            return await self._modem.enter_voice_codec_before_dial()
+
+        # Fallback pour ModemHandler legacy (sans helper dédié).
+        r = await self.send_at("AT+FCLASS=8", timeout=3.0, stop_on_ring=False)
+        if b"OK" not in r:
+            return False
+        await self.send_at("AT+VSD=0,0", timeout=2.0, stop_on_ring=False)
+        r_vsm = await self.send_at("AT+VSM=128,8000", timeout=2.0, stop_on_ring=False)
+        if b"OK" not in r_vsm:
+            await self.send_at("AT+VSM=1,8000,0,0", timeout=2.0, stop_on_ring=False)
+        return True
 
     async def prepare_voice_off_hook(self) -> bool:
         """+FCLASS=8 + codec + +VLS=1 (ligne déjà décrochée avant tonalités)."""
-        return await self._modem.enter_voice_line_for_outbound_dial()
+        if hasattr(self._modem, "enter_voice_line_for_outbound_dial"):
+            return await self._modem.enter_voice_line_for_outbound_dial()
+
+        ok = await self.prepare_voice_for_blind_dial()
+        if not ok:
+            return False
+        r_vls = await self.send_at("AT+VLS=1", timeout=3.0, stop_on_ring=False)
+        return b"OK" in r_vls
 
     async def send_at(
         self,

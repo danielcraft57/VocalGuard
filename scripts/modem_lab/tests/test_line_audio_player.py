@@ -60,6 +60,23 @@ class LineAudioPlayerTests(unittest.TestCase):
         args, kwargs = modem.play_wav_via_serial.call_args
         self.assertEqual(kwargs.get("pcm_u8"), b"\x80\x90" * 100)
 
+    def test_play_pcm_u8_fallback_legacy_modem_signature(self) -> None:
+        modem = MagicMock()
+
+        async def _legacy_call(*args, **kwargs):
+            if "pcm_u8" in kwargs:
+                raise TypeError("unexpected keyword argument 'pcm_u8'")
+            return True
+
+        modem.play_wav_via_serial = AsyncMock(side_effect=_legacy_call)
+        player = LineAudioPlayer(modem)
+
+        async def run():
+            return await player.play_pcm_u8(b"\x80\x80" * 120, sample_rate_hz=8000.0)
+
+        self.assertTrue(asyncio.run(run()))
+        self.assertEqual(modem.play_wav_via_serial.await_count, 2)
+
     def test_preload_then_play_preloaded(self) -> None:
         modem = MagicMock()
         modem.play_wav_via_serial = AsyncMock(return_value=True)
