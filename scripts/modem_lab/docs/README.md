@@ -17,6 +17,14 @@ Ce dossier regroupe des **notes structurées** dérivées du manuel constructeur
 
 **Lien projet :** le code applicatif qui pilote ce modem (mode voix série) est notamment dans `backend/core/modem_handler.py` et les scénarios sous `scripts/modem_lab/`.
 
+## Modem lab — patterns « dialogue prospection »
+
+Documentation dédiée (GoF / hexagonal appliqués au scénario `prospection-outbound` et au paquet `labcore/prospection_dialogue`) :
+
+| Ressource | Description |
+|-----------|-------------|
+| [prospection-dialogue-patterns/README.md](./prospection-dialogue-patterns/README.md) | **Index** : chaîne de responsabilité, memento, strategy, specification, observer, deadline, ports, intégration CLI |
+
 ## Référence USR 5631 (guide en ligne)
 
 Synthèse du *56K Faxmodem User's Guide* (pages `5631-ug`) : [usr-guide-index.md](./usr-guide-index.md) — commandes génériques, DTE, appel, modulation, erreur, diagnostic `#UD`, V.92 `+P`, index des registres S.

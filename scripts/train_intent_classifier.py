@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """
-Construit et sauvegarde un modele ML d intents depuis les fichiers `data/intents_danielcraft_*.json`.
+Construit et sauvegarde un modele ML d intents depuis les JSON DanielCraft.
+
+Par defaut, l'entrainement cible le **flux sortant** (`outbound`) pour coller au scénario
+`prospection-outbound`. On peut basculer vers `inbound` ou `all` via `--profile`.
 
 Sortie principale :
   models/intent_classifier.pkl
@@ -14,6 +17,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from collections import Counter
 from typing import List, Sequence, Tuple
 
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -79,7 +83,11 @@ def _collect_training_rows(manifest_paths: Sequence[Path]) -> Tuple[List[str], L
                     if suffix:
                         augmented.append((base + suffix).strip())
 
-                if tag_str.startswith("n4_marketing") or tag_str.startswith("offer_"):
+                if (
+                    tag_str.startswith("n4_marketing")
+                    or tag_str.startswith("offer_")
+                    or tag_str.startswith("objection_")
+                ):
                     augmented.extend(
                         [
                             "je vous appelle pour discuter : " + base,
@@ -115,13 +123,44 @@ def _collect_training_rows(manifest_paths: Sequence[Path]) -> Tuple[List[str], L
     return texts, labels
 
 
+def _tag_family(tag: str) -> str:
+    t = (tag or "").strip().lower()
+    if not t:
+        return "unknown"
+    if t.startswith("in_n"):
+        # Ex: in_n2_budget_investissement -> in_n2
+        parts = t.split("_")
+        if len(parts) >= 2:
+            return "_".join(parts[:2])
+        return "inbound"
+    if t.startswith("n") and len(t) >= 2 and t[1].isdigit():
+        # Ex: n3_followup_commitment -> n3
+        return t.split("_", 1)[0]
+    return t.split("_", 1)[0]
+
+
+def _resolve_profile_glob(profile: str) -> str:
+    p = (profile or "").strip().lower()
+    if p == "outbound":
+        return "data/intents/danielcraft/outbound/**/*.json"
+    if p == "inbound":
+        return "data/intents/danielcraft/inbound/**/*.json"
+    return "data/intents/danielcraft/**/*.json"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Entraîne le classifieur d intents ML DanielCraft.")
     parser.add_argument(
+        "--profile",
+        choices=["outbound", "inbound", "all"],
+        default="outbound",
+        help="Sous-ensemble DanielCraft à entraîner (défaut: outbound).",
+    )
+    parser.add_argument(
         "--glob",
         dest="glob_pattern",
-        default="data/intents_danielcraft_*.json",
-        help="Motif depuis la racine du projet (glob) pour retrouver vos fichiers intents JSON.",
+        default=None,
+        help="Motif glob explicite depuis la racine (prioritaire sur --profile).",
     )
     parser.add_argument(
         "--out",
@@ -139,15 +178,22 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    matches = sorted(PROJECT_ROOT.glob(args.glob_pattern))
+    glob_pattern = str(args.glob_pattern).strip() if args.glob_pattern else _resolve_profile_glob(args.profile)
+    matches = sorted(PROJECT_ROOT.glob(glob_pattern))
     if not matches:
-        raise SystemExit(f"Aucun fichier ne correspond au motif {args.glob_pattern}")
+        raise SystemExit(f"Aucun fichier ne correspond au motif {glob_pattern}")
 
+    print(f"Profil intents: {args.profile}")
+    print(f"Glob utilisé: {glob_pattern}")
     print("Fichiers JSON utilisés:")
     for m in matches:
         print(f" - {m.relative_to(PROJECT_ROOT)}")
 
     texts, labels = _collect_training_rows(matches)
+    families = Counter(_tag_family(lbl) for lbl in labels)
+    print("Répartition par famille de tags:")
+    for fam, cnt in sorted(families.items(), key=lambda kv: (-kv[1], kv[0])):
+        print(f" - {fam}: {cnt}")
 
     vectorizer = TfidfVectorizer(
         analyzer="char_wb",

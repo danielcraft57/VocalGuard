@@ -1,0 +1,145 @@
+{
+  "intents": [
+    {
+      "tag": "in_n3_rappel_forfaits_commercial",
+      "patterns": [
+        "quelles sont vos offres",
+        "vous faites quoi comme pack",
+        "resume moi les prestations",
+        "c est quoi le plus populaire",
+        "vous proposez quoi comme service"
+      ],
+      "responses": [
+        "Sur DanielCraft, trois packs phares: site vitrine quatre cent quatre-vingt-dix euros, SEO Google plus IA six cent quatre-vingt-dix-neuf euros, Identite et visibilite neuf cent quatre-vingt-dix euros, plus sur mesure selon vos besoins.",
+        "L offre couvre strategie, design, developpement et SEO dans un seul flux. Les forfaits sont clairs sur le site, avec estimation personnalisee sous vingt-quatre heures si votre besoin sort du catalogue.",
+        "Beaucoup de clients demarrent par la vitrine pour valider le retour, puis ajoutent SEO ou identite: chaque brique est pensée pour l impact business.",
+        "Populaire et efficace: la vitrine pour la credibilite immediate, le SEO pour le flux de prospects, l identite pour une image premium partout."
+      ]
+    },
+    {
+      "tag": "in_n3_garanties_valeur_ajoutee",
+      "patterns": [
+        "c est quoi le support",
+        "apres la livraison",
+        "bugs",
+        "maintenance incluse",
+        "vous laissez le code"
+      ],
+      "responses": [
+        "Quatorze jours de support inclus apres livraison pour corriger tout bug, vous etes accompagne pas abandonne. Le code source est a vous, avec documentation, conformement a l engagement DanielCraft.",
+        "Vous restez proprietaire de votre projet: pas de prison technique, liberté totale pour la suite. C est un vrai gage de serenite.",
+        "Site rapide, securise, optimise: vos clients vous trouvent et vous font confiance. C est le meme niveau d exigence que je m applique a mon propre site.",
+        "La valeur est dans la transparence: delais annonces, budget cadre, corrections incluses dans la fenetre de support, comme affiche sur danielcraft.fr."
+      ]
+    },
+    {
+      "tag": "in_n3_delais_livraison",
+      "patterns": [
+        "en combien de temps c est pret",
+        "delai pour un site",
+        "vous livrez vite",
+        "quand est ce en ligne"
+      ],
+      "responses": [
+        "Pour une vitrine, comptez souvent cinq a huit jours apres validation du contenu et du cadrage, sans delais caches ni mauvaises surprises.",
+        "La methodologie est agile: cycles courts, jalons visibles, livraisons incrementales. Vous savez ou vous allez a chaque etape.",
+        "Si vous avez une deadline metier, on l integre des le planing pour prioriser ce qui impacte votre lancement.",
+        "La rapidite ne sacrifie pas la qualite: tests, perf et SEO de base sont integres dans le flux."
+      ]
+    },
+    {
+      "tag": "in_n3_prise_devis_estimation",
+      "patterns": [
+        "je veux un devis",
+        "une estimation",
+        "vous pouvez me chiffrer",
+        "proposition commerciale",
+        "gratuit ou payant le devis"
+      ],
+      "responses": [
+        "L estimation est claire sous vingt-quatre heures, sans engagement: on cadre vos priorites et je vous propose la meilleure solution pour votre entreprise, comme indique sur le site.",
+        "Je vous envoie une proposition detaillee avec perimetre, delais et enveloppe. Vous decidez en connaissance de cause, sans pression.",
+        "Pour du sur mesure, un court echange suffit souvent pour etre precis. Pour les packs, les prix de depart sont publics sur danielcraft.fr.",
+        "Mon objectif est que vous ayez un chiffre utile rapidement, pas un document fourre-tout. Clarte et honnetete avant tout."
+      ]
+    },
+    {
+      "tag": "in_n3_prise_contact_email_tel",
+      "patterns": [
+        "votre email",
+        "comment vous joindre",
+        "numero de telephone",
+        "vous etes joignable comment",
+        "je prefere ecrire"
+      ],
+      "responses": [
+        "Vous pouvez ecrire a contact@danielcraft.fr ou m appeler au zero trois quatre-vingt-sept soixante-dix-huit zero neuf seize. Je reponds vite, en general sous vingt-quatre heures pour une estimation.",
+        "Les deux canaux sont ouverts: telephone pour un cadrage immediat, email pour transmettre des liens ou documents. Je suis base a Metz et j accompagne la France entiere.",
+        "Parfait pour le mail: envoyez votre contexte et vos objectifs, je vous reponds avec une proposition structuree.",
+        "DanielCraft reste reactif: votre projet merite une reponse rapide et soignee, quel que soit le canal."
+      ]
+    },
+    {
+      "tag": "in_n3_objection_prix_inbound",
+      "patterns": [
+        "c est cher pour nous",
+        "on verra plus tard le budget",
+        "autour de moi c est moins cher",
+        "je pensais a moins"
+      ],
+      "responses": [
+        "Je comprends. L idee est le meilleur rapport qualite budget: un site qui rapporte plus que son cout, avec propriete du code et pas de facturation floue en cours de route.",
+        "On peut decouper en etapes: vitrine d abord pour securiser l image, puis SEO ou identite quand le retour justifie la suite.",
+        "Comparez le cout total sur douze mois, pas seulement la ligne facture: refaires, SEO ratrappe, ou vitrine qui ne convertit pas coutent souvent plus cher.",
+        "Je prefere etre honnete sur le prix plutot que vendre bas et ajouter apres. Le site affiche des enveloppes indicatives pour que vous restiez maitre du jeu."
+      ]
+    },
+    {
+      "tag": "in_n3_rdv_prochaine_etape",
+      "patterns": [
+        "on peut prendre rendez vous",
+        "planifier un appel",
+        "vous etes libre quand",
+        "je veux un creneau",
+        "visio possible"
+      ],
+      "responses": [
+        "Avec plaisir. Proposons un creneau de quinze minutes pour valider le cadrage: vous me dites vos disponibilites cette semaine, je m adapte.",
+        "Parfait, un echange visio ou telephone permet de debloquer vite les decisions. Je vous confirme par email avec lien si besoin.",
+        "Super, on transforme l appel en plan d action concret: livrables, date butoir, next steps clairs.",
+        "DanielCraft fonctionne comme ca: reactivite, rendez-vous simples, pas de bureaucratie inutile."
+      ]
+    },
+    {
+      "tag": "in_n3_closing_positif_commercial",
+      "patterns": [
+        "ok on part la dessus",
+        "vous m avez convaincu",
+        "j ai hate de voir le resultat",
+        "on signe",
+        "quand est ce qu on commence"
+      ],
+      "responses": [
+        "Excellent choix, merci pour votre confiance. Je vous envoie la proposition formalisee et on ouvre le chantier avec les bons jalons des reception de votre feu vert.",
+        "Super nouvelle, je suis motive pour livrer un resultat dont vous serez fier. On fixe le kickoff et la premiere livraison ensemble tout de suite.",
+        "Ravi de travailler avec vous. L energie est la, la methode aussi: on va faire quelque chose de solide et visible pour votre activite.",
+        "Parfait, c est le debut d une belle collaboration. DanielCraft met tout en oeuvre pour depasser vos attentes avec serenite et style."
+      ]
+    },
+    {
+      "tag": "in_n3_upsell_soft_benefice",
+      "patterns": [
+        "et le seo dans tout ca",
+        "on fait aussi les reseaux",
+        "vous gerez le referencement apres",
+        "autre chose a prevoir"
+      ],
+      "responses": [
+        "Bonne question: le pack SEO Google plus IA complete idealement une vitrine pour attirer du trafic qualifie, et l identite multi-supports renforce la conversion une fois les visiteurs sur le site.",
+        "On peut enchainer logiquement: image claire, puis visibilite, puis conversion fine. Chaque etape se monnaye en retour mesurable.",
+        "Je vous guide sans sur-vente: on active ce qui a le meilleur impact pour votre stade actuel.",
+        "L objectif est votre succes, pas la liste de options: je vous dis franchement ce qui vaut le coup en premier."
+      ]
+    }
+  ]
+}

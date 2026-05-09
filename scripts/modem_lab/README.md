@@ -21,6 +21,7 @@ Ce dossier regroupe des scripts de laboratoire pour tester le modem USB de manie
 ## Documentation modem
 
 - **Index thématique (notes extraites du PDF) :** [docs/README.md](docs/README.md)
+- **Patterns dialogue prospection** (chaîne d’intents, policy, observer, deadline, ports) : [docs/prospection-dialogue-patterns/README.md](docs/prospection-dialogue-patterns/README.md)
 - Manuel USR 5637 OEM (local) : `scripts/modem_lab/docs/5637-OEM.pdf`
 - Source officielle : [USR 5637 OEM PDF](https://support.usr.com/support/5637-oem/5637-oem-files/5637-OEM.pdf)
 
@@ -51,7 +52,7 @@ python scripts/modem_lab/cli.py outbound-announce -- --port COM6 --number 078083
 
 L'interface **`modem_lab_ui.py`** (Rich + Questionary) propose :
 - **Scénarios téléphonie** (entrant / sortant / DTMF / smoke)
-- **Audio / TTS** : menu voix edge-tts, génération pack modem, **assistant pack WAV d’intents** (`data/*.json` → `greeting_01.wav`, etc.) et rappel CLI « intents vs prospection »
+- **Audio / TTS** : menu voix edge-tts, génération pack modem, **assistant pack WAV d’intents** (JSON sous `data/intents/` → `greeting_01.wav`, etc.) et rappel CLI « intents vs prospection »
 - **Configuration** (port, voix, numéro… dans `.presets.json`)
 
 Prérequis TUI : `pip install rich questionary` (voir `requirements.txt`).

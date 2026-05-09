@@ -1,0 +1,347 @@
+{
+  "intents": [
+    {
+      "tag": "n4_followup_jplus1_intro",
+      "patterns": [
+        "je vous rappelle",
+        "vous aviez promis un retour",
+        "je reviens vers vous",
+        "petite relance pour notre projet",
+        "tout bon pour vous"
+      ],
+      "responses": [
+        "Bonjour, petite relance de mon cote suite a notre echange. Toujours chaud pour verifier si un site clarifie vos demandes entrants ?",
+        "Bonjour, je vous recontacte rapidement sur notre dernier contact. Toujours d actualite dans votre agenda ?",
+        "Bonjour, petite relance de mon cote suite a notre echange. Toujours chaud pour verifier si un site clarifie vos demandes entrants ? L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Bonjour, je vous recontacte rapidement sur notre dernier contact. Toujours d actualite dans votre agenda ? Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_followup_mail_sent_check",
+      "patterns": [
+        "vous avez recu mon mail",
+        "vous avez lu mon email",
+        "vous avez eu le dossier envoye hier",
+        "le mail est arrive"
+      ],
+      "responses": [
+        "Petite question courte: vous avez eu mon email avec les 2 scenarios et budgets ? Sinon je vous le renvoie.",
+        "Je verifie juste reception: vous avez bien recu le recap par email avec les options DanielCraft ?",
+        "Petite question courte: vous avez eu mon email avec les 2 scenarios et budgets ? Sinon je vous le renvoie. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Je verifie juste reception: vous avez bien recu le recap par email avec les options DanielCraft ? Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_followup_calendar_reminder",
+      "patterns": [
+        "on peut fixer une date",
+        "vous me proposez quel creneau",
+        "pour un appel cette semaine",
+        "on planifie le point"
+      ],
+      "responses": [
+        "Parfait, on peut le bloquer vite. Preferance matinee ou debut d apres-midi cette semaine ?",
+        "Top, je vous propose deux creneaux: demain avant midi ou apres quatre heures, qu est ce qui colle le mieux ?",
+        "Parfait, on peut le bloquer vite. Preferance matinee ou debut d apres-midi cette semaine ? L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Top, je vous propose deux creneaux: demain avant midi ou apres quatre heures, qu est ce qui colle le mieux ? Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_followup_budget_reopen",
+      "patterns": [
+        "on peut revoir le budget",
+        "budget un peu mieux depuis",
+        "vous etes passe sur quel budget",
+        "on peut ajuster financier"
+      ],
+      "responses": [
+        "Super, alors on recadre vite: si on reste prudent, quel budget mensuel maximal vous voyez comme raisonnable ?",
+        "Compris, on peut repartir sur une version courte pour demarrer, puis scaler plus tard.",
+        "Super, alors on recadre vite: si on reste prudent, quel budget mensuel maximal vous voyez comme raisonnable ? L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Compris, on peut repartir sur une version courte pour demarrer, puis scaler plus tard. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_followup_competitors_push",
+      "patterns": [
+        "la concurrence passe devant nous",
+        "on voit mieux nos concurrents",
+        "on prend du retard vs les autres",
+        "on risque de se faire doubler"
+      ],
+      "responses": [
+        "Je comprends, et c est justement une bonne raison pour securiser un site clarifiant votre offre et vos preuves.",
+        "Dans ces cas-la, deux leviers: visibilite plus conversion. On peut faire un plan priorise sur 14 jours.",
+        "Je comprends, et c est justement une bonne raison pour securiser un site clarifiant votre offre et vos preuves. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Dans ces cas-la, deux leviers: visibilite plus conversion. On peut faire un plan priorise sur 14 jours. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_followup_seasonality",
+      "patterns": [
+        "c est saisonnier chez nous",
+        "on peut attendre encore",
+        "on veut passer apres les vacances",
+        "on sera plus dispo en ete"
+      ],
+      "responses": [
+        "Logique. On peut soit figer une date de recontact, soit preparer votre base maintenant pour gagner les pics de saison.",
+        "Pas de souci, je vous propose une option light preparatoire pendant la basse saison.",
+        "Logique. On peut soit figer une date de recontact, soit preparer votre base maintenant pour gagner les pics de saison. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Pas de souci, je vous propose une option light preparatoire pendant la basse saison. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_followup_content_ready",
+      "patterns": [
+        "j ai vos textes",
+        "les photos sont pret",
+        "vous pouvez avoir notre wording",
+        "on a mis a jour nos infos"
+      ],
+      "responses": [
+        "Top, si vous avez le contenu, on peut accelere serieusement la mise en ligne du site.",
+        "Parfait, avec les contenus a jour je peux chiffrer exactement livrables et deadline.",
+        "Top, si vous avez le contenu, on peut accelere serieusement la mise en ligne du site. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Parfait, avec les contenus a jour je peux chiffrer exactement livrables et deadline. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_followup_not_priority",
+      "patterns": [
+        "ce n est toujours pas prioritaire",
+        "on doit finir autre chose d abord",
+        "projet freeze en interne",
+        "priorite elsewhere"
+      ],
+      "responses": [
+        "Compris. Je peux garder votre dossier en veille avec un recap actionnable pour jour J.",
+        "Aucun souci, je vous propose un check-in rapide mensuel jusqu a ce que la priorite remonte.",
+        "Compris. Je peux garder votre dossier en veille avec un recap actionnable pour jour J. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Aucun souci, je vous propose un check-in rapide mensuel jusqu a ce que la priorite remonte. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_followup_partner_involved",
+      "patterns": [
+        "mon associe doit valider",
+        "la direction doit etre dedans",
+        "on doit passer par le groupe",
+        "discussion en interne encore"
+      ],
+      "responses": [
+        "Parfait, je vous envoie un one-pager tout simple pour faire valider vite cote bureau.",
+        "Je vous fournis aussi des arguments ROI concrets pour faciliter le choix avec votre partie prenante.",
+        "Parfait, je vous envoie un one-pager tout simple pour faire valider vite cote bureau. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Je vous fournis aussi des arguments ROI concrets pour faciliter le choix avec votre partie prenante. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_followup_decision_negative_soft",
+      "patterns": [
+        "on reste comme ca encore",
+        "on ne fait rien cette annee",
+        "on garde l existant encore",
+        "on annule au final"
+      ],
+      "responses": [
+        "Compris, merci pour la clarification. Je peux garder vos coordonnees si la situation bouge dans six mois ?",
+        "Aucun probleme. Si votre activite prend un virage brutal, vous avez encore mon contact pour audit express.",
+        "Compris, merci pour la clarification. Je peux garder vos coordonnees si la situation bouge dans six mois ? L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Aucun probleme. Si votre activite prend un virage brutal, vous avez encore mon contact pour audit express. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_marketing_offer_cta_hard",
+      "patterns": [
+        "votre derniere offre",
+        "promotions dispo",
+        "reduction ou bonus",
+        "il y a quelque chose de special"
+      ],
+      "responses": [
+        "DanielCraft fonctionne avec des prix forfaitaires clairs sans jeux obscurs, votre bonus c est livrables + delais garantis dans le cadre propose.",
+        "Ce qui change vraiment la donne pour vous, ce n est pas un gadget marketing mais un chantier optimise pour vos objectifs reels.",
+        "DanielCraft fonctionne avec des prix forfaitaires clairs sans jeux obscurs, votre bonus c est livrables + delais garantis dans le cadre propose. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Ce qui change vraiment la donne pour vous, ce n est pas un gadget marketing mais un chantier optimise pour vos objectifs reels. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_marketing_social_proof",
+      "patterns": [
+        "cas clients reels",
+        "chiffres concrets",
+        "avant apres seo",
+        "exemple comme notre entreprise"
+      ],
+      "responses": [
+        "Je vous envoie des exemples reels avec periodes avant/apres, selon vos criteres ville et secteur d activite.",
+        "On peut se baser sur des indicateurs classiques comme visibilit locale, temps de chargement ou clarte de la page principale.",
+        "Je vous envoie des exemples reels avec periodes avant/apres, selon vos criteres ville et secteur d activite. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "On peut se baser sur des indicateurs classiques comme visibilit locale, temps de chargement ou clarte de la page principale. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_marketing_roi_focus",
+      "patterns": [
+        "retour sur investissement",
+        "vous payez vite rentable",
+        "en combien je rembourse",
+        "rentabiliser le site vite"
+      ],
+      "responses": [
+        "On peut chiffrer ensemble un objectif mensuel de demandes minima pour amortir vite votre investissement site plus SEO.",
+        "La cle est de mesurer: formulaires entrants, appels, et valeur moyenne d un client dans votre metre.",
+        "On peut chiffrer ensemble un objectif mensuel de demandes minima pour amortir vite votre investissement site plus SEO. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "La cle est de mesurer: formulaires entrants, appels, et valeur moyenne d un client dans votre metre. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_marketing_brand_story",
+      "patterns": [
+        "raconter mieux qui on est",
+        "notre storytelling est faible",
+        "on doit mieux nous presenter",
+        "on manque de credibilite visuelle"
+      ],
+      "responses": [
+        "Dans ce cas on travaille narration plus design plus preuves, souvent inclus dans Identite plus visibilite.",
+        "On peut retravailler page d accueil et messages clefs avant meme de passer sur tous les autres canaux.",
+        "Dans ce cas on travaille narration plus design plus preuves, souvent inclus dans Identite plus visibilite. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "On peut retravailler page d accueil et messages clefs avant meme de passer sur tous les autres canaux. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_marketing_ads_integration",
+      "patterns": [
+        "on fait aussi de la pub",
+        "campagnes facebook",
+        "annonces locales",
+        "on veut lier seo et pubs"
+      ],
+      "responses": [
+        "Tres coherent: un bon site optimise la conversion lorsque vos annonces ramenent du trafic.",
+        "On peut faire un page de destination forte pour vos campagnes, avec tracking minimal.",
+        "Tres coherent: un bon site optimise la conversion lorsque vos annonces ramenent du trafic. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "On peut faire un page de destination forte pour vos campagnes, avec tracking minimal. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_followup_voice_only_message",
+      "patterns": [
+        "envoyez un vocal",
+        "vous preferez un message whatsapp audio",
+        "on evite mails",
+        "vous me laissez un court message"
+      ],
+      "responses": [
+        "Oui bien sur, envoyez moi un vocal si c est plus simple, je vous reponds avec recap ecrit ensuite.",
+        "Parfait, je valide vite votre message vocal puis je vous confirme le plan d action suivant.",
+        "Oui bien sur, envoyez moi un vocal si c est plus simple, je vous reponds avec recap ecrit ensuite. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Parfait, je valide vite votre message vocal puis je vous confirme le plan d action suivant. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_followup_last_chance_soft_close",
+      "patterns": [
+        "derniere tentative de ma part",
+        "si je ne vous relance plus apres ce mail",
+        "c est votre derniere relance ?",
+        "pour cloturer notre dossier"
+      ],
+      "responses": [
+        "Je cloture votre dossier cote moi si aucun retour ces prochains jours, sauf contre ordre votre.",
+        "Derniere relance sympathique avant archivage, dites moi juste oui/non pour un mini audit gratuit.",
+        "Je cloture votre dossier cote moi si aucun retour ces prochains jours, sauf contre ordre votre. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Derniere relance sympathique avant archivage, dites moi juste oui/non pour un mini audit gratuit. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "n4_followup_recontact_date",
+      "patterns": [
+        "rappelez moi dans trois semaines",
+        "revenir vers moi vendredi",
+        "recontact moi fin du mois",
+        "reprend dans quinze jours"
+      ],
+      "responses": [
+        "Parfait, je vous note cette date comme rappel planifie, avec un recap court pour repartir vite.",
+        "Tres bien, je vous recontacte cette date-la avec vos elements de contexte encore en memoire.",
+        "Parfait, je vous note cette date comme rappel planifie, avec un recap court pour repartir vite. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Tres bien, je vous recontacte cette date-la avec vos elements de contexte encore en memoire. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    }
+  ]
+}

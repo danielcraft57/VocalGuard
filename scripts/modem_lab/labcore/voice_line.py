@@ -126,6 +126,25 @@ async def play_wav_via_half_duplex_uplink(modem, wav_path: Path) -> bool:
     return bool(ok)
 
 
+async def play_pcm_u8_via_half_duplex_uplink(modem, pcm_u8: bytes) -> bool:
+    """
+    Même enchaînement que :func:`play_wav_via_half_duplex_uplink` mais sans lecture disque.
+    """
+    if not pcm_u8:
+        return False
+    fn = getattr(modem, "half_duplex_send_uplink_u8", None)
+    if not callable(fn):
+        return False
+    try:
+        ok = await fn(pcm_u8)
+    except Exception as e:
+        logger.warning("half_duplex_send_uplink_u8 (buffer): {}", e)
+        return False
+    if ok:
+        logger.debug("half_duplex uplink OK (buffer {} octets PCM)", len(pcm_u8))
+    return bool(ok)
+
+
 def _write_u8_wav_minimal(path: Path, raw_u8: bytes, rate: int = 8000) -> None:
     """WAV mono u8 minimal (même convention que ``line_audio_player``)."""
     with wave.open(str(path), "wb") as wf:

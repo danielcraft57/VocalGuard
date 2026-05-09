@@ -60,6 +60,7 @@ from labcore.call_watch import wait_remote_line_end_optional
 from labcore.hangup import turbo_hangup
 from labcore.voice_line import (
     play_wav_line_fallback,
+    play_pcm_u8_via_half_duplex_uplink,
     play_wav_via_half_duplex_uplink,
     record_wav_line_fallback,
 )
@@ -253,13 +254,22 @@ async def _play_voice_clip(
     prefer_voice: bool,
     try_half_duplex: bool,
     label: str,
+    pcm_u8: bytes | None = None,
 ) -> bool:
-    if try_half_duplex and await play_wav_via_half_duplex_uplink(modem, wav_path):
+    if try_half_duplex and pcm_u8 is not None and await play_pcm_u8_via_half_duplex_uplink(modem, pcm_u8):
+        logger.info("{} via half_duplex uplink (préchargé)", label)
+        return True
+    if try_half_duplex and pcm_u8 is None and await play_wav_via_half_duplex_uplink(modem, wav_path):
         logger.info("{} via half_duplex uplink", label)
         return True
     if try_half_duplex:
         logger.info("{} — half_duplex indisponible ou KO, fallback VTX classique", label)
-    return await play_wav_line_fallback(modem, wav_path, prefer_already_in_voice=prefer_voice)
+    return await play_wav_line_fallback(
+        modem,
+        wav_path,
+        prefer_already_in_voice=prefer_voice,
+        pcm_u8=pcm_u8,
+    )
 
 
 async def run() -> int:

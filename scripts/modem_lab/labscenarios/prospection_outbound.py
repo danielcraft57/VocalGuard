@@ -1,25 +1,38 @@
 #!/usr/bin/env python3
 """
 Scénario sortant « démarchage » : même pipeline de sonde que ``metrics_voicemail`` (VRX, métriques,
-capture optionnelle), puis lecture d’un **message d’ouverture** (WAV), écoute du correspondant avec
-**Vosk dans un thread**, export **SUB / WebVTT**, et optionnellement lecture d’une **réponse** du pack
-audio si une intention (patterns JSON) matche la transcription.
+capture optionnelle), puis **ouverture** audio, **écoute Vosk** (thread), export **SUB / WebVTT**,
+et en option **réponses** depuis un pack WAV aligné sur des intents JSON.
+
+Architecture dialogue (``labcore.prospection_dialogue``)
+--------------------------------------------------------
+- **Chaîne de responsabilité** : plusieurs ``--intents-json`` (ordre = priorité entre fichiers) ;
+  dans chaque fichier, ordre du tableau ``intents`` = priorité entre intentions.
+- **Memento** : ``ConversationSnapshot`` enregistre les tours et tags joués (extensible logs / reprise).
+- **Ouverture aléatoire** : avec ``--opening-tag`` + pack, tirage d’une variante ``tag_XX.wav`` ;
+  sinon si ``--intents-json`` + pack : tag déduit du JSON (intent nommé ``greeting`` si présent,
+  sinon **premier** intent du fichier) puis même tirage de variante ; puis fallback ``greeting_01.wav``
+  ou ``--greeting-wav``.
+- **Multi-tours** : ``--dialogue-max-turns`` boucles « VRX + STT → match → lecture WAV » sur un
+  même worker Vosk (timeline continue dans les sous-titres).
 
 Prérequis
 ---------
-- Modèle Vosk français : ``--vosk-model-slug small-fr`` (télécharge dans ``generated/vosk_models/``),
-  ou ``--vosk-model`` / ``VOSK_MODEL_PATH``, ou profil ``generated/vosk_lab_profile.json``.
-  Liste des slugs : ``--vosk-list-models``. Configuration seule (sans modem) : ``--vosk-configure-only``.
-- WAV d’ouverture : ``--greeting-wav`` ou ``--audio-pack-dir`` + ``greeting_01.wav`` (voir
-  ``labaudio/generate_intent_pack.py`` à partir de ``data/intents_prospection_flow.json``).
+- Modèle Vosk français : ``--vosk-model-slug small-fr``, etc. (voir ``--vosk-list-models``).
+- Pack WAV : ``labaudio/generate_intent_pack.py`` sur un JSON DanielCraft (ex. ``data/intents/danielcraft/outbound/*.json``) ou lab (``data/intents/lab/*.json``).
 
-Les sous-titres sont alignés sur les timings internes Vosk (phrases successives).
+Les sous-titres reflètent la timeline cumulative Vosk sur toute la phase écoute post-ouverture.
+
+**Défaut sonde / greeting** : ``--no-wait-full-capture-window`` est le défaut (sortie dès voix ou décroché) pour
+jouer l’ouverture tôt ; sinon l’appelé reste longtemps sans audio de notre côté (souvent perçu comme « que mon
+écho »). Pour une sonde complète type métriques, passer ``--wait-full-capture-window``.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import random
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -31,7 +44,6 @@ _MODEM_LAB_ROOT = Path(__file__).resolve().parents[1]
 if str(_MODEM_LAB_ROOT) not in sys.path:
     sys.path.insert(0, str(_MODEM_LAB_ROOT))
 
-from labaudio.intent_wav_pack import match_intent_reply_wav
 from labaudio.vosk_lab import (
     DEFAULT_PROFILE_PATH,
     FRENCH_MODELS,
@@ -41,6 +53,7 @@ from labaudio.vosk_lab import (
 )
 from labaudio.vosk_stt import (
     VoskRealtimeWorker,
+    preload_vosk_model,
     pump_vrx_pcm16_to_vosk,
     write_subrip,
     write_webvtt,
@@ -54,6 +67,21 @@ from labcore.bootstrap import add_modem_args, build_modem, setup_logging
 from labcore.call_control import CallController
 from labcore.call_watch import wait_remote_line_end_optional
 from labcore.hangup import turbo_hangup
+from labcore.prospection_dialogue import (
+    CallDeadline,
+    ConversationSnapshot,
+    DialogueContext,
+    DialogueEventKind,
+    IntentChain,
+    build_dialogue_policy,
+    infer_opening_tag_from_intent_json_paths,
+    pick_opening_wav_from_pack,
+)
+from labcore.prospection_dialogue.audio_cache import (
+    ProspectionAudioCache,
+    build_prospection_audio_cache,
+)
+from labcore.prospection_dialogue.ports import IntentMatcherProtocol
 from labscenarios.metrics_voicemail import _play_trigger_ok, _play_voice_clip
 
 _PROMPT_PAUSE_EPS_SEC = 1e-3
@@ -146,14 +174,55 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--intents-json",
         type=Path,
-        default=None,
-        help="JSON des intents (ex. data/intents_prospection_flow.json) pour --try-intent-reply.",
+        nargs="*",
+        default=(),
+        metavar="PATH",
+        help=(
+            "Un ou plusieurs JSON d’intents (ordre = priorité chaîne). "
+            "Ex. : --intents-json data/stop.json data/intents/danielcraft/outbound/niveau1_ouverture.json"
+        ),
     )
     p.add_argument(
         "--try-intent-reply",
         action=argparse.BooleanOptionalAction,
         default=False,
-        help="Après STT : jouer le WAV du 1er intent dont un pattern matche (pack_dir).",
+        help="Après ouverture : écoute(s) STT puis lecture WAV si un intent matche (voir --dialogue-max-turns).",
+    )
+    p.add_argument(
+        "--dialogue-max-turns",
+        type=int,
+        default=1,
+        help="Nombre max de tours écoute→réponse après l’ouverture (défaut 1 = comportement historique).",
+    )
+    p.add_argument(
+        "--opening-tag",
+        type=str,
+        default=None,
+        help=(
+            "Tag JSON pour l’ouverture (ex. n1_salutation_standard) : tirage aléatoire parmi les "
+            "variantes ``tag_XX.wav`` du pack. Ignoré si --greeting-wav pointe vers un fichier existant."
+        ),
+    )
+    p.add_argument(
+        "--dialogue-rng-seed",
+        type=int,
+        default=None,
+        help="Graine RNG pour ouverture / variantes reproductibles (défaut : non déterministe).",
+    )
+    p.add_argument(
+        "--dialogue-max-wall-sec",
+        type=float,
+        default=None,
+        help=(
+            "Budget temps **réel** max (secondes monotonic) pour toute la boucle dialogue après "
+            "l’ouverture. Les écoutes STT sont tronquées si nécessaire. None ou 0 = pas de limite."
+        ),
+    )
+    p.add_argument(
+        "--terminal-intent-tags",
+        type=str,
+        default="n1_exit,n1_rgpd_stop_call",
+        help="Tags séparés par des virgules : après lecture WAV, arrêt de la boucle dialogue.",
     )
 
     p.add_argument(
@@ -208,7 +277,16 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--capture-delay-sec", type=float, default=7.5)
     p.add_argument("--capture-window-sec", type=float, default=20.0)
-    p.add_argument("--wait-full-capture-window", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument(
+        "--wait-full-capture-window",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Si oui et --capture-window-sec > 0 : garde VRX jusqu'à la fin de la fenêtre après la première "
+            "détection (sonde complète, comme metrics_voicemail). Défaut **non** : quitte dès voix/décroché pour "
+            "jouer le greeting sans long silence côté ligne."
+        ),
+    )
     p.add_argument("--extend-wait-beyond-capture", action=argparse.BooleanOptionalAction, default=False)
     p.add_argument("--auto-report", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--report-frame-ms", type=float, default=80.0)
@@ -230,11 +308,38 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-def _resolve_greeting_wav(args: argparse.Namespace) -> Path | None:
+def _resolve_greeting_wav(
+    args: argparse.Namespace,
+    pack_dir: Path,
+    rng: random.Random,
+    *,
+    intent_json_paths: tuple[Path, ...],
+) -> Path | None:
+    """
+    Résout le WAV joué **en premier** sur la ligne (ouverture).
+
+    Priorité :
+
+    1. ``--greeting-wav`` si fichier existant (contrôle manuel total).
+    2. ``--opening-tag`` + ``pack_dir`` : une variante ``{tag}_NN.wav`` tirée au hasard.
+    3. Tag déduit des ``--intents-json`` (``greeting`` si présent, sinon premier intent du fichier) +
+       ``pack_dir``.
+    4. ``greeting_01.wav`` dans le pack (convention historique generate_intent_pack).
+    """
     if args.greeting_wav is not None and Path(args.greeting_wav).is_file():
         return Path(args.greeting_wav)
-    if args.audio_pack_dir is not None:
-        cand = Path(args.audio_pack_dir) / "greeting_01.wav"
+    if args.opening_tag and pack_dir.is_dir():
+        picked = pick_opening_wav_from_pack(pack_dir, str(args.opening_tag).strip(), rng)
+        if picked is not None:
+            return picked
+    inferred = infer_opening_tag_from_intent_json_paths(intent_json_paths)
+    if inferred and pack_dir.is_dir():
+        picked = pick_opening_wav_from_pack(pack_dir, inferred, rng)
+        if picked is not None:
+            logger.info("Ouverture WAV déduite des intents : tag={} → {}", inferred, picked.name)
+            return picked
+    if pack_dir.is_dir():
+        cand = pack_dir / "greeting_01.wav"
         if cand.is_file():
             return cand
     return None
@@ -282,9 +387,31 @@ async def run(parser_args: argparse.Namespace | None = None) -> int:
         return 8
     logger.info("STT Vosk : {} (slug={})", model_dir, vosk_slug or "—")
 
-    greeting = _resolve_greeting_wav(args)
+    rng = random.Random(args.dialogue_rng_seed) if args.dialogue_rng_seed is not None else random.Random()
+    if args.opening_tag and not args.audio_pack_dir:
+        if args.greeting_wav is None or not Path(args.greeting_wav).is_file():
+            logger.error(
+                "Avec --opening-tag, indiquez --audio-pack-dir (répertoire du pack WAV) "
+                "ou un --greeting-wav existant pour en déduire le dossier."
+            )
+            return 7
+    pack_hint = (
+        Path(args.audio_pack_dir)
+        if args.audio_pack_dir
+        else (Path(args.greeting_wav).parent if args.greeting_wav else Path("."))
+    )
+    intent_paths_for_greeting = tuple(p for p in (args.intents_json or ()) if p is not None)
+    greeting = _resolve_greeting_wav(
+        args,
+        pack_hint,
+        rng,
+        intent_json_paths=intent_paths_for_greeting,
+    )
     if greeting is None:
-        logger.error("WAV greeting introuvable : fournir --greeting-wav ou --audio-pack-dir avec greeting_01.wav.")
+        logger.error(
+            "WAV d’ouverture introuvable : --greeting-wav, ou --audio-pack-dir avec "
+            "greeting_01.wav / variantes --opening-tag, ou pack incomplet."
+        )
         return 7
 
     session_dir: Path | None = None
@@ -304,10 +431,25 @@ async def run(parser_args: argparse.Namespace | None = None) -> int:
         transcript_dir = Path("scripts/modem_lab/generated/prospection_outbound")
         transcript_dir.mkdir(parents=True, exist_ok=True)
 
+    pack_dir = Path(args.audio_pack_dir) if args.audio_pack_dir else greeting.parent
+    intent_paths_pre = tuple(p for p in (args.intents_json or ()) if p is not None)
+    try:
+        vosk_preloaded_model = preload_vosk_model(Path(model_dir))
+    except Exception as e:
+        logger.error("Préchargement modèle Vosk: {}", e)
+        return 8
+    try:
+        audio_cache: ProspectionAudioCache | None = build_prospection_audio_cache(
+            pack_dir=pack_dir,
+            greeting_wav=greeting,
+            intent_json_paths=intent_paths_pre,
+        )
+    except (OSError, ValueError) as e:
+        logger.error("Préchargement WAV / intents: {}", e)
+        return 7
+
     modem = build_modem(args)
     ctl = CallController(modem)
-
-    pack_dir = Path(args.audio_pack_dir) if args.audio_pack_dir else greeting.parent
 
     try:
         if not await modem.initialize():
@@ -331,6 +473,11 @@ async def run(parser_args: argparse.Namespace | None = None) -> int:
             "scenario": "prospection_outbound",
             "wait_full_capture_window": bool(args.wait_full_capture_window),
             "extend_wait_beyond_capture": bool(args.extend_wait_beyond_capture),
+            "dialogue_max_turns": int(args.dialogue_max_turns),
+            "opening_tag": args.opening_tag or "",
+            "try_intent_reply": bool(args.try_intent_reply),
+            "intent_json_paths": [str(p) for p in (args.intents_json or ())],
+            "dialogue_max_wall_sec": args.dialogue_max_wall_sec,
         }
         try:
             ready, why = await run_answer_wait_phase(
@@ -391,6 +538,7 @@ async def run(parser_args: argparse.Namespace | None = None) -> int:
             prefer_voice=prefer_voice,
             try_half_duplex=try_hd,
             label="Greeting",
+            pcm_u8=audio_cache.pcm_u8_for_path(greeting),
         )
         if not played:
             logger.error("Échec lecture greeting")
@@ -407,24 +555,203 @@ async def run(parser_args: argparse.Namespace | None = None) -> int:
             logger.error("Impossible de rouvrir VRX pour l’écoute STT")
             return 8
 
-        worker = VoskRealtimeWorker(Path(model_dir), sample_rate=8000)
+        worker = VoskRealtimeWorker(
+            Path(model_dir),
+            sample_rate=8000,
+            preloaded_model=vosk_preloaded_model,
+        )
         worker.start()
-        stop_reason = None
-        try:
+        stop_reason: str | None = None
+        intent_paths = intent_paths_pre
+        use_dialogue = bool(args.try_intent_reply) and bool(intent_paths)
+        snap = ConversationSnapshot()
+        matcher: IntentMatcherProtocol | None = None
+        dialogue_policy = None
+
+        if use_dialogue:
+            deadline: CallDeadline | None = None
+            if args.dialogue_max_wall_sec is not None and float(args.dialogue_max_wall_sec) > 0.0:
+                deadline = CallDeadline(float(args.dialogue_max_wall_sec))
+            try:
+                term = frozenset(
+                    t.strip() for t in str(args.terminal_intent_tags or "").split(",") if t.strip()
+                )
+                dialogue_policy = build_dialogue_policy(
+                    intent_json_paths=intent_paths,
+                    pack_dir=pack_dir,
+                    max_reply_turns=int(args.dialogue_max_turns),
+                    terminal_tags=term,
+                    rng_seed=args.dialogue_rng_seed,
+                    listen_sec_per_turn=float(args.listen_sec),
+                    wall_budget_sec=float(args.dialogue_max_wall_sec)
+                    if args.dialogue_max_wall_sec is not None and float(args.dialogue_max_wall_sec) > 0.0
+                    else None,
+                )
+                if audio_cache.intent_payloads:
+                    matcher = IntentChain.from_payloads(
+                        audio_cache.intent_payloads,
+                        terminal_tags=dialogue_policy.config.terminal_intent_tags,
+                    )
+                else:
+                    matcher = IntentChain(
+                        dialogue_policy.config.intent_json_paths,
+                        terminal_tags=dialogue_policy.config.terminal_intent_tags,
+                    )
+            except (OSError, ValueError, FileNotFoundError) as e:
+                logger.error("Initialisation chaîne intents / dialogue : {}", e)
+                worker.close_input()
+                try:
+                    worker.join_utterances(timeout=5.0)
+                except Exception:
+                    pass
+                return 8
+
+            dialogue_policy.event_bus.emit(
+                DialogueEventKind.DIALOGUE_STARTED,
+                max_turns=dialogue_policy.config.max_reply_turns,
+                intent_files=[str(p) for p in dialogue_policy.config.intent_json_paths],
+                wall_budget_sec=dialogue_policy.wall_budget_sec,
+            )
+
+            u_cursor = 0
+            for turn in range(1, dialogue_policy.config.max_reply_turns + 1):
+                ctx = DialogueContext(
+                    next_turn_index=turn,
+                    max_turns=dialogue_policy.config.max_reply_turns,
+                    deadline=deadline,
+                )
+                if not dialogue_policy.continue_dialogue.is_satisfied_by(snap, ctx):
+                    dialogue_policy.event_bus.emit(
+                        DialogueEventKind.DIALOGUE_STOPPED,
+                        reason="specification_not_satisfied",
+                        turn=turn,
+                        stop_dialogue=snap.stop_dialogue,
+                        deadline_expired=bool(deadline and deadline.expired()),
+                    )
+                    break
+                if turn > 1:
+                    try:
+                        await modem.end_outgoing_vrx_stream()
+                    except Exception:
+                        pass
+                    opened_t = await modem.start_outgoing_vrx_stream(already_in_voice_mode=True)
+                    if not opened_t:
+                        logger.error("VRX indisponible avant tour STT {}", turn)
+                        dialogue_policy.event_bus.emit(
+                            DialogueEventKind.DIALOGUE_ERROR,
+                            message="no_vrx_before_turn",
+                            turn=turn,
+                        )
+                        break
+
+                eff_listen = dialogue_policy.effective_listen_seconds(deadline)
+                dialogue_policy.event_bus.emit(
+                    DialogueEventKind.TURN_STT_START,
+                    turn=turn,
+                    max_turns=dialogue_policy.config.max_reply_turns,
+                    listen_sec=eff_listen,
+                )
+                stop_reason = await pump_vrx_pcm16_to_vosk(
+                    modem,
+                    worker,
+                    max_seconds=eff_listen,
+                )
+                dialogue_policy.event_bus.emit(
+                    DialogueEventKind.TURN_STT_DONE,
+                    turn=turn,
+                    stop_reason=stop_reason or "",
+                )
+                if stop_reason == "remote_line_end":
+                    logger.info("Tour {} STT : fin de ligne distante.", turn)
+                    break
+
+                chunk_uts = worker.snapshot_utterances()
+                turn_uts = chunk_uts[u_cursor:]
+                u_cursor = len(chunk_uts)
+                turn_text = " ".join(u.text for u in turn_uts).strip()
+                snap.last_turn_transcript = turn_text
+                logger.info(
+                    "Tour {}/{} STT : {}",
+                    turn,
+                    dialogue_policy.config.max_reply_turns,
+                    turn_text[:500] or "(vide)",
+                )
+
+                outcome = matcher.match(turn_text, pack_dir, rng) if turn_text else None
+                if outcome is None:
+                    logger.info("Tour {} : aucun intent ne matche — fin boucle dialogue.", turn)
+                    dialogue_policy.event_bus.emit(
+                        DialogueEventKind.INTENT_NO_MATCH,
+                        turn=turn,
+                        transcript_excerpt=turn_text[:200],
+                    )
+                    break
+
+                dialogue_policy.event_bus.emit(
+                    DialogueEventKind.INTENT_MATCHED,
+                    turn=turn,
+                    tag=outcome.intent_tag,
+                    variant=outcome.variant_index,
+                    source_json=outcome.source_json.name,
+                    terminal=outcome.terminal,
+                )
+                logger.info(
+                    "Intent «{}» ({} v{}) pattern «{}»",
+                    outcome.intent_tag,
+                    outcome.source_json.name,
+                    outcome.variant_index,
+                    outcome.pattern_matched[:120],
+                )
+                dialogue_policy.event_bus.emit(
+                    DialogueEventKind.WAV_REPLY_START,
+                    turn=turn,
+                    path=str(outcome.wav_path),
+                )
+                ok_r = await _play_voice_clip(
+                    modem,
+                    outcome.wav_path,
+                    prefer_voice=True,
+                    try_half_duplex=try_hd,
+                    label=f"Réponse intent tour {turn}",
+                    pcm_u8=audio_cache.pcm_u8_for_path(outcome.wav_path),
+                )
+                if not ok_r:
+                    logger.warning("Lecture WAV intent échouée (tour {}).", turn)
+                    dialogue_policy.event_bus.emit(
+                        DialogueEventKind.DIALOGUE_ERROR,
+                        message="wav_play_failed",
+                        turn=turn,
+                    )
+                    try:
+                        await modem.end_outgoing_vrx_stream()
+                    except Exception:
+                        pass
+                    worker.close_input()
+                    try:
+                        worker.join_utterances(timeout=10.0)
+                    except Exception:
+                        pass
+                    return 9
+                snap.record_reply_played(outcome.intent_tag, terminal=outcome.terminal)
+                await asyncio.sleep(0.15)
+                if snap.stop_dialogue:
+                    logger.info("Intent terminal «{}» — arrêt dialogue.", outcome.intent_tag)
+                    dialogue_policy.event_bus.emit(
+                        DialogueEventKind.DIALOGUE_STOPPED,
+                        reason="terminal_intent",
+                        tag=outcome.intent_tag,
+                    )
+                    break
+        else:
+            if bool(args.try_intent_reply) and not intent_paths:
+                logger.warning("--try-intent-reply sans --intents-json : écoute STT sans réponse auto.")
             stop_reason = await pump_vrx_pcm16_to_vosk(
                 modem,
                 worker,
                 max_seconds=max(1.0, float(args.listen_sec)),
             )
-        finally:
-            worker.close_input()
-            try:
-                utterances = worker.join_utterances(timeout=45.0)
-            except Exception as e:
-                logger.exception("Vosk join: {}", e)
-                utterances = []
 
-        if stop_reason == "remote_line_end":
+        if stop_reason == "remote_line_end" and not use_dialogue:
             logger.info("Écoute STT interrompue : fin de ligne distante.")
 
         try:
@@ -432,8 +759,17 @@ async def run(parser_args: argparse.Namespace | None = None) -> int:
         except Exception:
             pass
 
+        worker.close_input()
+        try:
+            utterances = worker.join_utterances(timeout=45.0)
+        except Exception as e:
+            logger.exception("Vosk join: {}", e)
+            utterances = []
+
         full_text = " ".join(u.text for u in utterances).strip()
-        logger.info("Transcription (résumé): {}", full_text[:500] or "(vide)")
+        logger.info("Transcription cumulée (résumé): {}", full_text[:800] or "(vide)")
+        if use_dialogue:
+            logger.info("Memento dialogue: {}", snap.to_jsonable())
 
         if args.subtitle_format in ("sub", "both") and utterances and transcript_dir is not None:
             sub_path = transcript_dir / "transcript.srt"
@@ -443,24 +779,6 @@ async def run(parser_args: argparse.Namespace | None = None) -> int:
             vtt_path = transcript_dir / "transcript.vtt"
             write_webvtt(vtt_path, utterances)
             logger.info("WebVTT écrit: {}", vtt_path)
-
-        if bool(args.try_intent_reply) and args.intents_json is not None:
-            reply = match_intent_reply_wav(full_text, Path(args.intents_json), pack_dir)
-            if reply is not None:
-                logger.info("Intent match -> lecture {}", reply)
-                ok_r = await _play_voice_clip(
-                    modem,
-                    reply,
-                    prefer_voice=True,
-                    try_half_duplex=try_hd,
-                    label="Réponse intent",
-                )
-                if not ok_r:
-                    logger.warning("Lecture réponse intent échouée")
-                    return 9
-                await asyncio.sleep(0.15)
-            else:
-                logger.info("Aucun pattern intent ne matche la transcription — pas de réponse automatique.")
 
         await wait_remote_line_end_optional(
             modem,

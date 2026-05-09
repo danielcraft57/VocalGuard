@@ -1,0 +1,137 @@
+{
+  "intents": [
+    {
+      "tag": "objection_not_interested",
+      "patterns": [
+        "pas interesse",
+        "ca ne m interesse pas",
+        "non merci",
+        "on n en a pas besoin"
+      ],
+      "responses": [
+        "Je comprends. Avant de vous laisser, est-ce que gagner plus de demandes clients via le web est hors sujet pour vous en ce moment ?",
+        "Aucun souci. Je peux juste vous laisser un mini audit gratuit, ca vous donne une vision claire sans engagement.",
+        "Je comprends. Avant de vous laisser, est-ce que gagner plus de demandes clients via le web est hors sujet pour vous en ce moment ? L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Aucun souci. Je peux juste vous laisser un mini audit gratuit, ca vous donne une vision claire sans engagement. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "objection_already_have_provider",
+      "patterns": [
+        "on a deja un prestataire",
+        "on a deja une agence",
+        "on est deja accompagne",
+        "on a deja un freelance"
+      ],
+      "responses": [
+        "Top, c est deja bien. Je peux faire un regard externe rapide pour voir s il y a des gains simples sur la conversion et le SEO.",
+        "Je ne cherche pas a casser l existant, juste a identifier des optimisations utiles si vous en voulez.",
+        "Top, c est deja bien. Je peux faire un regard externe rapide pour voir s il y a des gains simples sur la conversion et le SEO. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Je ne cherche pas a casser l existant, juste a identifier des optimisations utiles si vous en voulez. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "objection_no_budget",
+      "patterns": [
+        "pas de budget",
+        "budget serre",
+        "trop cher",
+        "on ne peut pas maintenant"
+      ],
+      "responses": [
+        "Compris. On peut commencer petit avec un cadrage priorise pour viser un retour concret sans exploser le budget.",
+        "Je peux vous proposer un plan en etapes, avec les actions les plus rentables en premier.",
+        "Compris. On peut commencer petit avec un cadrage priorise pour viser un retour concret sans exploser le budget. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Je peux vous proposer un plan en etapes, avec les actions les plus rentables en premier. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "objection_no_time",
+      "patterns": [
+        "pas le temps",
+        "je suis pris",
+        "rappelez",
+        "pas maintenant"
+      ],
+      "responses": [
+        "Je fais tres court: si je vous envoie un recap clair et utile, vous pouvez le lire quand vous voulez. Je vous l envoie ou ?",
+        "Pas de probleme, je vous propose un rappel de 10 minutes au moment qui vous arrange.",
+        "Je fais tres court: si je vous envoie un recap clair et utile, vous pouvez le lire quand vous voulez. Je vous l envoie ou ? L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Pas de probleme, je vous propose un rappel de 10 minutes au moment qui vous arrange. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "objection_send_email_only",
+      "patterns": [
+        "envoyez un mail",
+        "envoyez la doc",
+        "mettez ca par ecrit",
+        "je regarderai plus tard"
+      ],
+      "responses": [
+        "Avec plaisir. Je vous envoie un email tres court avec les options, les budgets et un lien de prise de rendez-vous.",
+        "Parfait, je vous transmets une synthese. Quel email est le plus pratique pour vous ?",
+        "Avec plaisir. Je vous envoie un email tres court avec les options, les budgets et un lien de prise de rendez-vous. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "Parfait, je vous transmets une synthese. Quel email est le plus pratique pour vous ? Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "objection_bad_experience",
+      "patterns": [
+        "j ai deja eu une mauvaise experience",
+        "on a deja ete decu",
+        "on s est fait avoir",
+        "on nous a promis sans resultat"
+      ],
+      "responses": [
+        "Je comprends tres bien. Ma methode est transparente: objectifs clairs, budget cadre et livrables concrets.",
+        "C est justement pour eviter ca que je propose un cadrage simple, avec delais et priorites valides ensemble.",
+        "Je comprends tres bien. Ma methode est transparente: objectifs clairs, budget cadre et livrables concrets. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "C est justement pour eviter ca que je propose un cadrage simple, avec delais et priorites valides ensemble. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    },
+    {
+      "tag": "objection_do_not_call",
+      "patterns": [
+        "ne rappelez pas",
+        "retirez moi",
+        "arretez d appeler",
+        "je refuse le demarchage"
+      ],
+      "responses": [
+        "Compris, je prends en compte votre demande immediatement. Vous ne serez plus contacte.",
+        "C est note, je vous retire de la liste d appel. Merci pour votre retour.",
+        "Compris, je prends en compte votre demande immediatement. Vous ne serez plus contacte. L'important, c'est de rester concret et oriente resultats pour votre business.",
+        "C est note, je vous retire de la liste d appel. Merci pour votre retour. Je peux aussi vous proposer une option etape par etape pour securiser le retour sur investissement.",
+        "Concretement, je vous propose une approche simple et rentable: on valide vos priorites puis on avance vite avec un plan clair.",
+        "L'objectif est tres commercial: plus de visibilite, plus de demandes qualifiees et une image plus solide pour votre activite.",
+        "Si c'est pertinent pour vous, je peux vous envoyer un recap court et actionnable pour vous aider a decider sans pression.",
+        "On peut demarrer de facon progressive: une premiere etape a fort impact, puis optimisation continue selon vos retours terrain."
+      ]
+    }
+  ]
+}

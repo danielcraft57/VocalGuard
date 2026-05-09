@@ -1,0 +1,144 @@
+{
+  "intents": [
+    {
+      "tag": "in_n1_appelant_salutation",
+      "patterns": [
+        "allo",
+        "bonjour",
+        "bonsoir",
+        "oui bonjour",
+        "oui allo",
+        "bonjour madame",
+        "bonjour monsieur",
+        "vous m entendez",
+        "vous me recevez"
+      ],
+      "responses": [
+        "Bonjour, DanielCraft au telephone. Merci d avoir appele, je vous ecoute avec plaisir.",
+        "Bonjour et bienvenue chez DanielCraft. Je suis ravi de prendre votre appel, dites-moi comment je peux vous aider.",
+        "Bonjour, ici DanielCraft. Super nouvelle de vous entendre, je suis la pour avancer sur votre projet avec vous.",
+        "Bonjour, merci pour votre appel. DanielCraft, developpement web et visibilite : je vous ecoute."
+      ]
+    },
+    {
+      "tag": "in_n1_raison_appel_generique",
+      "patterns": [
+        "j appelle pour avoir des infos",
+        "je voulais des renseignements",
+        "c est pour un projet",
+        "j ai une question",
+        "je voulais vous parler",
+        "je souhaite echanger",
+        "je cherche un developpeur",
+        "j ai besoin d un prestataire web"
+      ],
+      "responses": [
+        "Parfait, c est exactement le bon endroit. DanielCraft accompagne strategie, design, dev et SEO avec un seul interlocuteur, du cadrage au lancement.",
+        "Avec plaisir. L idee chez DanielCraft, c est un site clair et rapide qui transforme vos visites en contacts, avec une estimation sous vingt-quatre heures sans engagement.",
+        "Excellent. On peut cadrer vite votre besoin: vitrine, identite multi-supports, SEO Google plus assistants IA, ou developpement sur mesure selon vos objectifs.",
+        "Super, on va trouver la meilleure solution pour votre entreprise. Je pose quelques questions courtes et je vous oriente vers le bon forfait ou une estimation personnalisee."
+      ]
+    },
+    {
+      "tag": "in_n1_decouverte_site_web",
+      "patterns": [
+        "j ai vu votre site",
+        "je suis tombe sur votre site",
+        "j ai trouve danielcraft sur internet",
+        "j ai vu votre portfolio",
+        "votre site m a plu",
+        "vous etes reference sur google",
+        "j ai clique sur votre lien"
+      ],
+      "responses": [
+        "Merci beaucoup, ca fait plaisir a entendre. C est justement l esprit du site: clarte, vitesse et orientation resultats, comme ce que je propose pour mes clients.",
+        "Merci, c est top pour la confiance. Si vous voulez le meme niveau d exigence pour votre activite, on peut partir sur une vitrine efficace ou un pack identite complet.",
+        "Ravi que ca vous parle. Le site resume mon approche: un flux unique strategie, design, dev et SEO, avec budget cadre et livraison rapide cinq a huit jours pour une vitrine typique.",
+        "Merci pour le retour. Concretement, je peux vous chiffrer sous vingt-quatre heures selon votre besoin, sans engagement, pour avancer sereinement."
+      ]
+    },
+    {
+      "tag": "in_n1_urgence_delai",
+      "patterns": [
+        "c est assez urgent",
+        "il me faut vite",
+        "vous pouvez aller vite",
+        "je veux lancer rapidement",
+        "delai serre",
+        "pour hier si possible"
+      ],
+      "responses": [
+        "Je comprends l urgence, et c est un point fort de mon accompagnement: cycles courts, pas de delais caches. Pour une vitrine, on vise souvent cinq a huit jours apres validation du cadrage.",
+        "Pas de souci, on peut accelerer proprement. On fixe ensemble les priorites, je vous donne un planning realiste et on avance en increments pour livrer vite sans sacrifier la qualite.",
+        "Très bien, on va cadrer tout de suite ce qui est indispensable pour la premiere mise en ligne, puis on enrichit ensuite. Je vous confirme les delais apres un echange court.",
+        "Parfait, l objectif est clair. Je vous propose une estimation rapide sous vingt-quatre heures pour verrouiller le perimetre et la date de mise en ligne."
+      ]
+    },
+    {
+      "tag": "in_n1_premier_contact_processus",
+      "patterns": [
+        "comment ca se passe pour commencer",
+        "c est quoi la suite",
+        "on fait comment ensemble",
+        "premiere etape",
+        "quel est le processus",
+        "vous travaillez comment"
+      ],
+      "responses": [
+        "En general on commence par un echange clair sur vos objectifs, puis je vous envoie une estimation sous vingt-quatre heures sans engagement. Ensuite on valide le budget et je lance le developpement avec des jalons transparents.",
+        "Le premier contact sert a cadrer: qui vous etes, votre offre, votre priorite visibilite, image ou conversion. Ensuite je vous propose une enveloppe et un planning, avec code source inclus et quatorze jours de support apres livraison.",
+        "C est simple: vous expliquez votre besoin, je reformule des solutions avec des forfaits connus site vitrine, identite et visibilite, SEO Google plus IA ou du sur mesure, puis on choisit ce qui maximise votre impact.",
+        "Chez DanielCraft, tout est dans un meme flux: pas de douze interlocuteurs. On aligne strategie, design, technique et SEO pour que le site serve vraiment votre business."
+      ]
+    },
+    {
+      "tag": "in_n1_localisation_disponibilite",
+      "patterns": [
+        "vous etes ou",
+        "vous etes a metz",
+        "vous travaillez a distance",
+        "vous prenez des clients partout en france",
+        "vous etes local ou national"
+      ],
+      "responses": [
+        "Je suis base a Metz, au zero trois quatre-vingt-sept soixante-dix-huit zero neuf seize, et j accompagne des clients partout en France a distance, avec un echange telephone ou visio tres fluide.",
+        "Oui, Metz est ma base, mais la collaboration est cent pour cent adaptee au remote: livrables, suivi et support comme si j etais a cote de vous.",
+        "Exact, DanielCraft en Lorraine avec une portee nationale. Les delais et la qualite restent les memes, avec une communication claire et des jalons reguliers.",
+        "Je combine proximite quand c est possible et efficacite a distance: l important, c est votre resultat, pas le code postal."
+      ]
+    },
+    {
+      "tag": "in_n1_confiance_experience",
+      "patterns": [
+        "vous avez de l experience",
+        "vous faites ca depuis longtemps",
+        "vous avez des avis clients",
+        "pourquoi vous plutot qu une agence",
+        "vous etes freelance ou agence"
+      ],
+      "responses": [
+        "Je suis developpeur full-stack TypeScript, Python et PHP, avec une solide experience sur React, Next.js et des projets orientes qualite et tests. Mon avantage: un seul expert du debut a la fin, transparent et reactif.",
+        "Les clients apprecient la combinaison competence technique et vision business: pas de site gadget, une vitrine ou un outil qui convertit, avec un budget annonce des le depart.",
+        "Vous pouvez parcourir le portfolio sur danielcraft.fr: des projets varies web, outils, SEO. L engagement est simple: resultats, delais tenus, propriete du code pour vous.",
+        "Plutot qu une grosse agence, vous gagnez en reactivite et en coherence: une ligne directe, des decisions rapides, et la meme personne sur la strategie et le code."
+      ]
+    },
+    {
+      "tag": "in_n1_fin_appel_politesse",
+      "patterns": [
+        "merci beaucoup",
+        "ca me suffit pour l instant",
+        "je vais reflechir",
+        "bonne journee a vous",
+        "au revoir",
+        "a bientot"
+      ],
+      "responses": [
+        "Merci a vous pour cet echange, ce fut un plaisir. N hesitez pas a rappeler ou a ecrire a contact@danielcraft.fr pour la moindre question.",
+        "Avec plaisir. Je reste disponible et je vous souhaite une excellente continuation pour votre projet.",
+        "Merci pour votre confiance. DanielCraft est la pour vous accompagner quand vous serez pret, avec la meme exigence positive.",
+        "Bonne journee a vous egalement, et a tres vite pour donner vie a votre projet."
+      ]
+    }
+  ]
+}

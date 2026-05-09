@@ -1,0 +1,140 @@
+{
+  "intents": [
+    {
+      "tag": "in_n2_besoin_site_vitrine",
+      "patterns": [
+        "j ai besoin d un site vitrine",
+        "je veux un site pour mon commerce",
+        "site professionnel simple",
+        "une page d accueil et contact",
+        "se faire connaitre sur internet",
+        "mes clients me cherchent sur google"
+      ],
+      "responses": [
+        "Le pack site vitrine DanielCraft est pense pour ca: un site pro responsive qui porte votre identite, inspire confiance et transforme les visites en demandes. Forfait indicatif quatre cent quatre-vingt-dix euros avec quatorze jours de support inclus.",
+        "Parfait, la vitrine est notre socle: design net, mobile et bureau, structure orientee conversion. Livraison souvent en cinq a huit jours apres cadrage, budget cadre sans surprise.",
+        "Excellente direction. Vous obtenez un site rapide, securise et optimise pour Google, plus code source inclus pour garder la main sur votre actif digital.",
+        "C est un besoin classique et tres rentable. On clarifie votre offre, vos preuves et vos appels a l action, et je vous livre une vitrine dont vous serez fier."
+      ]
+    },
+    {
+      "tag": "in_n2_besoin_identite_visibilite",
+      "patterns": [
+        "refaire mon identite",
+        "harmoniser site et reseaux",
+        "charte graphique",
+        "image de marque sur tous les supports",
+        "je veux etre plus pro partout",
+        "communication coherent"
+      ],
+      "responses": [
+        "Le pack Identite et visibilite a neuf cent quatre-vingt-dix euros repond pile a ce besoin: image unifiee sur site, reseaux et documents, avec gabarits reutilisables et une presentation plus premium.",
+        "Super projet: vos clients vous reconnaissent partout de la meme facon, ca renforce la confiance et les conversions. On construit une charte claire et des templates que vous pourrez reutiliser.",
+        "C est exactement la promesse DanielCraft: transformation d identite web avec coherence multi-supports et visibilite renforcee.",
+        "Avec ce pack, vous sortez d une image disparate pour une identite nette, professionnelle et memorable, avec le meme niveau d exigence que sur le site."
+      ]
+    },
+    {
+      "tag": "in_n2_besoin_seo_geo_ia",
+      "patterns": [
+        "etre mieux sur google",
+        "je veux du referencement",
+        "seo",
+        "chatgpt trouve mon entreprise",
+        "visible avec les ia",
+        "remonter dans les resultats",
+        "decouvrabilite"
+      ],
+      "responses": [
+        "Le pack SEO Google plus ChatGPT est a six cent quatre-vingt-dix-neuf euros: audit, corrections, contenus et donnees structurees pour etre visible sur Google et mieux cite par les assistants IA.",
+        "Bonne nouvelle, c est une offre complete: SEO classique plus optimisation pour la decouvrabilite via les modeles, toujours avec un accompagnement concret et mesurable.",
+        "On travaille sur la technique, le contenu et la structure pour que votre activite soit trouvee la ou vos clients cherchent, y compris via l IA.",
+        "L objectif est double et complementaire: trafic qualifie depuis Google et meilleure presence dans les reponses des assistants, avec suivi clair des actions prioritaires."
+      ]
+    },
+    {
+      "tag": "in_n2_besoin_sur_mesure",
+      "patterns": [
+        "api",
+        "outil interne",
+        "automatisation",
+        "application metier",
+        "integration",
+        "besoin technique avance",
+        "pas un simple site"
+      ],
+      "responses": [
+        "Parfait, je developpe aussi du sur mesure en TypeScript, Python et PHP: APIs, automatisation, outils internes. Apres un cadrage court, je vous propose une estimation adaptee a votre ROI.",
+        "Les technologies sont choisies selon vos objectifs business: performance, fiabilite, evolutivite. Pas de template WordPress impose, du solide et maintenable.",
+        "On peut combiner vitrine performante et brique technique derriere pour gagner du temps a votre equipe. Je vous detaille le perimetre et un planning realiste.",
+        "Excellente demande: je prefere les projets ou la technique sert un vrai gain de productivite ou de chiffre d affaires."
+      ]
+    },
+    {
+      "tag": "in_n2_situation_site_actuel",
+      "patterns": [
+        "on n a pas encore de site",
+        "notre site est vieux",
+        "je suis seulement sur facebook",
+        "notre site ne convertit pas",
+        "refonte complete",
+        "site lent"
+      ],
+      "responses": [
+        "Pas de souci, partir de zero ou refondre, dans les deux cas on structure une base propre, rapide et orientee conversion. Vous gagnez en credibilite immediatement.",
+        "Un site ancien ou lent peut vous faire perdre des clients sans que vous le voyiez. Un audit rapide montre les gains prioritaires: vitesse, clarte, SEO.",
+        "Les reseaux seuls limitent votre decouverte: un site vitrine DanielCraft complete vos canaux et centralise la prise de contact.",
+        "On transforme la frustration actuelle en atout: meilleure image, meilleure visibilite, plus de demandes qualifiees."
+      ]
+    },
+    {
+      "tag": "in_n2_budget_investissement",
+      "patterns": [
+        "j ai un petit budget",
+        "combien je dois prevoir",
+        "on peut commencer petit",
+        "investissement raisonnable",
+        "pas les moyens d une grosse agence"
+      ],
+      "responses": [
+        "La bonne nouvelle: les forfaits demarrent a quatre cent quatre-vingt-dix euros pour une vitrine solide, et chaque enveloppe est annoncee clairement sur danielcraft.fr pour eviter les mauvaises surprises.",
+        "On peut prioriser ce qui a le plus d impact pour votre ca: parfois une vitrine efficace suffit a demarrer, puis on ajoute SEO ou identite etape par etape.",
+        "Mon approche est transparente: budget cadre des le depart, ajustements avec vous selon vos priorites business, pas de vente cachee.",
+        "Investir intelligemment vaut mieux qu un gros chiffre flou: je vous aide a choisir le pack qui maximise votre retour."
+      ]
+    },
+    {
+      "tag": "in_n2_decideur_groupe",
+      "patterns": [
+        "je dois en parler a mon associe",
+        "ce n est pas moi qui signe",
+        "je transmets a la direction",
+        "decision en reunion",
+        "plusieurs associés"
+      ],
+      "responses": [
+        "Tres bien. Je peux vous envoyer une synthese claire par email pour faciliter la decision: options, budgets indicatifs et delais, comme sur le site.",
+        "Aucun probleme. DanielCraft sait travailler avec des organisations: un document court suffit souvent pour aligner tout le monde rapidement.",
+        "Je reste disponible pour un court appel avec la personne decideuse si c est utile, toujours sans pression inutile.",
+        "L important est que vous partiez sur une base solide: je vous donne les elements factuels pour convaincre en interne."
+      ]
+    },
+    {
+      "tag": "in_n2_interet_enthouiasm",
+      "patterns": [
+        "ca m interesse beaucoup",
+        "c est exactement ce que je cherche",
+        "j adore votre approche",
+        "on peut avancer",
+        "je suis motive",
+        "allons y"
+      ],
+      "responses": [
+        "Super energie, merci. C est exactement le type de collaboration qui donne les meilleurs sites: motivation de votre cote, exigence et methode de la mienne.",
+        "Excellent, on va pouvoir cadrer vite et passer a l action. Je vous propose l estimation sous vingt-quatre heures pour figer le plan et demarrer dans les meilleurs delais.",
+        "Ravi de cet enthousiasme. Ensemble on va construire un resultat durable: visible, elegant et rentable pour votre activite.",
+        "Parfait, c est le bon moment pour capitaliser sur votre motivation: je note vos priorites et je vous envoie la proposition adaptee sans tarder."
+      ]
+    }
+  ]
+}

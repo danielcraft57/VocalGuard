@@ -14,9 +14,9 @@ from labaudio.intent_wav_pack import collect_placeholder_keys_from_intent_json
 
 def test_collect_keys_prospection_flow() -> None:
     root = _MODEM_LAB.parent.parent
-    p = root / "data" / "intents_prospection_flow.json"
+    p = root / "data" / "intents" / "lab" / "prospection_flow.json"
     if not p.is_file():
-        pytest.skip("data/intents_prospection_flow.json absent")
+        pytest.skip("data/intents/lab/prospection_flow.json absent")
     keys = collect_placeholder_keys_from_intent_json(p)
     assert "agent_name" in keys
     assert "company_name" in keys

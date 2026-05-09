@@ -1,5 +1,6 @@
 """
-Classification d intents a partir des fichiers intents JSON DanielCraft (`data/`).
+Classification d intents a partir des fichiers intents JSON DanielCraft
+(défaut: flux sortant `data/intents/danielcraft/outbound/**`).
 
 Architecture simple:
   - vecteur TF-IDF caracteres (`character n-grams`), robustes au bruit STT court
@@ -43,7 +44,7 @@ class JsonMarketingIntentStore:
         self.base_path = base_path
         self.glob_pattern = os.environ.get(
             "INTENTS_JSON_GLOB",
-            str(Path("data") / "intents_danielcraft_*.json"),
+            str(Path("data") / "intents" / "danielcraft" / "outbound" / "**" / "*.json"),
         )
 
         self._responses_by_tag: Dict[str, List[str]] = {}

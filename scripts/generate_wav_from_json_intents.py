@@ -3,8 +3,8 @@
 Genere des WAV telephoniques (8 kHz, mono, 8-bit) a partir de fichiers intents JSON.
 
 Usage rapide:
-  python scripts/generate_wav_from_json_intents.py --glob "data/intents_danielcraft_*.json" --engine edge --voice fr-FR-DeniseNeural
-  python scripts/generate_wav_from_json_intents.py --glob "data/*.json" --engine coqui --speaker "Zacharie Aimilios"
+  python scripts/generate_wav_from_json_intents.py --glob "data/intents/danielcraft/**/*.json" --engine edge --voice fr-FR-DeniseNeural
+  python scripts/generate_wav_from_json_intents.py --glob "data/intents/**/*.json" --engine coqui --speaker "Zacharie Aimilios"
 """
 
 import argparse
@@ -127,7 +127,11 @@ async def run(args: argparse.Namespace) -> int:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Genere des WAV 8 kHz depuis des intents JSON.")
-    parser.add_argument("--glob", default="data/*.json", help="Glob relatif racine projet (ex: data/intents_*.json)")
+    parser.add_argument(
+        "--glob",
+        default="data/intents/**/*.json",
+        help="Glob relatif racine projet (ex: data/intents/danielcraft/**/*.json)",
+    )
     parser.add_argument("--output", default="ivr_wav/generated", help="Dossier de sortie relatif a la racine")
     parser.add_argument("--engine", choices=["edge", "gtts", "coqui"], default="edge", help="Moteur TTS")
     parser.add_argument("--voice", default="fr-FR-DeniseNeural", help="Voix pour edge-tts")

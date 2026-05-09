@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-CLI : génère des WAV 8 kHz depuis un JSON d’intents (ex. ``data/intents_prospection_flow.json``).
+CLI : génère des WAV 8 kHz depuis un JSON d’intents (ex. ``data/intents/danielcraft/outbound/niveau1_ouverture.json``).
 
 Exemple (depuis la racine du dépôt ; valeurs avec espaces : guillemets) ::
     python scripts/modem_lab/labaudio/generate_intent_pack.py ^
-      --intents data/intents_prospection_flow.json ^
+      --intents data/intents/danielcraft/outbound/niveau1_ouverture.json ^
       --out scripts/modem_lab/generated/prospection_pack/demo ^
       --voice fr-FR-DeniseNeural ^
       --var agent_name=Alex ^

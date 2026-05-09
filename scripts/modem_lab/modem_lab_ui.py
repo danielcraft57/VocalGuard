@@ -7,7 +7,7 @@ Point d’entrée conseillé ::
 
 Pour générer les WAV d’intents **sans** cette UI (équivalent menu « Pack intents ») ::
     python scripts/modem_lab/labaudio/generate_intent_pack.py ^
-      --intents data/intents_prospection_flow.json ^
+      --intents data/intents/danielcraft/outbound/niveau1_ouverture.json ^
       --out scripts/modem_lab/generated/prospection_pack/demo ^
       --voice fr-FR-DeniseNeural ^
       --var agent_name=Alex --var company_name=MaBoite
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import shlex
 import subprocess
 import sys
@@ -36,6 +37,7 @@ LAST_TTS_VOICE_FILE = LAB_DIR / ".last_tts_voice.txt"
 sys.path.insert(0, str(LAB_DIR))
 
 from labcore.bootstrap import setup_logging
+from labcore.prospection_dialogue import infer_opening_tag_from_intent_json_paths, pick_opening_wav_from_pack
 from labcore.scenario_bookmarks import (
     bookmarks_file,
     load_bookmarks,
@@ -136,7 +138,7 @@ def _load_presets() -> dict:
         "outbound_record_seconds": "5",
         "outbound_beep_before_record": "y",
         "outbound_prepare_voice": "y",
-        "intent_pack_last_rel": "data/intents_prospection_flow.json",
+        "intent_pack_last_rel": "data/intents/danielcraft/outbound/niveau1_ouverture.json",
         "intent_pack_out_rel": str(LAB_DIR / "generated" / "prospection_pack" / "ui_pack"),
         "intent_pack_meta_subtitle": "",
         "intent_pack_meta_year": "",
@@ -152,6 +154,13 @@ def _load_presets() -> dict:
         "answer_vosk_srt_origin_first_ring": "y",
         "outbound_vad_listen_sec": "90",
         "prompt_play_sequence": "welcome",
+        # prospection-outbound (aligné sur cli.py / préchargement WAV + Vosk)
+        "prospection_listen_sec": "28",
+        "prospection_dialogue_max_turns": "2",
+        "prospection_pause_before_prompt_sec": "0",
+        "prospection_wait_full_capture_window": "n",
+        "prospection_half_duplex_uplink": "y",
+        "prospection_opening_tag": "",
     }
     if not PRESETS_FILE.exists():
         return defaults
@@ -290,6 +299,30 @@ def _text_raw(questionary, message: str, *, default: str = "") -> str:
     return (r if r is not None else default) or ""
 
 
+def _prospection_intents_json_path(presets: dict) -> Path | None:
+    rel = (presets.get("intent_pack_last_rel") or "").strip()
+    if not rel:
+        return None
+    p = (PROJECT_ROOT / rel).resolve()
+    return p if p.is_file() else None
+
+
+def _prospection_pack_dir_path(presets: dict) -> Path | None:
+    rel = (presets.get("intent_pack_out_rel") or "").strip()
+    if not rel:
+        return None
+    p = (PROJECT_ROOT / rel).resolve()
+    return p if p.is_dir() else None
+
+
+def _prospection_suggest_try_intent_reply(pack_path: Path | None, intents_path: Path | None) -> bool:
+    """JSON intents + dossier pack WAV présents → défaut oui pour le dialogue."""
+    return bool(pack_path and intents_path)
+
+
+_PP_PAUSE_EPS = 1e-3
+
+
 def _panel_cli_intents(console) -> None:
     """Rappel CLI pour éviter la confusion avec prospection_outbound."""
     from rich.markdown import Markdown
@@ -300,13 +333,14 @@ def _panel_cli_intents(console) -> None:
         "**Script :** `scripts/modem_lab/labaudio/generate_intent_pack.py`\n\n"
         "```text\n"
         "python scripts/modem_lab/labaudio/generate_intent_pack.py \\\n"
-        "  --intents data/intents_prospection_flow.json \\\n"
+        "  --intents data/intents/danielcraft/outbound/niveau1_ouverture.json \\\n"
         "  --out scripts/modem_lab/generated/prospection_pack/demo \\\n"
         "  --voice fr-FR-DeniseNeural \\\n"
         "  --var agent_name=Alex --var company_name=MaBoite\n"
         "```\n\n"
         "**Appel prospection** (modem + STT) : `cli.py prospection-outbound` — "
-        "**sans** `--out` ni `--var`."
+        "**sans** `--out` ni `--var`. Menu **Prospection outbound** : écoute, tours, sonde, half-duplex, "
+        "préréglages `prospection_*` dans `.presets.json`."
     )
     console.print(Panel(md, title="[bold]Aide CLI intents[/]", border_style="blue"))
 
@@ -527,7 +561,7 @@ def menu_audio(console, questionary, presets: dict) -> None:
             [
                 questionary.Choice("Choisir / tester une voix (menu edge-tts)", value="voice"),
                 questionary.Choice("Générer pack audio modem (sound_pack)", value="modem"),
-                questionary.Choice("Pack WAV depuis intents (fichiers data/*.json)", value="intents"),
+                questionary.Choice("Pack WAV depuis intents (fichiers data/intents/**/*.json)", value="intents"),
                 questionary.Choice("Aide : CLI intents vs prospection-outbound", value="help_cli"),
                 questionary.Choice("Retour au menu principal", value="back"),
             ],
@@ -786,7 +820,7 @@ def menu_scenarios(console, questionary, presets: dict) -> None:
                 q.Choice("Answer metrics probe (CSV + capture.wav)", value="answer-metrics-probe"),
                 q.Choice("Answer Vosk live probe (STT temps réel + SRT)", value="answer-vosk-live-probe"),
                 q.Choice("Metrics voicemail (sonde + prompt + bip + message)", value="metrics-voicemail"),
-                q.Choice("Prospection outbound (greeting + Vosk + intents)", value="prospection-outbound"),
+                q.Choice("Prospection outbound (sonde, greeting, STT, dialogue intents)", value="prospection-outbound"),
                 Sep("── Autres sortants ──"),
                 q.Choice("Outbound listen VAD (VRX sans WAV)", value="outbound-listen-vad"),
                 q.Choice("Prompt and play (WAV préchargés / séquence)", value="prompt-and-play"),
@@ -1049,47 +1083,158 @@ def menu_scenarios(console, questionary, presets: dict) -> None:
             )
 
         elif ch == "prospection-outbound":
+            _section_header(
+                console,
+                "Prospection outbound",
+                "Préchargement JSON + WAV et modèle Vosk côté CLI avant la ligne · défaut : greeting rapide après voix",
+            )
+            pack_path = _prospection_pack_dir_path(presets)
+            intents_path = _prospection_intents_json_path(presets)
+            if pack_path and intents_path:
+                console.print(
+                    f"[dim]Pack : …/{pack_path.name}  ·  intents : …/{intents_path.name}[/]"
+                )
+            elif intents_path and not pack_path:
+                console.print("[yellow]intent_pack_out_rel invalide ou absent — pack WAV requis pour les réponses.[/]")
+            elif pack_path and not intents_path:
+                console.print("[yellow]intent_pack_last_rel absent ou fichier introuvable.[/]")
+
             number = _ask_text(questionary, presets, "Numéro à appeler", "default_number", override=number)
             slug = _ask_text(questionary, presets, "Slug modèle Vosk", "vosk_model_slug")
-            pack_rel = (presets.get("intent_pack_out_rel") or "").strip()
-            pack_path = (PROJECT_ROOT / pack_rel).resolve() if pack_rel else None
+            listen_s = _ask_text(questionary, presets, "Écoute STT max / tour (s)", "prospection_listen_sec")
+            max_turns = _ask_text(questionary, presets, "Tours dialogue max (après greeting)", "prospection_dialogue_max_turns")
+            pause_pr = _ask_text(questionary, presets, "Pause avant greeting (s, 0 = direct)", "prospection_pause_before_prompt_sec")
+
+            suggest_try = _prospection_suggest_try_intent_reply(pack_path, intents_path)
+            try_reply = _confirm(
+                questionary,
+                "Matcher intents + lecture WAV du pack (--try-intent-reply) ?",
+                default=suggest_try,
+            )
+            wait_full_def = str(presets.get("prospection_wait_full_capture_window", "n")).lower().startswith(
+                ("y", "o", "1")
+            )
+            wait_full = _confirm(
+                questionary,
+                "Tenir toute la fenêtre sonde avant le greeting ? (non = message peu après décroché/voix)",
+                default=wait_full_def,
+            )
+            half_def = str(presets.get("prospection_half_duplex_uplink", "y")).lower().startswith(("y", "o", "1"))
+            half_dup = _confirm(
+                questionary,
+                "Half-duplex uplink pour greeting / intents (recommandé modem USB) ?",
+                default=half_def,
+            )
+            opening_tag = _ask_text(
+                questionary,
+                presets,
+                "Tag ouverture JSON (vide = déduit du 1er JSON : « greeting » ou 1er intent, sinon greeting_01 / welcome)",
+                "prospection_opening_tag",
+            ).strip()
+
             default_greet = ""
-            if pack_path and pack_path.is_dir():
+            if pack_path and intents_path:
+                tag = infer_opening_tag_from_intent_json_paths((intents_path,))
+                if tag:
+                    picked = pick_opening_wav_from_pack(pack_path, tag, random.Random(42))
+                    if picked is not None:
+                        default_greet = str(picked)
+            if not default_greet and pack_path:
                 cand = pack_path / "greeting_01.wav"
                 if cand.is_file():
                     default_greet = str(cand)
             if not default_greet:
                 default_greet = presets.get(
-                    "outbound_announce_wav",
+                    "voicemail_greeting_wav",
                     str(LAB_DIR / "generated" / "default" / "modem_wav" / "welcome.wav"),
                 )
             greeting = _text_raw(
                 questionary,
-                "WAV greeting (ou laisser vide pour --audio-pack-dir = pack intents)",
+                "WAV greeting (vide si déduit du JSON + pack, greeting_01, ou --opening-tag + pack)",
                 default=default_greet,
             ).strip()
-            try_reply = _confirm(questionary, "Activer --try-intent-reply (pack + JSON intents) ?", default=False)
+
+            greet_path = Path(greeting) if greeting else None
+            greet_ok = bool(greet_path and greet_path.is_file())
+            pack_ok = bool(pack_path)
+            ot_ok = bool(opening_tag)
+            can_resolve_opening = False
+            if pack_ok and pack_path is not None:
+                if ot_ok or (pack_path / "greeting_01.wav").is_file():
+                    can_resolve_opening = True
+                elif intents_path:
+                    _ot = infer_opening_tag_from_intent_json_paths((intents_path,))
+                    if _ot and pick_opening_wav_from_pack(pack_path, _ot, random.Random(0)):
+                        can_resolve_opening = True
+
+            if not greet_ok and not pack_ok:
+                console.print("[err]Indique un WAV greeting existant ou un dossier pack (intent_pack_out_rel).[/]")
+                _pause(console)
+                continue
+            if ot_ok and not pack_ok:
+                console.print("[err]--opening-tag exige un dossier pack (intent_pack_out_rel valide).[/]")
+                _pause(console)
+                continue
+            if pack_ok and not greet_ok and not can_resolve_opening:
+                console.print(
+                    "[err]Sans greeting : WAV pour le 1er intent du JSON, ou greeting_01.wav, ou tag d’ouverture.[/]"
+                )
+                _pause(console)
+                continue
+
             presets["default_number"] = number
             presets["vosk_model_slug"] = slug
+            presets["prospection_listen_sec"] = listen_s
+            presets["prospection_dialogue_max_turns"] = max_turns
+            presets["prospection_pause_before_prompt_sec"] = pause_pr
+            presets["prospection_wait_full_capture_window"] = "y" if wait_full else "n"
+            presets["prospection_half_duplex_uplink"] = "y" if half_dup else "n"
+            presets["prospection_opening_tag"] = opening_tag
             _save_presets(presets)
+
             tail = ["--port", port, "--number", number]
             if slug.strip():
                 tail.extend(["--vosk-model-slug", slug.strip()])
-            if greeting:
-                tail.extend(["--greeting-wav", greeting])
-            elif pack_path and pack_path.is_dir():
-                tail.extend(["--audio-pack-dir", str(pack_path)])
+            try:
+                ls_f = float(str(listen_s).replace(",", "."))
+                if ls_f > 0:
+                    tail.extend(["--listen-sec", str(ls_f)])
+            except ValueError:
+                pass
+            try:
+                mt = int(float(str(max_turns).replace(",", ".")))
+                if mt >= 1:
+                    tail.extend(["--dialogue-max-turns", str(mt)])
+            except ValueError:
+                pass
+            try:
+                pp = float(str(pause_pr).replace(",", "."))
+                if pp > _PP_PAUSE_EPS:
+                    tail.extend(["--pause-before-prompt-sec", str(pp)])
+            except ValueError:
+                pass
+            if wait_full:
+                tail.append("--wait-full-capture-window")
             else:
-                console.print("[err]Indique un WAV greeting ou un dossier pack intents valide.[/]")
-                _pause(console)
-                continue
+                tail.append("--no-wait-full-capture-window")
+            if half_dup:
+                tail.append("--half-duplex-uplink-for-prompt")
+            else:
+                tail.append("--no-half-duplex-uplink-for-prompt")
+            if ot_ok:
+                tail.extend(["--opening-tag", opening_tag])
+            if greet_ok:
+                tail.extend(["--greeting-wav", str(greet_path)])
+            if pack_ok and pack_path is not None:
+                tail.extend(["--audio-pack-dir", str(pack_path)])
+
             if try_reply:
                 tail.append("--try-intent-reply")
-                intents_rel = (presets.get("intent_pack_last_rel") or "").strip()
-                if intents_rel:
-                    tail.extend(["--intents-json", str((PROJECT_ROOT / intents_rel).resolve())])
-                if pack_path and pack_path.is_dir() and not any(a == "--audio-pack-dir" for a in tail):
-                    tail.extend(["--audio-pack-dir", str(pack_path)])
+                if intents_path:
+                    tail.extend(["--intents-json", str(intents_path)])
+                elif suggest_try:
+                    console.print("[yellow] intent_pack_last_rel manquant : --try-intent-reply sans JSON.[/]")
+
             _run_cli_target(console, "prospection-outbound", tail)
 
         elif ch == "outbound-listen-vad":

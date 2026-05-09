@@ -284,3 +284,38 @@ def match_intent_reply_wav(
                 if cand.is_file():
                     return cand
     return None
+
+
+def intent_tag_to_wav_stem(tag: str) -> str:
+    """
+    Segment de nom de fichier sûr pour un ``tag`` d’intent (identique à la génération de pack).
+
+    Les fichiers générés sont ``{stem}_{variant:02d}.wav``.
+    """
+    return _safe_name(tag)
+
+
+def path_for_intent_variant_wav(pack_dir: Path, tag: str, variant_index: int) -> Path:
+    """Chemin attendu pour la ``variant_index``-ième réponse (1-based) d’un intent."""
+    stem = intent_tag_to_wav_stem(tag)
+    return pack_dir / f"{stem}_{max(1, int(variant_index)):02d}.wav"
+
+
+def list_intent_variants_on_disk(
+    pack_dir: Path,
+    tag: str,
+    *,
+    max_variants: int = 128,
+) -> list[tuple[int, Path]]:
+    """
+    Liste les variantes réellement présentes sur disque pour un tag (scan ``*_01.wav`` …).
+
+    :returns: tuples ``(index_1_based, path)`` triés par index.
+    """
+    stem = intent_tag_to_wav_stem(tag)
+    out: list[tuple[int, Path]] = []
+    for i in range(1, max(1, int(max_variants)) + 1):
+        p = pack_dir / f"{stem}_{i:02d}.wav"
+        if p.is_file():
+            out.append((i, p))
+    return out
