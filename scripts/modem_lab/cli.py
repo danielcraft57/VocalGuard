@@ -40,6 +40,8 @@ SCENARIO_MAP = {
     "outgoing": LAB_DIR / "labscenarios" / "outgoing_call.py",
     "outbound-announce": LAB_DIR / "labscenarios" / "outbound_announce.py",
     "outbound-listen-vad": LAB_DIR / "labscenarios" / "outbound_listen_vad.py",
+    "outbound-pc-headset": LAB_DIR / "labscenarios" / "outbound_pc_headset.py",
+    "pc-headset-direct": LAB_DIR / "labscenarios" / "pc_headset_direct.py",
     # Entrant / utilitaires
     "incoming": LAB_DIR / "labscenarios" / "incoming_call.py",
     "answering": LAB_DIR / "labscenarios" / "answering_machine.py",
@@ -83,6 +85,8 @@ Scénarios (détail : scripts/modem_lab/labscenarios/README.md) :
     outgoing                 Compose puis DTMF interactif (clavier).
     outbound-announce        Compose, attentes, lecture WAV vers la ligne.
     outbound-listen-vad      VRX + VAD sans WAV (logs parole).
+    outbound-pc-headset      Compose + 1er WAV d'ouverture, puis conversation micro-casque PC.
+    pc-headset-direct        Sans modem: bip d'ouverture puis conversation micro-casque locale.
 
   Entrant / utilitaires
     incoming                 Attente RING, décrochage, pont audio.
@@ -275,7 +279,11 @@ def main(argv: list[str] | None = None) -> int:
     marks = load_b(LAB_DIR)
     ns = build_run_parser(sorted(marks.keys())).parse_args(argv)
     cmd = build_run_command(ns.target, list(ns.target_args), marks)
-    return subprocess.call(cmd)
+    try:
+        return subprocess.call(cmd)
+    except KeyboardInterrupt:
+        # Évite la traceback du wrapper CLI quand le scénario enfant est interrompu.
+        return 130
 
 
 if __name__ == "__main__":

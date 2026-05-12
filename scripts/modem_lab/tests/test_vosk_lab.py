@@ -13,13 +13,26 @@ if str(LAB_DIR) not in sys.path:
 from labaudio.vosk_lab import FRENCH_MODELS, VoskLabProfile, default_cache_root, is_plausible_vosk_dir
 
 
-def test_catalog_has_three_fr_models() -> None:
+def test_catalog_has_fr_models() -> None:
     assert "small-fr" in FRENCH_MODELS
     assert "fr-0.22" in FRENCH_MODELS
     assert "pguyot-small" in FRENCH_MODELS
+    assert "fr-linto" in FRENCH_MODELS
     for slug, m in FRENCH_MODELS.items():
         assert m["url"].startswith("https://")
         assert m["dir_name"]
+
+
+def test_is_plausible_flat_lookahead_layout() -> None:
+    """Certains modèles (ex. pguyot FR) ont final.mdl + Gr.fst à la racine."""
+    d = LAB_DIR / "generated" / "_pytest_vosk_flat"
+    d.mkdir(parents=True, exist_ok=True)
+    try:
+        (d / "final.mdl").write_bytes(b"x")
+        (d / "Gr.fst").write_bytes(b"x")
+        assert is_plausible_vosk_dir(d)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def test_is_plausible_empty_dir_false() -> None:

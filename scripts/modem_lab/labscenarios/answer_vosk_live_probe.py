@@ -99,6 +99,11 @@ def parse_args() -> argparse.Namespace:
         help="Précharge le modèle Vosk avant l'appel (recommandé pour les gros modèles).",
     )
     p.add_argument("--vosk-list-models", action="store_true")
+    p.add_argument(
+        "--vosk-download-all-fr",
+        action="store_true",
+        help="Télécharge tous les modèles FR du catalogue (alphacephei) dans --vosk-cache-dir puis quitte.",
+    )
     p.add_argument("--vosk-configure-only", action="store_true")
 
     # Answer/voice wait (copié de answer_metrics_probe)
@@ -248,18 +253,29 @@ async def run() -> int:
         print_models_catalog()
         return 0
 
+    if bool(args.vosk_download_all_fr):
+        return run_configure_only_flow(
+            profile_path=Path(args.vosk_profile),
+            cache_root=Path(args.vosk_cache_dir) if args.vosk_cache_dir else None,
+            model_slug=None,
+            interactive=False,
+            list_only=False,
+            download_all_fr=True,
+        )
+
     if bool(args.vosk_configure_only):
-        await run_configure_only_flow(
+        return run_configure_only_flow(
             profile_path=Path(args.vosk_profile),
             cache_root=Path(args.vosk_cache_dir) if args.vosk_cache_dir else None,
             model_slug=args.vosk_model_slug,
             interactive=bool(args.vosk_interactive),
-            save_profile_flag=bool(args.vosk_save_profile),
+            list_only=False,
         )
-        return 0
 
     if not args.number:
-        logger.error("--number est requis (sauf --vosk-configure-only ou --vosk-list-models).")
+        logger.error(
+            "--number est requis (sauf --vosk-configure-only, --vosk-list-models ou --vosk-download-all-fr)."
+        )
         return 2
 
     model_dir, vosk_slug = resolve_vosk_model_dir(

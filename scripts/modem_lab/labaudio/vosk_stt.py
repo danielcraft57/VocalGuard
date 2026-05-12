@@ -254,6 +254,31 @@ class VoskRealtimeWorker:
         """Enfile des octets PCM16 mono (bloquant si file pleine)."""
         self._q.put(pcm_s16le)
 
+    def push_pcm16_nowait(self, pcm_s16le: bytes, *, drop_oldest_on_full: bool = True) -> bool:
+        """
+        Enfile un chunk PCM16 sans bloquer.
+
+        Retourne ``True`` si enfilement réussi, ``False`` sinon.
+        En mode ``drop_oldest_on_full`` (défaut), retire un ancien chunk pour garder la latence basse.
+        """
+        if not pcm_s16le:
+            return True
+        try:
+            self._q.put_nowait(pcm_s16le)
+            return True
+        except queue.Full:
+            if not drop_oldest_on_full:
+                return False
+        try:
+            _ = self._q.get_nowait()
+        except queue.Empty:
+            return False
+        try:
+            self._q.put_nowait(pcm_s16le)
+            return True
+        except queue.Full:
+            return False
+
     def close_input(self) -> None:
         """Signal de fin de flux (obligatoire pour obtenir le ``FinalResult``)."""
         try:

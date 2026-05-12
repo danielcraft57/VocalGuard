@@ -75,7 +75,7 @@ def _q_kwargs() -> dict[str, Any]:
     return {"style": st} if st is not None else {}
 
 
-def _require_tui_deps() -> tuple["Console", "Theme", type]:
+def _require_tui_deps() -> tuple[Any, Any, type]:
     """Charge Rich + Questionary ou quitte avec message clair."""
     try:
         from rich.console import Console
@@ -354,37 +354,44 @@ def menu_intent_pack_wizard(console, questionary, presets: dict) -> None:
     )
     from rich.panel import Panel
 
-    data_dir = PROJECT_ROOT / "data"
-    if not data_dir.is_dir():
-        console.print("[err]Dossier data/ introuvable.[/]")
+    intents_dir = PROJECT_ROOT / "data" / "intents"
+    if not intents_dir.is_dir():
+        console.print("[err]Dossier data/intents/ introuvable.[/]")
         _pause(console)
         return
 
-    json_files = sorted(data_dir.glob("*.json"))
+    json_files = sorted(intents_dir.glob("**/*.json"))
     if not json_files:
-        console.print("[warn]Aucun fichier *.json dans data/.[/]")
+        console.print("[warn]Aucun fichier *.json dans data/intents/.[/]")
         _pause(console)
         return
 
     _section_header(console, "Assistant pack intents", "Un WAV par réponse dans le JSON · 8 kHz mono")
     json_choices = [
         questionary.Choice(
-            title=f"{p.name}  ({max(1, p.stat().st_size // 1024)} Ko)",
+            title=f"{p.relative_to(intents_dir).as_posix()}  ({max(1, p.stat().st_size // 1024)} Ko)",
             value=str(p.resolve()),
         )
         for p in json_files
     ]
     default_sel = (presets.get("intent_pack_last_rel") or "").replace("\\", "/")
-    default_path = next(
-        (str(p.resolve()) for p in json_files if default_sel.endswith(p.name)),
-        str(json_files[0].resolve()),
-    )
+    default_path = ""
+    if default_sel:
+        cand = (PROJECT_ROOT / default_sel).resolve()
+        if cand.is_file():
+            default_path = str(cand)
+    if not default_path:
+        # fallback: compat ancien preset (finissant par nom de fichier uniquement)
+        default_path = next(
+            (str(p.resolve()) for p in json_files if default_sel and default_sel.endswith(p.name)),
+            str(json_files[0].resolve()),
+        )
 
     _pad_vertical_lines(console, fraction=0.06, cap=6)
     sel = _select(
         console,
         questionary,
-        "Fichier d’intents (dossier data/)",
+        "Fichier d’intents (dossier data/intents/)",
         json_choices,
         default=default_path,
     )
@@ -823,6 +830,7 @@ def menu_scenarios(console, questionary, presets: dict) -> None:
                 q.Choice("Prospection outbound (sonde, greeting, STT, dialogue intents)", value="prospection-outbound"),
                 Sep("── Autres sortants ──"),
                 q.Choice("Outbound listen VAD (VRX sans WAV)", value="outbound-listen-vad"),
+                q.Choice("PC headset direct (sans modem, micro <-> casque)", value="pc-headset-direct"),
                 q.Choice("Prompt and play (WAV préchargés / séquence)", value="prompt-and-play"),
                 Sep("──"),
                 q.Choice("Retour au menu principal", value="back"),
@@ -1022,6 +1030,102 @@ def menu_scenarios(console, questionary, presets: dict) -> None:
             presets["default_number"] = number
             _save_presets(presets)
             _run_cli_target(console, "answer-metrics-probe", ["--port", port, "--number", number])
+
+        elif ch == "pc-headset-direct":
+            in_dev = _ask_text(
+                questionary,
+                presets,
+                "Index entrée audio (vide=auto)",
+                "audio_input_device",
+                override=presets.get("audio_input_device", ""),
+            )
+            out_dev = _ask_text(
+                questionary,
+                presets,
+                "Index sortie audio (vide=auto)",
+                "audio_output_device",
+                override=presets.get("audio_output_device", ""),
+            )
+            dur = _ask_text(
+                questionary,
+                presets,
+                "Durée max (s, 0 = jusqu'à Ctrl+C)",
+                "pc_headset_direct_duration_sec",
+                override=presets.get("pc_headset_direct_duration_sec", "0"),
+            )
+            beep_ms = _ask_text(
+                questionary,
+                presets,
+                "Bip d'ouverture (ms)",
+                "pc_headset_direct_opening_beep_ms",
+                override=presets.get("pc_headset_direct_opening_beep_ms", "350"),
+            )
+            beep_hz = _ask_text(
+                questionary,
+                presets,
+                "Fréquence bip (Hz)",
+                "pc_headset_direct_opening_beep_hz",
+                override=presets.get("pc_headset_direct_opening_beep_hz", "660"),
+            )
+            opening_wav = _ask_text(
+                questionary,
+                presets,
+                "WAV ouverture (vide=bip synthétique)",
+                "pc_headset_direct_opening_wav",
+                override=presets.get("pc_headset_direct_opening_wav", ""),
+            )
+            monitor = _ask_text(
+                questionary,
+                presets,
+                "Monitoring micro->casque (y/n) ? (defaut n = pas de retour casque)",
+                "pc_headset_direct_monitor",
+                override=presets.get("pc_headset_direct_monitor", "n"),
+            )
+            allo_wav = _ask_text(
+                questionary,
+                presets,
+                "Intent WAV sur 'allo' (vide=off)",
+                "pc_headset_direct_allo_intent_wav",
+                override=presets.get("pc_headset_direct_allo_intent_wav", ""),
+            )
+            vosk_slug = _ask_text(
+                questionary,
+                presets,
+                "Vosk model slug (small-fr/fr-0.22/pguyot-small)",
+                "pc_headset_direct_vosk_model_slug",
+                override=presets.get("pc_headset_direct_vosk_model_slug", "small-fr"),
+            )
+            presets["audio_input_device"] = in_dev
+            presets["audio_output_device"] = out_dev
+            presets["pc_headset_direct_duration_sec"] = dur
+            presets["pc_headset_direct_opening_beep_ms"] = beep_ms
+            presets["pc_headset_direct_opening_beep_hz"] = beep_hz
+            presets["pc_headset_direct_opening_wav"] = opening_wav
+            presets["pc_headset_direct_vosk_model_slug"] = vosk_slug
+            presets["pc_headset_direct_monitor"] = monitor
+            presets["pc_headset_direct_allo_intent_wav"] = allo_wav
+            _save_presets(presets)
+            tail = [
+                "--duration-sec",
+                dur.replace(",", "."),
+                "--opening-beep-ms",
+                beep_ms,
+                "--opening-beep-hz",
+                beep_hz.replace(",", "."),
+                "--vosk-model-slug",
+                vosk_slug,
+            ]
+            if in_dev:
+                tail.extend(["--input-device", in_dev])
+            if out_dev:
+                tail.extend(["--output-device", out_dev])
+            if opening_wav.strip():
+                tail.extend(["--opening-wav", opening_wav.strip()])
+            if monitor.strip().lower().startswith("y"):
+                tail.append("--monitor")
+            if allo_wav.strip():
+                tail.extend(["--allo-intent-wav", allo_wav.strip()])
+            _run_cli_target(console, "pc-headset-direct", tail)
 
         elif ch == "answer-vosk-live-probe":
             number = _ask_text(questionary, presets, "Numéro à appeler", "default_number", override=number)

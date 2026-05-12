@@ -1,0 +1,210 @@
+{
+  "intents": [
+    {
+      "tag": "objection_no_time",
+      "patterns": [
+        "j ai pas le temps",
+        "je n ai pas le temps",
+        "j ai vraiment pas le temps",
+        "pas le temps la",
+        "la j ai pas le temps",
+        "desole pas le temps",
+        "vous tombez mal pas le temps",
+        "je suis deborde",
+        "je suis debordee",
+        "je suis surcharge",
+        "je suis surchargee",
+        "journee chargee",
+        "la semaine est chargee",
+        "appelez moi une autre fois",
+        "rappelle moi plus tard",
+        "pas dispo la",
+        "pas disponible la",
+        "entre deux rendez vous",
+        "je cours je peux pas parler",
+        "deux minutes pas plus",
+        "je dois raccrocher vite",
+        "pas le moment de parler",
+        "je peux pas maintenant",
+        "on peut faire vite",
+        "allez vite",
+        "trop occupe pour ecouter"
+      ],
+      "responses": [
+        "Je comprends — je suis l assistante de danielcraft.fr : deux lignes maximum ou je vous envoie tout par mail a lire plus tard.",
+        "Pas de souci : je note un creneau precis et danielcraft.fr vous rappelle sans vous courir apres.",
+        "Timing serre : un recap ecrit depuis danielcraft.fr vous va mieux ? Je vous l envoie ou."
+      ]
+    },
+    {
+      "tag": "objection_no_budget",
+      "patterns": [
+        "j ai pas d argent",
+        "je n ai pas d argent",
+        "j ai pas les moyens",
+        "pas les moyens",
+        "zero budget",
+        "budget a zero",
+        "on peut pas payer",
+        "on peut pas investir",
+        "trop cher pour nous",
+        "c est hors de prix pour nous",
+        "pas de cash",
+        "argent bloque",
+        "finances serrees",
+        "on serre la ceinture",
+        "pas prevu dans le budget",
+        "annee difficile niveau tresorerie",
+        "on priorise autre chose financierement",
+        "investissement impossible la",
+        "pas envie de mettre un euro la"
+      ],
+      "responses": [
+        "Entendu — assistante danielcraft.fr : sans engagement financier immediat, un mini cadrage gratuit peut quand meme vous dire ou vous perdez des contacts.",
+        "Pas d argent tout de suite : danielcraft.fr peut decouper en etapes — je vous envoie une fourchette et vous decidez plus tard.",
+        "Je note la contrainte tresorerie : on peut viser une petite action a fort impact ou simplement un audit mail.",
+        "Budget bloque : pas de probleme, je clos ou je vous laisse une synthese courte pour quand ca reviendra."
+      ]
+    },
+    {
+      "tag": "objection_gatekeeper_assistant",
+      "patterns": [
+        "je ne suis que l assistant",
+        "je ne suis que l assistante",
+        "je suis que l assistant",
+        "je suis que l assistante",
+        "je suis la secretaire",
+        "je suis secretaire",
+        "je suis a l accueil",
+        "je gere juste l accueil",
+        "je suis en reception",
+        "je suis le standard",
+        "je passe les appels",
+        "je ne gere pas le marketing",
+        "ce n est pas mon domaine",
+        "parlez au patron pas a moi",
+        "faut voir avec la direction je suis pas decideuse",
+        "je note les messages seulement",
+        "je fais que transferer",
+        "je ne fais que prendre des messages"
+      ],
+      "responses": [
+        "Merci pour la precision — je suis l assistante de danielcraft.fr aussi : vous pouvez me donner le nom du decideur web ou marketing et le meilleur creneau pour le joindre ?",
+        "Parfait : depuis danielcraft.fr je prefere eviter de vous faire perdre du temps — qui traite habituellement le site ou la pub chez vous ?",
+        "Compris : je vous envoie un mail recap pour que votre responsable le lise — quelle adresse pro generique ou directe ?",
+        "Pas de souci : si vous transmettez la proposition au bon interlocuteur, quel titre ou service dois-je citer sur l objet du mail ?"
+      ]
+    },
+    {
+      "tag": "objection_site_deja_la",
+      "patterns": [
+        "j ai deja un site internet",
+        "on a deja un site internet",
+        "j ai deja un site web",
+        "notre site internet existe",
+        "notre site est en ligne",
+        "on a un site qui fonctionne",
+        "mon site me suffit",
+        "notre site suffit",
+        "ca tourne avec notre site actuel",
+        "je vois pas l utilite d un nouveau site",
+        "pourquoi refaire notre site",
+        "le site on l a deja fait",
+        "site fait ya trois ans",
+        "wordpress ca marche",
+        "wix ca nous va",
+        "site vitrine on en a un",
+        "je gere le site moi meme",
+        "nous sommes notre propre webmaster",
+        "template gratuite ca suffit",
+        "google maps nous suffit"
+      ],
+      "responses": [
+        "Justement — je suis l assistante de danielcraft.fr : souvent le site existe mais ne convertit pas assez. Un audit rapide montre les trois levriers sans tout refaire.",
+        "Parfait : DanielCraft peut regarder vitesse, SEO local et parcours contact pour voir ce qui coince encore.",
+        "Avoir un site et en tirer des demandes qualifiees, ce n est pas pareil : danielcraft.fr specialise ce deuxieme point.",
+        "Pas besoin de tout casser : complement ou optimisation ciblee suffit souvent — je vous envoie un exemple sur mail si vous voulez."
+      ]
+    },
+    {
+      "tag": "objection_canal_alternatif",
+      "patterns": [
+        "je communique autrement",
+        "on communique autrement",
+        "je passe pas par internet",
+        "le bouche a oreille suffit",
+        "le bouche a oreille ca marche",
+        "on vit du bouche a oreille",
+        "facebook suffit",
+        "instagram suffit",
+        "tiktok suffit",
+        "linkedin suffit",
+        "reseaux sociaux suffisent",
+        "on fait que du reseau",
+        "prospection terrain uniquement",
+        "pas besoin de site les clients reviennent",
+        "nos clients nous connaissent",
+        "la clientele est deja la",
+        "on prospecte au telephone nous",
+        "mailing papier ca marche",
+        "salons et foires ca suffit",
+        "google business profile suffit",
+        "on est referme au digital",
+        "pas fan du numerique",
+        "internet c est pas notre truc",
+        "mon activite est locale sans site",
+        "whatsapp suffit pour nous"
+      ],
+      "responses": [
+        "Je comprends — je suis l assistante de danielcraft.fr : beaucoup cumulent bouche a oreille plus une vitrine web qui rassure — pas pour remplacer vos canaux.",
+        "Si Instagram ou le terrain marchent : un site minimal fait souvent gagner du temps au standard et aux appels rates.",
+        "Pas besoin d etre geek : danielcraft.fr peut tenir la technique pendant que vous gardez vos habitudes.",
+        "OK pour votre mix actuel : je vous envoie une page sur comment un site soutient sans vous enfermer dans du digital lourd."
+      ]
+    },
+    {
+      "tag": "decision_maker_identification",
+      "patterns": [
+        "je suis pas le responsable",
+        "je suis pas la responsable",
+        "je ne suis pas le responsable",
+        "je ne suis pas la responsable",
+        "pas moi le chef",
+        "pas moi la cheffe",
+        "ce n est pas moi qui gere ca",
+        "marketing c est un autre service",
+        "voir avec la compta pour les projets",
+        "voir avec le dirigeant",
+        "parlez au gerant",
+        "mon associe decide pour le web",
+        "la DSI gere notre site",
+        "notre agence actuelle decide",
+        "je forward votre mail au bon contact",
+        "je ne valide pas les budgets",
+        "sans accord du patron je peux rien signer",
+        "je transmet mais je decide pas"
+      ],
+      "responses": [
+        "Merci — assistante danielcraft.fr : quel nom ou fonction dois-je citer pour que votre decideur web recoive un recap utile ?",
+        "Parfait pour gagner du temps : le meilleur numero ou email pour joindre la personne qui pilote le site ou le budget communication ?",
+        "Je note : danielcraft.fr peut aussi envoyer une synthese one-page a votre responsable — vous preferez que je vous mette en copie ?",
+        "Compris : pour ne pas vous surcharger, je vous envoie un mail court que vous transferez — ou vous me donnez le contact direct."
+      ]
+    },
+    {
+      "tag": "current_site_status",
+      "patterns": [
+        "on a deja un site comme je disais",
+        "site internet deja en place",
+        "presence web ok",
+        "google nous trouve deja",
+        "reference naturelle suffit",
+        "on apparait sur google"
+      ],
+      "responses": [
+        "Merci pour la precision — je suis l assistante de danielcraft.fr : on peut alors regarder conversion et qualite des demandes plus que la simple presence.",
+        "Super : l etape suivante souvent c est ce qui arrive quand quelqu un arrive sur la page — je peux vous expliquer en une phrase."
+      ]
+    }
+  ]
+}

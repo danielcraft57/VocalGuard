@@ -96,3 +96,4 @@ scripts/modem_lab/scenario_bookmarks.json
 # OS
 .DS_Store
 Thumbs.db
+scripts/experimental

@@ -31,6 +31,8 @@ Partagent `labcore.answer_wait_common` + `labcore.call_watch`.
 | `outgoing` | `outgoing_call.py` | Compose puis DTMF interactif (clavier). |
 | `outbound-announce` | `outbound_announce.py` | Compose, attentes sonnerie, lecture WAV. |
 | `outbound-listen-vad` | `outbound_listen_vad.py` | VRX + VAD sans WAV (logs parole). |
+| `outbound-pc-headset` | `outbound_pc_headset.py` | Compose, joue un premier WAV d'ouverture ("oui allo"), puis pont micro-casque PC <-> ligne. |
+| `pc-headset-direct` | `pc_headset_direct.py` | Sans modem/appel: ouverture bip/WAV, conversation locale micro <-> casque, STT Vosk live + `transcript.srt`. |
 
 ---
 

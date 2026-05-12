@@ -49,6 +49,12 @@ FRENCH_MODELS: dict[str, dict[str, Any]] = {
         "title": "Français compact (Guyot)",
         "hint": "Alternative légère (~39 Mo, licence CC-BY-NC-SA 4.0)",
     },
+    "fr-linto": {
+        "url": "https://alphacephei.com/vosk/models/vosk-model-fr-0.6-linto-2.2.0.zip",
+        "dir_name": "vosk-model-fr-0.6-linto-2.2.0",
+        "title": "Français LINTO (grand)",
+        "hint": "Modèle projet LINTO (~1,5 Go, licence AGPL)",
+    },
 }
 
 PROFILE_VERSION = 1
@@ -103,6 +109,14 @@ def is_plausible_vosk_dir(path: Path) -> bool:
                 return True
         except (PermissionError, OSError):
             continue
+    # Variantes « lookahead » / certains ZIP : ``final.mdl`` + FST à la racine (ex. pguyot FR)
+    try:
+        if (path / "final.mdl").is_file() and (
+            (path / "Gr.fst").is_file() or (path / "HCLr.fst").is_file()
+        ):
+            return True
+    except (PermissionError, OSError):
+        pass
     try:
         am = path / "am"
         if not am.is_dir():
@@ -307,6 +321,24 @@ def ensure_french_model(
     return model_dir
 
 
+def ensure_all_french_models(
+    *,
+    cache_root: Optional[Path] = None,
+    force_download: bool = False,
+) -> dict[str, Path]:
+    """
+    Télécharge ou vérifie tous les modèles du catalogue ``FRENCH_MODELS`` (liste officielle FR sur alphacephei).
+
+    :returns: slug → répertoire modèle absolu
+    """
+    out: dict[str, Path] = {}
+    for slug in sorted(FRENCH_MODELS.keys()):
+        out[slug] = ensure_french_model(
+            slug, cache_root=cache_root, force_download=force_download
+        )
+    return out
+
+
 def load_profile(path: Path | None = None) -> VoskLabProfile:
     p = path or DEFAULT_PROFILE_PATH
     if not p.is_file():
@@ -340,7 +372,11 @@ def print_models_catalog() -> None:
     for slug, m in FRENCH_MODELS.items():
         print(f"  {slug:<12}  {m['title']:<22}  {m['hint']}")
     print(f"\n  Cache par défaut : {default_cache_root()}")
-    print(f"  Profil par défaut : {DEFAULT_PROFILE_PATH}\n")
+    print(f"  Profil par défaut : {DEFAULT_PROFILE_PATH}")
+    print(
+        "  Tout télécharger : python scripts/modem_lab/cli.py answer-vosk-live-probe "
+        "-- --vosk-download-all-fr\n"
+    )
 
 
 def interactive_pick_slug() -> str:
@@ -461,10 +497,24 @@ def run_configure_only_flow(
     model_slug: str | None,
     interactive: bool,
     list_only: bool,
+    download_all_fr: bool = False,
 ) -> int:
-    """Utilitaire --vosk-configure-only / --vosk-list-models (sans modem)."""
+    """Utilitaire --vosk-configure-only / --vosk-list-models / --vosk-download-all-fr (sans modem)."""
     if list_only:
         print_models_catalog()
+        return 0
+    if download_all_fr:
+        paths = ensure_all_french_models(cache_root=cache_root)
+        cr = cache_root.resolve() if cache_root else default_cache_root().resolve()
+        print("\nModèles Vosk français (catalogue projet = liste alphacephei FR + FR Other) :\n")
+        for slug, pth in sorted(paths.items()):
+            print(f"  {slug:<14}  {pth}")
+        print(f"\nRacine cache : {cr}\n")
+        print(
+            "Le profil JSON n’est pas modifié. Pour enregistrer un modèle par défaut : "
+            "--vosk-configure-only --vosk-model-slug …\n",
+            flush=True,
+        )
         return 0
     slug = model_slug
     if not slug and interactive and sys.stdin.isatty():

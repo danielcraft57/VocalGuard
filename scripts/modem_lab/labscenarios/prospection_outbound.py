@@ -13,7 +13,7 @@ Architecture dialogue (``labcore.prospection_dialogue``)
   sinon si ``--intents-json`` + pack : tag déduit du JSON (intent nommé ``greeting`` si présent,
   sinon **premier** intent du fichier) puis même tirage de variante ; puis fallback ``greeting_01.wav``
   ou ``--greeting-wav``.
-- **Multi-tours** : ``--dialogue-max-turns`` boucles « VRX + STT → match → lecture WAV » sur un
+- **Multi-tours** : ``--dialogue-max-turns`` boucles « VRX + STT -> match -> lecture WAV » sur un
   même worker Vosk (timeline continue dans les sous-titres).
 
 Prérequis
@@ -85,6 +85,83 @@ from labcore.prospection_dialogue.ports import IntentMatcherProtocol
 from labscenarios.metrics_voicemail import _play_trigger_ok, _play_voice_clip
 
 _PROMPT_PAUSE_EPS_SEC = 1e-3
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _danielcraft_outbound_intent_chain_paths() -> tuple[Path, ...]:
+    """
+    Ordre métier (sans ML) pour DanielCraft outbound.
+
+    - niveau 1 d'abord pour l'ouverture (inférence opening tag)
+    - objections/offres ensuite (prioritaires quand l'appelé réagit)
+    - qualification / négociation / relance ensuite
+    """
+    base = _REPO_ROOT / "data" / "intents" / "danielcraft" / "outbound"
+    ordered = [
+        base / "niveau1_ouverture.json",
+        base / "objections.json",
+        base / "offres_prix.json",
+        base / "niveau2_qualification.json",
+        base / "niveau3_negociation_closing.json",
+        base / "niveau4_relance_marketing.json",
+    ]
+    return tuple(p for p in ordered if p.is_file())
+
+
+async def _wait_remote_silence_before_play(
+    modem: Any,
+    *,
+    min_silence_sec: float,
+    max_wait_sec: float,
+    vad_threshold: float,
+    vad_min_speech_ms: float,
+    vad_hangover_ms: float,
+    chunk_size: int = 2048,
+) -> bool:
+    """
+    Attend une fenêtre de silence sur VRX avant de jouer un WAV.
+
+    Objectif: éviter de couper l'interlocuteur (conversation plus naturelle).
+    Retourne True si silence obtenu, False si timeout.
+    """
+    from labcore.voice_activity import SpeechActivityDetector, VaKind
+
+    min_sil = max(0.0, float(min_silence_sec))
+    max_w = max(0.0, float(max_wait_sec))
+    if min_sil <= 0.0 or max_w <= 0.0:
+        return True
+
+    det = SpeechActivityDetector(
+        threshold=float(vad_threshold),
+        min_speech_ms=float(vad_min_speech_ms),
+        hangover_ms=float(vad_hangover_ms),
+    )
+    t0 = asyncio.get_running_loop().time()
+    t_last_end: float | None = None
+    in_speech = False
+
+    while True:
+        now = asyncio.get_running_loop().time()
+        if now - t0 >= max_w:
+            return False
+        chunk = await modem.read_outgoing_vrx_chunk(chunk_size)
+        if not chunk:
+            await asyncio.sleep(0.02)
+            # si on n'a jamais vu de parole, on accepte vite.
+            if t_last_end is None and not in_speech and (now - t0) >= min(0.25, min_sil):
+                return True
+            if t_last_end is not None and not in_speech and (now - t_last_end) >= min_sil:
+                return True
+            continue
+        for ev in det.feed(chunk):
+            if ev.kind == VaKind.SPEECH_START:
+                in_speech = True
+                t_last_end = None
+            elif ev.kind == VaKind.SPEECH_END:
+                in_speech = False
+                t_last_end = asyncio.get_running_loop().time()
+        if t_last_end is not None and not in_speech and (asyncio.get_running_loop().time() - t_last_end) >= min_sil:
+            return True
 
 
 def parse_args() -> argparse.Namespace:
@@ -103,7 +180,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--number",
         default=None,
-        help="Numéro à appeler (requis sauf avec --vosk-configure-only ou --vosk-list-models).",
+        help="Numéro à appeler (requis sauf configure/list/téléchargement catalogue).",
     )
 
     p.add_argument(
@@ -146,6 +223,11 @@ def parse_args() -> argparse.Namespace:
         "--vosk-list-models",
         action="store_true",
         help="Affiche le catalogue français puis quitte (pas d’appel).",
+    )
+    p.add_argument(
+        "--vosk-download-all-fr",
+        action="store_true",
+        help="Télécharge tous les modèles FR du catalogue dans le cache puis quitte (profil inchangé).",
     )
     p.add_argument(
         "--vosk-configure-only",
@@ -192,7 +274,7 @@ def parse_args() -> argparse.Namespace:
         "--dialogue-max-turns",
         type=int,
         default=1,
-        help="Nombre max de tours écoute→réponse après l’ouverture (défaut 1 = comportement historique).",
+        help="Nombre max de tours ecoute->reponse apres l’ouverture (defaut 1 = comportement historique).",
     )
     p.add_argument(
         "--opening-tag",
@@ -225,6 +307,33 @@ def parse_args() -> argparse.Namespace:
         help="Tags séparés par des virgules : après lecture WAV, arrêt de la boucle dialogue.",
     )
 
+    p.add_argument(
+        "--danielcraft-outbound-auto",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Auto-chaîne DanielCraft outbound: charge data/intents/danielcraft/outbound "
+            "(ouverture + objections/offres + niveaux). Si --intents-json est fourni, il reste prioritaire."
+        ),
+    )
+    p.add_argument(
+        "--reply-wait-silence",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Avant lecture d'une réponse intent, attendre une fenêtre de silence (VAD) pour ne pas couper l'appelé.",
+    )
+    p.add_argument(
+        "--reply-min-silence-sec",
+        type=float,
+        default=0.65,
+        help="Silence requis avant lecture réponse intent (s).",
+    )
+    p.add_argument(
+        "--reply-max-wait-silence-sec",
+        type=float,
+        default=4.0,
+        help="Temps max d'attente du silence avant de jouer quand même (s).",
+    )
     p.add_argument(
         "--dated-outfiles",
         action=argparse.BooleanOptionalAction,
@@ -336,7 +445,7 @@ def _resolve_greeting_wav(
     if inferred and pack_dir.is_dir():
         picked = pick_opening_wav_from_pack(pack_dir, inferred, rng)
         if picked is not None:
-            logger.info("Ouverture WAV déduite des intents : tag={} → {}", inferred, picked.name)
+            logger.info("Ouverture WAV deduite des intents : tag={} -> {}", inferred, picked.name)
             return picked
     if pack_dir.is_dir():
         cand = pack_dir / "greeting_01.wav"
@@ -356,6 +465,16 @@ async def run(parser_args: argparse.Namespace | None = None) -> int:
         print_models_catalog()
         return 0
 
+    if bool(args.vosk_download_all_fr):
+        return run_configure_only_flow(
+            profile_path=Path(args.vosk_profile),
+            cache_root=Path(args.vosk_cache_dir) if args.vosk_cache_dir else None,
+            model_slug=None,
+            interactive=False,
+            list_only=False,
+            download_all_fr=True,
+        )
+
     if bool(args.vosk_configure_only):
         return run_configure_only_flow(
             profile_path=Path(args.vosk_profile),
@@ -366,7 +485,9 @@ async def run(parser_args: argparse.Namespace | None = None) -> int:
         )
 
     if not args.number:
-        logger.error("--number est requis (sauf --vosk-configure-only ou --vosk-list-models).")
+        logger.error(
+            "--number est requis (sauf --vosk-configure-only, --vosk-list-models ou --vosk-download-all-fr)."
+        )
         return 1
 
     model_dir, vosk_slug = resolve_vosk_model_dir(
@@ -386,6 +507,15 @@ async def run(parser_args: argparse.Namespace | None = None) -> int:
         )
         return 8
     logger.info("STT Vosk : {} (slug={})", model_dir, vosk_slug or "—")
+
+    # Auto-chain DanielCraft outbound si demandé et aucun JSON explicitement fourni.
+    if bool(args.danielcraft_outbound_auto) and not (args.intents_json or ()):
+        auto_paths = _danielcraft_outbound_intent_chain_paths()
+        if auto_paths:
+            args.intents_json = list(auto_paths)
+            logger.info("DanielCraft auto intents: {}", ", ".join(p.name for p in auto_paths))
+        else:
+            logger.warning("DanielCraft auto intents: aucun fichier trouvé sous data/intents/danielcraft/outbound")
 
     rng = random.Random(args.dialogue_rng_seed) if args.dialogue_rng_seed is not None else random.Random()
     if args.opening_tag and not args.audio_pack_dir:
@@ -707,6 +837,20 @@ async def run(parser_args: argparse.Namespace | None = None) -> int:
                     turn=turn,
                     path=str(outcome.wav_path),
                 )
+                if bool(args.reply_wait_silence):
+                    got_sil = await _wait_remote_silence_before_play(
+                        modem,
+                        min_silence_sec=float(args.reply_min_silence_sec),
+                        max_wait_sec=float(args.reply_max_wait_silence_sec),
+                        vad_threshold=float(args.vad_threshold),
+                        vad_min_speech_ms=float(args.vad_min_speech_ms),
+                        vad_hangover_ms=float(args.vad_hangover_ms),
+                    )
+                    if not got_sil:
+                        logger.info(
+                            "Silence non detecte avant lecture intent (timeout {:.1f}s) — lecture quand meme.",
+                            float(args.reply_max_wait_silence_sec),
+                        )
                 ok_r = await _play_voice_clip(
                     modem,
                     outcome.wav_path,
@@ -742,6 +886,20 @@ async def run(parser_args: argparse.Namespace | None = None) -> int:
                         tag=outcome.intent_tag,
                     )
                     break
+                # L'interlocuteur peut enchaîner juste après notre WAV: on attend un peu de silence
+                # avant le tour suivant si configuré.
+                if bool(args.reply_wait_silence):
+                    try:
+                        await _wait_remote_silence_before_play(
+                            modem,
+                            min_silence_sec=float(args.reply_min_silence_sec),
+                            max_wait_sec=float(args.reply_max_wait_silence_sec),
+                            vad_threshold=float(args.vad_threshold),
+                            vad_min_speech_ms=float(args.vad_min_speech_ms),
+                            vad_hangover_ms=float(args.vad_hangover_ms),
+                        )
+                    except Exception:
+                        pass
         else:
             if bool(args.try_intent_reply) and not intent_paths:
                 logger.warning("--try-intent-reply sans --intents-json : écoute STT sans réponse auto.")
