@@ -22,10 +22,10 @@
         "plus besoin de vous parler"
       ],
       "responses": [
-        "Entendu — je suis l assistante de danielcraft.fr : bonne journee et au revoir.",
+        "Entendu — je suis l'assistante de danielcraft.fr : bonne journee et au revoir.",
         "Pas de souci : depuis danielcraft.fr je vous laisse tranquille. Bonne continuation.",
         "Au revoir — merci pour votre temps. DanielCraft vous souhaite une belle journee.",
-        "Je clos l appel de mon cote pour danielcraft.fr. A tres bientot si besoin sur le site.",
+        "Je clos l'appel de mon cote pour danielcraft.fr. A tres bientot si besoin sur le site.",
         "OK, je ne vous retiens pas. Cordialement, assistante danielcraft.fr.",
         "Merci pour votre ecoute : rendez-vous sur danielcraft.fr pour toute question ulterieure."
       ]
@@ -53,7 +53,7 @@
         "Je note le refus pour danielcraft.fr et je vous laisse. Au revoir.",
         "Entendu. Pas de suite de notre cote — vous retrouvez nos infos sur danielcraft.fr si un jour ca colle.",
         "D accord, je clos ici. Merci pour votre franchise depuis danielcraft.fr.",
-        "C est note avec respect — je suis l assistante de danielcraft.fr, bonne continuation.",
+        "C'est note avec respect — je suis l'assistante de danielcraft.fr, bonne continuation.",
         "Pas de souci : je transmets au bureau danielcraft.fr et je range le dossier. Au revoir."
       ]
     },
@@ -72,9 +72,9 @@
       ],
       "responses": [
         "Je m excuse au nom de danielcraft.fr pour la gene. Je vous laisse tout de suite.",
-        "Compris — assistante danielcraft.fr : j arrete l appel immédiatement.",
-        "Desole pour l intrusion : danielcraft.fr prendra en compte votre rejet. Au revoir.",
-        "C est note sur danielcraft.fr : je coupe de mon cote. Bon courage a vous."
+        "Compris — assistante danielcraft.fr : j'arrête l'appel immédiatement.",
+        "Desole pour l'intrusion : danielcraft.fr prendra en compte votre rejet. Au revoir.",
+        "C'est note sur danielcraft.fr : je coupe de mon cote. Bon courage a vous."
       ]
     }
   ]

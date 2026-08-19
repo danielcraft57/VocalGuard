@@ -105,3 +105,44 @@ def pcm_s16le_16k_mono_to_u8_8k(data: bytes) -> bytes:
         u8 = max(0, min(255, (s16 >> 8) + 128))
         out.append(u8)
     return bytes(out)
+
+
+def pcm_s16le_rms(data: bytes) -> float:
+    """
+    RMS d'un buffer PCM s16le mono (valeur 0..32767 environ).
+
+    Utilise pour VAD : ne pas ouvrir VTX sur du silence (evite de saccader l'ecoute ligne).
+    """
+    if not data or len(data) < 2:
+        return 0.0
+    n = len(data) // 2
+    if n <= 0:
+        return 0.0
+    acc = 0.0
+    for i in range(0, n * 2, 2):
+        s = int.from_bytes(data[i : i + 2], "little", signed=True)
+        acc += float(s) * float(s)
+    return (acc / float(n)) ** 0.5
+
+
+def write_stereo_u8_8k_wav(path: Path, line_track: bytes, mic_track: bytes) -> None:
+    """
+    WAV stéréo 8 kHz 8-bit : canal gauche = ligne (VRX), canal droit = micro (VTX).
+    Piste la plus courte est complétée par silence (128).
+    """
+    n = max(len(line_track), len(mic_track))
+    if n == 0:
+        return
+    silence = 128
+    line = line_track.ljust(n, bytes([silence]))
+    mic = mic_track.ljust(n, bytes([silence]))
+    stereo = bytearray(n * 2)
+    for i in range(n):
+        stereo[i * 2] = line[i]
+        stereo[i * 2 + 1] = mic[i]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(2)
+        wf.setsampwidth(1)
+        wf.setframerate(8000)
+        wf.writeframes(bytes(stereo))

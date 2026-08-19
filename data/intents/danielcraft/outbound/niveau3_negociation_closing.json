@@ -10,7 +10,7 @@
         "combien minimum"
       ],
       "responses": [
-        "Pour demarrer, les enveloppes indicatives sont 490, 699 et 990 euros selon l objectif.",
+        "Pour demarrer, les enveloppes indicatives sont 490, 699 et 990 euros selon l'objectif.",
         "Le plus juste reste un devis personnalise, mais oui vous avez deja une base claire."
       ]
     },
@@ -23,7 +23,7 @@
         "c est impossible"
       ],
       "responses": [
-        "Je comprends. On peut reduire le perimetre pour garder l impact sans depasser votre capacite.",
+        "Je comprends. On peut reduire le perimetre pour garder l'impact sans depasser votre capacite.",
         "Dans ce cas, je propose un plan par priorites avec une premiere etape plus legere."
       ]
     },
@@ -36,7 +36,7 @@
         "pas cette periode"
       ],
       "responses": [
-        "Compris. Je peux vous envoyer un mini plan d action pour que vous ayez deja une base quand vous relancerez.",
+        "Compris. Je peux vous envoyer un mini plan d'action pour que vous ayez deja une base quand vous relancerez.",
         "Aucun probleme, je vous propose de fixer un rappel a date precise pour ne pas perdre le fil."
       ]
     },
@@ -117,7 +117,7 @@
       ],
       "responses": [
         "Alors il faut prioriser les actions a effet rapide: clarte offre, contact visible, SEO local de base.",
-        "On peut lancer un plan court terme des cette semaine pour stopper la perte d opportunites."
+        "On peut lancer un plan court terme des cette semaine pour stopper la perte d'opportunités."
       ]
     },
     {
@@ -186,7 +186,7 @@
         "laissez moi reflechir"
       ],
       "responses": [
-        "C est normal. Je vous propose un recap ultra clair pour vous aider a trancher rapidement.",
+        "C'est normal. Je vous propose un recap ultra clair pour vous aider a trancher rapidement.",
         "Je comprends, je vous envoie 2 options comparees pour decider sans pression."
       ]
     },

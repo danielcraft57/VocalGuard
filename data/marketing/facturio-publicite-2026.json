@@ -1,0 +1,112 @@
+{
+  "meta": {
+    "project": "facturio",
+    "title": "Publicité réseaux — Facturio 2026",
+    "default_voice": "fr-FR-DeniseNeural",
+    "pause_between_segments_ms": 450
+  },
+  "variants": [
+    {
+      "id": "30s-main",
+      "label": "Version 30 secondes (principale)",
+      "segments": [
+        {
+          "id": "01-hook",
+          "time": "0:00-0:02",
+          "visual": "Logo Facturio + accroche",
+          "text": "Vous codez. Vous facturez encore à la main ?"
+        },
+        {
+          "id": "02-positionnement",
+          "time": "0:02-0:06",
+          "visual": "Liste factures overflow",
+          "text": "Facturio, la facturation pensée pour les devs et intégrateurs."
+        },
+        {
+          "id": "03-cycle",
+          "time": "0:06-0:10",
+          "visual": "Modal devis + client",
+          "text": "Devis, clients SIREN, factures : tout au même endroit."
+        },
+        {
+          "id": "04-paiement",
+          "time": "0:10-0:14",
+          "visual": "Devis accepté + acompte",
+          "text": "Acomptes, soldes, paiement Stripe : le cycle commercial est bouclé."
+        },
+        {
+          "id": "05-dashboard",
+          "time": "0:14-0:18",
+          "visual": "Dashboard KPI",
+          "text": "Tableau de bord, encaissements, conversion devis-factures."
+        },
+        {
+          "id": "06-efacture",
+          "time": "0:18-0:22",
+          "visual": "Réforme 2026 / paramètres",
+          "text": "Et la réforme e-facture 2026 ? Réception obligatoire dès septembre. Facturio vous prépare."
+        },
+        {
+          "id": "07-conformite",
+          "time": "0:22-0:26",
+          "visual": "Score conformité",
+          "text": "Score de conformité, export Factur-X : anticipez sans changer de métier."
+        },
+        {
+          "id": "08-cta",
+          "time": "0:26-0:30",
+          "visual": "CTA inscription",
+          "text": "Compte gratuit sur facturio point danielcraft point fr. Votre premier devis en dix minutes."
+        }
+      ]
+    },
+    {
+      "id": "15s-teaser",
+      "label": "Teaser 15 secondes",
+      "segments": [
+        { "id": "01", "time": "0:00-0:03", "text": "Facturation dev, sans tableur." },
+        { "id": "02", "time": "0:03-0:08", "text": "Devis, acomptes, Stripe." },
+        { "id": "03", "time": "0:08-0:12", "text": "Prêt pour septembre 2026." },
+        { "id": "04", "time": "0:12-0:15", "text": "Essai gratuit — lien en bio." }
+      ]
+    },
+    {
+      "id": "ab-urgence",
+      "label": "Variante A/B — urgence réglementaire",
+      "segments": [
+        {
+          "id": "01-hook",
+          "text": "Septembre 2026 : vous devrez recevoir des factures électroniques."
+        },
+        {
+          "id": "02-suite",
+          "text": "Même en micro-entreprise. Facturio vous met en conformité sans usine à gaz comptable."
+        },
+        {
+          "id": "03-positionnement",
+          "text": "Facturio, la facturation pensée pour les devs et intégrateurs."
+        },
+        {
+          "id": "04-cta",
+          "text": "Compte gratuit sur facturio point danielcraft point fr."
+        }
+      ]
+    },
+    {
+      "id": "ab-metier",
+      "label": "Variante A/B — vertical métier",
+      "segments": [
+        { "id": "01", "text": "Indy, c'est la compta pour tout le monde." },
+        {
+          "id": "02",
+          "text": "Facturio, c'est comment vous facturez vos missions React, API et maintenance IA."
+        },
+        {
+          "id": "03",
+          "text": "Devis, acomptes, Stripe, conformité 2026 — en un seul outil léger."
+        },
+        { "id": "04", "text": "Essai gratuit sur facturio point danielcraft point fr." }
+      ]
+    }
+  ]
+}

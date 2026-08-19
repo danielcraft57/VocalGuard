@@ -19,7 +19,9 @@ import httpx
 from backend.voice.audio_utils import (
     has_alsa_capture_devices,
     pcm_s16le_16k_mono_to_u8_8k,
+    pcm_s16le_rms,
     pcm_u8_8k_to_s16le_16k,
+    write_stereo_u8_8k_wav,
 )
 
 from sqlalchemy.orm import Session
@@ -257,7 +259,41 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
             await _stt_flush_legacy(stt_buffer)
 
     alsa_raw = bytearray()
-    serial_pcm_chunks: list[bytes] = []
+    serial_line_track = bytearray()
+    serial_mic_track = bytearray()
+    _SILENCE_U8 = 128
+
+    def _append_line_chunk(chunk: bytes) -> None:
+        n = len(chunk)
+        if n <= 0:
+            return
+        serial_line_track.extend(chunk)
+        serial_mic_track.extend(bytes([_SILENCE_U8]) * n)
+
+    def _append_mic_uplink(u8: bytes) -> None:
+        n = len(u8)
+        if n <= 0:
+            return
+        serial_line_track.extend(bytes([_SILENCE_U8]) * n)
+        serial_mic_track.extend(u8)
+
+    async def _save_serial_stereo_wav() -> None:
+        nonlocal wav_rel
+        if wav_rel is not None:
+            return
+        if not serial_line_track and not serial_mic_track:
+            return
+        ts = int(time.time())
+        wav_rel = f"recordings/call_out_{session.call_id}_{ts}.wav"
+        wav_path = base / wav_rel
+        write_stereo_u8_8k_wav(wav_path, bytes(serial_line_track), bytes(serial_mic_track))
+        await call_service.set_audio_file(session.call_id, wav_rel)
+        await _publish_log(
+            session.call_id,
+            session.phone_number,
+            f"Enregistrement stéréo sauvegardé ({wav_rel})",
+        )
+
     try:
         stt_allowed = {"ok": False}
 
@@ -354,10 +390,17 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
             else:
                 serial_vrx_active = True
                 mic_acc = bytearray()
+                # ~400 ms a 16 kHz s16le — moins de bascules VRX<->VTX = moins de saccades
+                MIC_BURST_BYTES = 12800
+                MAX_MIC_BACKLOG = MIC_BURST_BYTES * 3
+                # Seuil VAD : sous ce RMS, on jette le silence sans toucher au modem
+                MIC_VAD_RMS = 450.0
+                uplink_bursts = 0
+                silence_drops = 0
                 while not session.stop_event.is_set():
                     chunk = await modem.read_outgoing_vrx_chunk(1024)
                     if chunk:
-                        serial_pcm_chunks.append(chunk)
+                        _append_line_chunk(chunk)
                         pcm16 = pcm_u8_8k_to_s16le_16k(chunk)
                         await session_broadcast_pcm(session, pcm16)
                         stt_buffer.extend(pcm16)
@@ -367,25 +410,45 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
                             mic_acc.extend(session.mic_modem_queue.get_nowait())
                     except asyncio.QueueEmpty:
                         pass
-                    if len(mic_acc) >= 3200:
-                        burst = bytes(mic_acc[:3200])
-                        del mic_acc[:3200]
+                    if len(mic_acc) > MAX_MIC_BACKLOG:
+                        # Garde la fin (parole recente), jette le trop-plein
+                        del mic_acc[:-MIC_BURST_BYTES]
+                    if len(mic_acc) >= MIC_BURST_BYTES:
+                        burst = bytes(mic_acc[:MIC_BURST_BYTES])
+                        del mic_acc[:MIC_BURST_BYTES]
+                        rms = pcm_s16le_rms(burst)
+                        if rms < MIC_VAD_RMS:
+                            silence_drops += 1
+                            # Silence : pas de VTX, on continue d'ecouter la ligne
+                            continue
                         u8 = pcm_s16le_16k_mono_to_u8_8k(burst)
                         if u8:
-                            await modem.half_duplex_send_uplink_u8(u8)
+                            _append_mic_uplink(u8)
+                            ok_up = await modem.half_duplex_send_uplink_u8(u8)
+                            uplink_bursts += 1
+                            if uplink_bursts == 1 or uplink_bursts % 10 == 0:
+                                await _publish_log(
+                                    session.call_id,
+                                    session.phone_number,
+                                    f"Uplink VTX #{uplink_bursts} ({len(u8)} o, rms={rms:.0f}, ok={ok_up})",
+                                )
                     if not chunk:
                         await asyncio.sleep(0.02)
-                if serial_pcm_chunks:
-                    ts = int(time.time())
-                    wav_rel = f"recordings/call_out_{session.call_id}_{ts}.wav"
-                    wav_path = base / wav_rel
-                    data = b"".join(serial_pcm_chunks)
-                    with wave.open(str(wav_path), "wb") as wf:
-                        wf.setnchannels(1)
-                        wf.setsampwidth(1)
-                        wf.setframerate(8000)
-                        wf.writeframes(data)
-                    await call_service.set_audio_file(session.call_id, wav_rel)
+                if mic_acc:
+                    rms_tail = pcm_s16le_rms(bytes(mic_acc))
+                    if rms_tail >= MIC_VAD_RMS:
+                        u8_tail = pcm_s16le_16k_mono_to_u8_8k(bytes(mic_acc))
+                        if u8_tail:
+                            _append_mic_uplink(u8_tail)
+                            await modem.half_duplex_send_uplink_u8(u8_tail)
+                            uplink_bursts += 1
+                    mic_acc.clear()
+                await _publish_log(
+                    session.call_id,
+                    session.phone_number,
+                    f"Fin session VRX: {uplink_bursts} rafales micro, {silence_drops} silences ignores",
+                )
+                await _save_serial_stereo_wav()
         else:
             await _publish_log(
                 session.call_id,

@@ -259,6 +259,10 @@ Deux scripts permettent de tester la voix en local sans modem :
 
 Prerequis : `sounddevice` (capture micro), et optionnellement `ffmpeg` pour la conversion MP3 vers WAV 8 kHz. Voir [scripts/README_VOICE_TEST.md](scripts/README_VOICE_TEST.md) et [config/README_INTENTS_IVR.md](config/README_INTENTS_IVR.md).
 
+## Vitrine Teloscope (.me)
+
+Le meme depot contient **Teloscope** (`../teloscope/`) : site statique pour **fakecom.me**, **faketel.me** et **fauxtel.me**, annonce publique autour de la verification de numeros et de l'OSINT deja present dans VocalGuard (`phone_number_profiles`, `osint_service`, page Appels). Voir `../teloscope/README.md` et le script `../configuration-mail/scripts/add_domains_teloscope_me.sh` pour le deploiement Nginx.
+
 ## Contribution
 
 Les contributions sont les bienvenues ! N'hésitez pas à ouvrir une issue ou une pull request.
