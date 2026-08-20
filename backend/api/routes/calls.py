@@ -47,6 +47,38 @@ from backend.services.block_service import BlockService
 router = APIRouter()
 
 
+class OutgoingCallStartRequest(BaseModel):
+    """Payload pour demarrer un appel sortant modem."""
+
+    phone_number: str = Field(..., min_length=1, max_length=32)
+
+
+class OutgoingCallActionResponse(BaseModel):
+    """Reponse simple des actions d appel sortant."""
+
+    ok: bool
+    call_id: int
+    message: str
+
+
+class DtmfRequest(BaseModel):
+    """Payload pour envoi de touche DTMF."""
+
+    digit: str = Field(..., min_length=1, max_length=1)
+
+
+class CallTagUpdate(BaseModel):
+    """Tag UI pour classer un appel / numero (metadonnees + liste blanche/noire si pertinent)."""
+
+    tag: Literal["permitted", "restricted", "unknown", "blocked", "commercial", "none"]
+
+
+class CallBulkDeleteRequest(BaseModel):
+    """Suppression de plusieurs appels."""
+
+    ids: list[int] = Field(..., min_length=1, max_length=500)
+
+
 def _telephony_daemon_base(request: Request, config: Config) -> str:
     base = getattr(request.app.state, "telephony_daemon_url", None) or config.telephony_daemon_url
     return str(base).strip().rstrip("/")
@@ -126,38 +158,6 @@ def _try_unlink_recording(config: Config, audio_file: Optional[str]) -> None:
             p.unlink()
         except OSError:
             pass
-
-
-class OutgoingCallStartRequest(BaseModel):
-    """Payload pour demarrer un appel sortant modem."""
-
-    phone_number: str = Field(..., min_length=1, max_length=32)
-
-
-class OutgoingCallActionResponse(BaseModel):
-    """Reponse simple des actions d appel sortant."""
-
-    ok: bool
-    call_id: int
-    message: str
-
-
-class DtmfRequest(BaseModel):
-    """Payload pour envoi de touche DTMF."""
-
-    digit: str = Field(..., min_length=1, max_length=1)
-
-
-class CallTagUpdate(BaseModel):
-    """Tag UI pour classer un appel / numero (metadonnees + liste blanche/noire si pertinent)."""
-
-    tag: Literal["permitted", "restricted", "unknown", "blocked", "commercial", "none"]
-
-
-class CallBulkDeleteRequest(BaseModel):
-    """Suppression de plusieurs appels."""
-
-    ids: list[int] = Field(..., min_length=1, max_length=500)
 
 
 async def _publish_state(event_type: EventType, call_id: int, phone_number: str, **extra) -> None:

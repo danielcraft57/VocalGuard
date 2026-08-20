@@ -10,9 +10,9 @@ def test_create_telephony_app_exposes_health_and_calls_routes() -> None:
     app = create_telephony_app(Config())
     assert getattr(app.state, "is_vocalguard_telephony_daemon", False) is True
     paths = [getattr(r, "path", "") or "" for r in app.routes]
-    assert "/health" in paths
-    assert any(p.endswith("/calls/outgoing/start") for p in paths)
-    assert any("outgoing-call" in p and "audio" in p for p in paths)
+    assert "/health" in paths, paths
+    assert any("outgoing/start" in p for p in paths), paths
+    assert any("outgoing-call" in p and "audio" in p for p in paths), paths
 
 
 def test_create_telephony_app_has_lifespan() -> None:

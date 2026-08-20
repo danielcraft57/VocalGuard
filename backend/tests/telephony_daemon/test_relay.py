@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
@@ -10,6 +11,22 @@ import pytest
 from backend.core.config import Config
 from backend.core.events import Event, EventType
 from backend.telephony_daemon.relay import PublicApiEventRelay, make_relay_handler
+
+
+async def _drain_relay_tasks() -> None:
+    """
+    Laisse tourner les create_task du relais (non bloquant par design).
+
+    Sans ca, assert_awaited_once rate : __call__ ne fait que planifier _relay_event.
+    """
+    await asyncio.sleep(0)
+    pending = [
+        t
+        for t in asyncio.all_tasks()
+        if t is not asyncio.current_task() and not t.done()
+    ]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 @pytest.mark.asyncio
@@ -22,6 +39,7 @@ async def test_public_api_relay_skips_without_token() -> None:
     )
     with patch("backend.telephony_daemon.relay.httpx.AsyncClient") as m:
         await relay(ev)
+        await _drain_relay_tasks()
     m.assert_not_called()
 
 
@@ -56,6 +74,7 @@ async def test_public_api_relay_posts_json() -> None:
 
     with patch("backend.telephony_daemon.relay.httpx.AsyncClient", return_value=fake):
         await relay(ev)
+        await _drain_relay_tasks()
 
     fake.post.assert_awaited_once()
     call_kw = fake.post.await_args
@@ -102,6 +121,7 @@ async def test_public_api_relay_logs_http_error() -> None:
                 data={"call_id": 1, "message": "m"},
             )
         )
+        await _drain_relay_tasks()
 
 
 @pytest.mark.asyncio
