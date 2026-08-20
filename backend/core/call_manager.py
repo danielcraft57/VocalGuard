@@ -436,19 +436,14 @@ class CallManager:
             vm_mode = (getattr(self.config, "voicemail_mode", "simple") or "simple").strip().lower()
             vm_simple = self.config.voicemail_enabled and vm_mode != "ivr"
 
-            # Bip tout de suite après l'accueil (avant tout VRX parallèle qui bloque ~30 s).
-            if vm_simple:
-                await self._play_beep_on_line(recorder=None)
-            elif self._use_modem_voice_serial():
-                await recorder.start(already_in_voice_mode=True)
-
             if self.config.voicemail_enabled:
                 if vm_mode == "ivr" and self._recognition_available:
-                    if not recorder._active:
+                    if self._use_modem_voice_serial():
                         await recorder.start(already_in_voice_mode=True)
                     await self._handle_voice_interaction(recorder=recorder)
                 else:
-                    await self._handle_voicemail_simple(recorder=recorder, skip_beep=vm_simple)
+                    # Un seul bip, juste avant l'enregistrement (pas avant + dedans).
+                    await self._handle_voicemail_simple(recorder=recorder, skip_beep=False)
             else:
                 await self._record_message(recorder=recorder)
 

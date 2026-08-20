@@ -15,23 +15,27 @@ if TYPE_CHECKING:
     from pydub import AudioSegment
 
 
-def write_beep_wav_8k(out_path: Path, *, freq_hz: int = 1000, duration_ms: int = 650) -> None:
+def write_beep_wav_8k(out_path: Path, *, freq_hz: int = 1000, duration_ms: int = 280) -> None:
     """
-    Génère un bip court compatible modem (8 kHz, mono, 8-bit non signé).
+    Genere un bip unique court (8 kHz, mono, 8-bit), style repondeur classique.
 
     @param out_path Fichier WAV de sortie.
-    @param freq_hz Fréquence du bip en hertz.
-    @param duration_ms Durée du bip en millisecondes.
+    @param freq_hz Frequence du bip en hertz.
+    @param duration_ms Duree du bip en millisecondes.
     """
     rate = 8000
     sample_count = max(1, int(rate * duration_ms / 1000))
     samples = bytearray(sample_count)
-    amplitude = 115
+    amplitude = 100
+    fade = max(1, int(rate * 0.01))  # 10 ms fade in/out anti-clic
     for i in range(sample_count):
         t = i / rate
-        # Deux tons brefs pour rester audible sur ligne PSTN / modem.
-        wave_val = 0.65 * math.sin(2.0 * math.pi * freq_hz * t)
-        wave_val += 0.35 * math.sin(2.0 * math.pi * (freq_hz * 1.25) * t)
+        env = 1.0
+        if i < fade:
+            env = i / fade
+        elif i > sample_count - fade:
+            env = (sample_count - i) / fade
+        wave_val = math.sin(2.0 * math.pi * freq_hz * t) * env
         value = 128 + int(amplitude * wave_val)
         samples[i] = max(0, min(255, value))
     out_path.parent.mkdir(parents=True, exist_ok=True)
