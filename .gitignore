@@ -65,7 +65,7 @@ config/intents_ivr.yaml
 # Audio temporaires
 audio/
 recordings/
-messages/
+/messages/
 *.wav
 *.mp3
 *.ogg
