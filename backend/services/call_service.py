@@ -14,8 +14,9 @@ from loguru import logger
 
 from backend.repositories.call_repository import CallRepository
 from backend.repositories.caller_repository import CallerRepository
+from backend.repositories.voicemail_repository import VoicemailRepository
 from backend.core.events import Event, EventType, event_bus
-from backend.database.models import Call
+from backend.database.models import Call, Voicemail
 from backend.core.config import Config
 
 from backend.osint.services import PhoneOsintService
@@ -33,6 +34,7 @@ class CallService:
         """
         self.call_repo = CallRepository(db)
         self.caller_repo = CallerRepository(db)
+        self.voicemail_repo = VoicemailRepository(db)
         self.db = db
         
         # Service d'enrichissement OSINT des numeros
@@ -297,4 +299,51 @@ class CallService:
         if not update_data:
             return call
         return self.call_repo.update(call_id, **update_data)
+
+    async def save_voicemail(
+        self,
+        audio_file: str,
+        *,
+        call_id: Optional[int] = None,
+        phone_number: Optional[str] = None,
+        caller_name: Optional[str] = None,
+        duration: Optional[int] = None,
+    ) -> Voicemail:
+        """
+        Persiste un message vocal apres le bip (fichier deja ecrit sur disque).
+
+        @param audio_file Chemin relatif ou absolu du WAV.
+        @param call_id Appel associe (optionnel).
+        @param phone_number Numero Caller ID.
+        @param caller_name Nom Caller ID.
+        @param duration Duree estimee en secondes.
+        @returns Ligne voicemails creee.
+        """
+        caller = None
+        if phone_number:
+            caller = self.caller_repo.get_by_phone_number(phone_number)
+        vm = self.voicemail_repo.create_voicemail(
+            audio_file=audio_file,
+            phone_number=phone_number,
+            caller_name=caller_name,
+            caller_id=caller.id if caller else None,
+            call_id=call_id,
+            duration=duration,
+        )
+        await event_bus.publish(
+            Event(
+                event_type=EventType.VOICEMAIL_RECORDED,
+                timestamp=datetime.utcnow(),
+                data={
+                    "voicemail_id": vm.id,
+                    "call_id": call_id,
+                    "phone_number": phone_number,
+                    "audio_file": audio_file,
+                    "duration": duration,
+                },
+                source="CallService",
+            )
+        )
+        logger.info("Message vocal enregistre: id={} file={}", vm.id, audio_file)
+        return vm
 

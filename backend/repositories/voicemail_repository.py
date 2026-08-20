@@ -71,6 +71,7 @@ class VoicemailRepository(BaseRepository[Voicemail]):
         self,
         audio_file: str,
         phone_number: Optional[str] = None,
+        caller_name: Optional[str] = None,
         caller_id: Optional[int] = None,
         call_id: Optional[int] = None,
         transcription: Optional[str] = None,
@@ -78,21 +79,23 @@ class VoicemailRepository(BaseRepository[Voicemail]):
     ) -> Voicemail:
         """
         Crée un nouveau message vocal
-        
+
         Args:
             audio_file: Chemin du fichier audio
             phone_number: Numéro de téléphone
+            caller_name: Nom affiché Caller ID (si disponible)
             caller_id: ID de l'appelant
             call_id: ID de l'appel associé
             transcription: Transcription du message
             duration: Durée en secondes
-            
+
         Returns:
             Message vocal créé
         """
         return self.create(
             audio_file=audio_file,
             phone_number=phone_number,
+            caller_name=caller_name,
             caller_id=caller_id,
             call_id=call_id,
             transcription=transcription,

@@ -1078,13 +1078,19 @@ class ModemHandler:
             if self.on_incoming_call:
                 await self.on_incoming_call()
         
-        # Détecter le Caller ID
+        # Détecter le Caller ID (souvent entre deux RING)
         if line_str.startswith('NMBR='):
-            caller_id = line_str.split('=')[1].strip()
+            caller_id = line_str.split('=', 1)[1].strip()
             logger.info(f"Caller ID: {caller_id}")
-            # Notifier avec le Caller ID si disponible
             if self.on_incoming_call:
                 await self.on_incoming_call(caller_id=caller_id)
+
+        if line_str.startswith('NAME='):
+            caller_name = line_str.split('=', 1)[1].strip()
+            if caller_name and caller_name.upper() not in ("O", "P", "OUT_OF_AREA", "PRIVATE"):
+                logger.info(f"Caller NAME: {caller_name}")
+                if self.on_incoming_call:
+                    await self.on_incoming_call(caller_name=caller_name)
     
     def close(self):
         """Ferme la connexion au modem"""

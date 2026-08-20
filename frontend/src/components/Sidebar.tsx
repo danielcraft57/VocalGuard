@@ -37,6 +37,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen = false, onNavigate }) 
   const items = [
     { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
     { href: "/calls", label: "Appels", icon: "call" },
+    { href: "/messages", label: "Messages", icon: "voicemail" },
     { href: "/filtering", label: "Filtrage d'appels", icon: "phonelink_erase" },
     { href: "/agenda", label: "Agenda", icon: "calendar_month" },
     { href: "/api-doc", label: "API publique", icon: "api" },

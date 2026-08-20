@@ -65,11 +65,13 @@ config/intents_ivr.yaml
 # Audio temporaires
 audio/
 recordings/
+messages/
 *.wav
 *.mp3
 *.ogg
 ivr_wav/
 vosk-models/
+.pytest_vg_tmp/
 
 # Artefacts IA / ML locaux
 models/**/*.pkl

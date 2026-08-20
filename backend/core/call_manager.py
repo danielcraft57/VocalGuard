@@ -148,6 +148,9 @@ class CallManager:
         self._incoming_recorder: Optional[_IncomingLineRecorder] = None
         self._incoming_handling = False
         self._line_already_answered = False
+        self._pending_cid: Optional[str] = None
+        self._pending_cname: Optional[str] = None
+        self._cid_event: Optional[asyncio.Event] = None
         self._voice_available = True  # False si STT ou TTS non disponibles (app demarre quand meme)
         self._recognition_available = False
 
@@ -287,15 +290,25 @@ class CallManager:
         """
         Traite un appel entrant.
 
-        Priorite : saisir la ligne modem des que possible pour couper la sonnerie
-        du telephone fixe en parallele (rings=0).
+        Attend le Caller ID (NMBR=/NAME=) pendant ``rings_before_answer`` sonneries
+        avant de decrocher, pour eviter les appels "inconnu". Avec rings=0,
+        decroche immediatement (priorite coupe-sonnerie).
 
         Args:
             caller_id: Numéro de téléphone de l'appelant
             caller_name: Nom de l'appelant (si disponible)
         """
+        if caller_id:
+            self._pending_cid = caller_id
+            if self._cid_event:
+                self._cid_event.set()
+        if caller_name:
+            self._pending_cname = caller_name
+            if self._cid_event and self._pending_cid:
+                self._cid_event.set()
+
         if self._incoming_handling:
-            if caller_id and self.current_call_id:
+            if (caller_id or caller_name) and self.current_call_id:
                 await self.call_service.set_call_caller_info(
                     self.current_call_id,
                     phone_number=caller_id,
@@ -305,14 +318,37 @@ class CallManager:
 
         self._incoming_handling = True
         self._line_already_answered = False
+        self._cid_event = asyncio.Event()
+        if caller_id:
+            self._pending_cid = caller_id
+            self._cid_event.set()
+        if caller_name:
+            self._pending_cname = caller_name
         logger.info(f"Appel entrant de {caller_id} ({caller_name})")
 
         try:
-            if self.config.rings_before_answer > 0:
-                await asyncio.sleep(self.config.rings_before_answer * 2)
+            rings = int(getattr(self.config, "rings_before_answer", 0) or 0)
+            if rings > 0 and not self._pending_cid:
+                # Cycle sonnerie FR ~5-6 s : laisser le modem recevoir NMBR= entre RING.
+                timeout_sec = max(4.0, float(rings) * 6.0)
+                logger.info(
+                    "Attente Caller ID jusqu a {:.0f}s ({} sonnerie(s)) avant ATA",
+                    timeout_sec,
+                    rings,
+                )
+                try:
+                    await asyncio.wait_for(self._cid_event.wait(), timeout=timeout_sec)
+                except asyncio.TimeoutError:
+                    logger.info("Pas de Caller ID apres {:.0f}s — decrochage quand meme", timeout_sec)
+            elif rings > 0 and self._pending_cid:
+                # CID deja la : petite pause pour laisser le 2e RING / NAME= eventuel
+                await asyncio.sleep(min(2.0, rings * 1.0))
 
-            # Decrocher en premier : arrete la sonnerie sur le fixe parallele
-            fast_seize = self.config.rings_before_answer <= 0 and self.modem.supports_voice_serial
+            caller_id = self._pending_cid or caller_id
+            caller_name = self._pending_cname or caller_name
+
+            # Decrocher : rings=0 => saisie rapide ; sinon ATA classique apres attente CID
+            fast_seize = rings <= 0 and self.modem.supports_voice_serial
             ok, ata_cid, ata_cname = await self.modem.answer_call(fast_voice_seize=fast_seize)
             self._line_already_answered = ok
             if not caller_id and ata_cid:
@@ -345,6 +381,9 @@ class CallManager:
         finally:
             self._incoming_handling = False
             self._line_already_answered = False
+            self._pending_cid = None
+            self._pending_cname = None
+            self._cid_event = None
     
     async def _handle_blocked_call(self, skip_answer: bool = False):
         """Traite un appel bloqué"""
@@ -442,6 +481,9 @@ class CallManager:
         """
         Répondeur classique : bip, enregistrement avec détection raccrochage / silence, message de fin.
 
+        Le PCM apres le bip est aussi sauve dans ``messages/`` + table ``voicemails``
+        (separe de l enregistrement global de l appel qui peut contenir l accueil).
+
         @param recorder Enregistreur parallèle entrant (optionnel).
         @param skip_beep True si le bip a déjà été joué juste après le message d'accueil.
         """
@@ -450,15 +492,49 @@ class CallManager:
         try:
             if not skip_beep:
                 await self._play_beep_on_line(recorder=rec)
+
+            base = Path(self.config.base_path) if self.config.base_path else Path.cwd()
+            messages_dir = base / "messages"
+            messages_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            call_id = self.current_call_id or 0
+            wav_rel = f"messages/vm_{call_id}_{ts}.wav"
+            persist_path = base / wav_rel
+
             audio_data = await self._record_audio(
                 duration=self.config.voicemail_max_duration,
                 already_in_voice_mode=self._use_modem_voice_serial(),
                 recorder=rec,
                 stop_on_remote_hangup=True,
                 silence_timeout_sec=float(getattr(self.config, "voicemail_silence_timeout_sec", 5) or 0),
+                persist_wav=persist_path,
             )
             if audio_data:
-                logger.info("Message répondeur capturé (%s octets PCM)", len(audio_data))
+                logger.info("Message répondeur capturé (%s octets PCM STT)", len(audio_data))
+
+            if persist_path.exists() and persist_path.stat().st_size >= 4000:
+                duration_sec = max(1, int(persist_path.stat().st_size / 8000))
+                phone = None
+                cname = None
+                if self.current_call_id:
+                    call_row = self.call_service.call_repo.get_by_id(self.current_call_id)
+                    if call_row:
+                        phone = call_row.phone_number
+                        cname = call_row.caller_name
+                await self.call_service.save_voicemail(
+                    wav_rel,
+                    call_id=self.current_call_id,
+                    phone_number=phone,
+                    caller_name=cname,
+                    duration=duration_sec,
+                )
+            elif persist_path.exists():
+                logger.info("Message trop court ignore ({})", persist_path.name)
+                try:
+                    persist_path.unlink()
+                except OSError:
+                    pass
+
             await self._play_on_line(
                 VOICEMAIL_GOODBYE,
                 already_in_voice_mode=self._use_modem_voice_serial(),
@@ -735,6 +811,7 @@ class CallManager:
         *,
         stop_on_remote_hangup: bool = True,
         silence_timeout_sec: float = 0.0,
+        persist_wav: Optional[Path] = None,
     ) -> bytes:
         """
         Enregistre l'audio depuis la ligne (modem VRX ou ALSA), puis retourne
@@ -746,6 +823,7 @@ class CallManager:
             recorder: Enregistreur parallèle entrant (pause / reprise)
             stop_on_remote_hangup: True pour couper si l'appelant raccroche
             silence_timeout_sec: Couper après N secondes de silence (0 = désactivé)
+            persist_wav: Si fourni, conserve le WAV 8 kHz (message vocal) au lieu de le supprimer
 
         Returns:
             Données PCM 16-bit 16 kHz mono (bytes)
@@ -760,7 +838,9 @@ class CallManager:
         recordings_dir = base / "recordings"
         recordings_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        temp_wav = recordings_dir / f"call_record_{ts}.wav"
+        temp_wav = persist_wav if persist_wav is not None else (recordings_dir / f"call_record_{ts}.wav")
+        if persist_wav is not None:
+            persist_wav.parent.mkdir(parents=True, exist_ok=True)
         try:
             if self._use_modem_voice_serial():
                 ok = await self.modem.record_wav_via_serial(
@@ -793,7 +873,7 @@ class CallManager:
             logger.exception("Erreur enregistrement ligne: %s", e)
             return b""
         finally:
-            if temp_wav.exists():
+            if persist_wav is None and temp_wav.exists():
                 try:
                     temp_wav.unlink()
                 except OSError:
