@@ -66,6 +66,7 @@ class Config(BaseSettings):
     voice_synthesis_engine: str = Field(default="pyttsx3")  # pyttsx3, gtts ou edgetts
     voice_language: str = Field(default="fr")
     edge_tts_voice: Optional[str] = Field(default="fr-FR-DeniseNeural")  # pour edgetts (ex. fr-FR-HenriNeural)
+    edge_tts_rate: str = Field(default="+12%")  # vitesse IVR edge-tts (ex. +12%)
     
     # Whisper
     whisper_model: str = Field(default="base")
@@ -101,7 +102,15 @@ class Config(BaseSettings):
     
     # Messagerie vocale
     voicemail_enabled: bool = Field(default=True)
-    voicemail_max_duration: int = Field(default=120)  # secondes
+    voicemail_mode: str = Field(default="simple")  # simple (repondeur) ou ivr (dialogue STT)
+    voicemail_greeting: str = Field(
+        default=(
+            "Bonjour, Daniel Craft. Absents pour le moment. "
+            "Laissez votre message après le bip."
+        )
+    )
+    voicemail_max_duration: int = Field(default=60)  # secondes (durée max enregistrement)
+    voicemail_silence_timeout_sec: int = Field(default=5)  # coupe si silence prolongé après la parole
     
     class Config:
         env_file = ".env"

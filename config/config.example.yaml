@@ -28,6 +28,7 @@ voice_synthesis_engine: "pyttsx3"  # pyttsx3, gtts ou edgetts
 # Pour edgetts: choisir une voix (ex. fr-FR-DeniseNeural, fr-FR-HenriNeural)
 # Liste des voix: python -m edge_tts --list-voices
 edge_tts_voice: "fr-FR-DeniseNeural"
+edge_tts_rate: "+12%"
 
 # Appels
 rings_before_answer: 2
@@ -61,5 +62,10 @@ commercial_detection:
 
 # Messagerie vocale
 voicemail_enabled: true
-voicemail_max_duration: 120  # secondes
+voicemail_mode: simple
+voicemail_greeting: >-
+  Bonjour, Daniel Craft. Absents pour le moment.
+  Laissez votre message après le bip.
+voicemail_max_duration: 60  # secondes
+voicemail_silence_timeout_sec: 5
 

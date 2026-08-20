@@ -133,16 +133,18 @@ class EventBus:
     
     async def _call_handler(self, handler: Callable, event: Event):
         """
-        Appelle un handler de manière sécurisée
-        
+        Appelle un handler de manière sécurisée (fonction async, coroutine ou objet avec __call__ async).
+
         Args:
             handler: Handler à appeler
             event: Événement à passer
         """
         if asyncio.iscoroutinefunction(handler):
             await handler(event)
-        else:
-            handler(event)
+            return
+        result = handler(event)
+        if asyncio.iscoroutine(result):
+            await result
     
     def clear(self):
         """Efface tous les handlers"""

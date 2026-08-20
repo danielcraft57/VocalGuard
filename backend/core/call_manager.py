@@ -19,7 +19,14 @@ from backend.core.events import Event, EventType, event_bus
 from backend.voice.recognition import VoiceRecognition
 from backend.voice.synthesis import VoiceSynthesis
 from backend.voice.ivr_patterns import IvrPatternsEngine
-from backend.voice.audio_utils import export_wav_8k_8bit, load_wav_as_16k16bit_pcm
+from backend.voice.audio_utils import export_wav_8k_8bit, load_wav_as_16k16bit_pcm, trim_leading_trailing_silence, write_beep_wav_8k
+from backend.voice.ivr_cache import IvrAudioCache
+
+DEFAULT_VOICEMAIL_GREETING = (
+    "Bonjour, Daniel Craft. Absents pour le moment. "
+    "Laissez votre message après le bip."
+)
+VOICEMAIL_GOODBYE = "Merci, votre message a bien été enregistré. Au revoir."
 from backend.services.call_service import CallService
 from backend.services.block_service import BlockService
 from backend.services.appointment_service import AppointmentService
@@ -139,7 +146,10 @@ class CallManager:
         self.is_running = False
         self.current_call_id: Optional[int] = None
         self._incoming_recorder: Optional[_IncomingLineRecorder] = None
+        self._incoming_handling = False
+        self._line_already_answered = False
         self._voice_available = True  # False si STT ou TTS non disponibles (app demarre quand meme)
+        self._recognition_available = False
 
         # Mode audio modem: voix série (Conexant) ou ALSA. USE_MODEM_VOICE_MODE=0 force ALSA (evite ton aigu).
         _voice_env = os.environ.get("USE_MODEM_VOICE_MODE", "").strip().lower()
@@ -148,6 +158,7 @@ class CallManager:
         self._alsa_play = os.environ.get("ALSA_MODEM_DEVICE") or os.environ.get("ALSA_DEVICE", "default")
         self._alsa_record = os.environ.get("ALSA_MODEM_RECORD_DEVICE") or self._alsa_play
         self._ivr_wav_dir: Optional[Path] = None
+        self._ivr_cache = IvrAudioCache(config, self.voice_synthesis)
         
         # Enregistrer les handlers d'événements
         self._setup_event_handlers()
@@ -204,12 +215,14 @@ class CallManager:
         # Initialiser la reconnaissance vocale (optionnel : si absent, pas de transcription IVR)
         try:
             await self.voice_recognition.initialize()
+            self._recognition_available = self.voice_recognition.engine in ("whisper", "vosk")
         except Exception as e:
             logger.warning(
                 "Reconnaissance vocale indisponible (VOSK/Whisper). "
                 "Appels pris en charge mais sans transcription. Erreur: %s",
                 e,
             )
+            self._recognition_available = False
             self._voice_available = False
 
         # Initialiser la synthèse vocale (optionnel)
@@ -222,10 +235,38 @@ class CallManager:
             )
             self._voice_available = False
 
+        if self._voice_available:
+            await self._warmup_ivr_cache()
+
         logger.info(
-            "Gestionnaire d'appels initialisé (voix: %s)",
-            "activée" if self._voice_available else "désactivée (modem + API actifs)",
+            "Gestionnaire d'appels initialisé (STT: %s, TTS: %s)",
+            "activée" if self._recognition_available else "désactivée",
+            "activée" if self._voice_available else "désactivée",
         )
+
+    def _greeting_text(self) -> str:
+        greeting = (self.config.voicemail_greeting or "").strip()
+        return greeting or DEFAULT_VOICEMAIL_GREETING
+
+    def _ivr_basename_for_text(self, text: str) -> Optional[str]:
+        normalized = text.strip()
+        if normalized == self._greeting_text().strip():
+            return "voicemail_greeting"
+        if normalized == VOICEMAIL_GOODBYE:
+            return "voicemail_goodbye"
+        return None
+
+    async def _warmup_ivr_cache(self) -> None:
+        """Pre-genere les WAV d'accueil / au revoir pour supprimer l'attente edge-tts a l'appel."""
+        greeting = await self._ivr_cache.ensure(self._greeting_text(), "voicemail_greeting")
+        goodbye = await self._ivr_cache.ensure(VOICEMAIL_GOODBYE, "voicemail_goodbye")
+        beep_path = self._ensure_ivr_wav_dir() / "voicemail_beep.wav"
+        write_beep_wav_8k(beep_path)
+        if greeting:
+            logger.info("IVR pret: {}", greeting.name)
+        if goodbye:
+            logger.info("IVR pret: {}", goodbye.name)
+        logger.info("IVR pret: {}", beep_path.name)
     
     async def run(self):
         """Lance la boucle principale de gestion des appels"""
@@ -244,52 +285,80 @@ class CallManager:
     
     async def handle_incoming_call(self, caller_id: Optional[str] = None, caller_name: Optional[str] = None):
         """
-        Traite un appel entrant
-        
+        Traite un appel entrant.
+
+        Priorite : saisir la ligne modem des que possible pour couper la sonnerie
+        du telephone fixe en parallele (rings=0).
+
         Args:
             caller_id: Numéro de téléphone de l'appelant
             caller_name: Nom de l'appelant (si disponible)
         """
+        if self._incoming_handling:
+            if caller_id and self.current_call_id:
+                await self.call_service.set_call_caller_info(
+                    self.current_call_id,
+                    phone_number=caller_id,
+                    caller_name=caller_name,
+                )
+            return
+
+        self._incoming_handling = True
+        self._line_already_answered = False
         logger.info(f"Appel entrant de {caller_id} ({caller_name})")
-        
+
         try:
-            # Créer l'enregistrement d'appel via le service
+            if self.config.rings_before_answer > 0:
+                await asyncio.sleep(self.config.rings_before_answer * 2)
+
+            # Decrocher en premier : arrete la sonnerie sur le fixe parallele
+            fast_seize = self.config.rings_before_answer <= 0 and self.modem.supports_voice_serial
+            ok, ata_cid, ata_cname = await self.modem.answer_call(fast_voice_seize=fast_seize)
+            self._line_already_answered = ok
+            if not caller_id and ata_cid:
+                caller_id = ata_cid
+            if not caller_name and ata_cname:
+                caller_name = ata_cname
+            if not ok:
+                logger.error("Impossible de decrocher au RING — le fixe peut continuer a sonner")
+
             call = await self.call_service.create_incoming_call(
                 phone_number=caller_id,
-                caller_name=caller_name
+                caller_name=caller_name,
             )
             self.current_call_id = call.id
-            
-            # Vérifier si l'appelant est bloqué
+
             is_blocked = await self.block_service.is_blocked(caller_id, caller_name)
-            
+
             if is_blocked:
                 logger.info(f"Appel bloqué: {caller_id}")
                 await self.call_service.block_call(call.id)
-                await self._handle_blocked_call()
+                await self._handle_blocked_call(skip_answer=self._line_already_answered)
             else:
-                # Attendre le nombre de sonneries configuré
-                await asyncio.sleep(self.config.rings_before_answer * 2)  # ~2 secondes par sonnerie
-                
-                # Décrocher et traiter l'appel
                 await self.call_service.answer_call(call.id)
-                await self._handle_permitted_call()
-        
+                await self._handle_permitted_call(skip_modem_answer=self._line_already_answered)
+
         except Exception as e:
             logger.exception(f"Erreur lors du traitement de l'appel: {e}")
             if self.current_call_id:
                 await self.call_service.miss_call(self.current_call_id)
+        finally:
+            self._incoming_handling = False
+            self._line_already_answered = False
     
-    async def _handle_blocked_call(self):
+    async def _handle_blocked_call(self, skip_answer: bool = False):
         """Traite un appel bloqué"""
         logger.info("Traitement d'un appel bloqué")
         
         try:
-            # Décrocher brièvement pour jouer le message sur la ligne (apres ATA -> already_in_voice_mode=True)
-            ok, _cid, _cname = await self.modem.answer_call()
-            if not ok:
-                logger.warning("Impossible de decrocher pour message bloque")
-            await self._play_on_line("Désolé, cet appel a été bloqué.", already_in_voice_mode=self._use_modem_voice_serial())
+            if not skip_answer:
+                ok, _cid, _cname = await self.modem.answer_call()
+                if not ok:
+                    logger.warning("Impossible de decrocher pour message bloque")
+            await self._play_on_line(
+                "Désolé, cet appel a été bloqué.",
+                already_in_voice_mode=self._use_modem_voice_serial() and skip_answer,
+            )
             await self.modem.hangup()
         
         except Exception as e:
@@ -299,15 +368,17 @@ class CallManager:
                 await self.call_service.complete_call(self.current_call_id, duration=0)
                 self.current_call_id = None
     
-    async def _handle_permitted_call(self):
+    async def _handle_permitted_call(self, skip_modem_answer: bool = False):
         """Traite un appel autorisé"""
         logger.info("Traitement d'un appel autorisé")
         recorder = _IncomingLineRecorder(self)
         self._incoming_recorder = recorder
 
         try:
-            # Décrocher (le modem peut renvoyer le Caller ID dans la reponse ATA)
-            ok, caller_id, caller_name = await self.modem.answer_call()
+            ok = skip_modem_answer
+            caller_id, caller_name = None, None
+            if not skip_modem_answer:
+                ok, caller_id, caller_name = await self.modem.answer_call()
             if not ok:
                 logger.error("Impossible de décrocher")
                 if self.current_call_id:
@@ -320,17 +391,26 @@ class CallManager:
                     caller_name=caller_name,
                 )
 
-            await recorder.start(already_in_voice_mode=True)
+            greeting = self._greeting_text()
+            await self._play_on_line(greeting, already_in_voice_mode=True, recorder=None)
 
-            # Jouer le message d'accueil sur la ligne (comme test_modem_answer_play_record : apres ATA, already_in_voice_mode=True)
-            greeting = "Bonjour, vous êtes bien connecté à VocalGuard. Que puis-je faire pour vous?"
-            await self._play_on_line(greeting, already_in_voice_mode=True, recorder=recorder)
+            vm_mode = (getattr(self.config, "voicemail_mode", "simple") or "simple").strip().lower()
+            vm_simple = self.config.voicemail_enabled and vm_mode != "ivr"
 
-            # Écouter la réponse de l'appelant
+            # Bip tout de suite après l'accueil (avant tout VRX parallèle qui bloque ~30 s).
+            if vm_simple:
+                await self._play_beep_on_line(recorder=None)
+            elif self._use_modem_voice_serial():
+                await recorder.start(already_in_voice_mode=True)
+
             if self.config.voicemail_enabled:
-                await self._handle_voice_interaction(recorder=recorder)
+                if vm_mode == "ivr" and self._recognition_available:
+                    if not recorder._active:
+                        await recorder.start(already_in_voice_mode=True)
+                    await self._handle_voice_interaction(recorder=recorder)
+                else:
+                    await self._handle_voicemail_simple(recorder=recorder, skip_beep=vm_simple)
             else:
-                # Mode simple: enregistrer directement le message
                 await self._record_message(recorder=recorder)
 
         except Exception as e:
@@ -353,6 +433,68 @@ class CallManager:
                 self.current_call_id = None
             self._incoming_recorder = None
     
+    async def _handle_voicemail_simple(
+        self,
+        recorder: Optional[_IncomingLineRecorder] = None,
+        *,
+        skip_beep: bool = False,
+    ):
+        """
+        Répondeur classique : bip, enregistrement avec détection raccrochage / silence, message de fin.
+
+        @param recorder Enregistreur parallèle entrant (optionnel).
+        @param skip_beep True si le bip a déjà été joué juste après le message d'accueil.
+        """
+        logger.info("Mode répondeur simple (bip + enregistrement)")
+        rec = recorder or self._incoming_recorder
+        try:
+            if not skip_beep:
+                await self._play_beep_on_line(recorder=rec)
+            audio_data = await self._record_audio(
+                duration=self.config.voicemail_max_duration,
+                already_in_voice_mode=self._use_modem_voice_serial(),
+                recorder=rec,
+                stop_on_remote_hangup=True,
+                silence_timeout_sec=float(getattr(self.config, "voicemail_silence_timeout_sec", 5) or 0),
+            )
+            if audio_data:
+                logger.info("Message répondeur capturé (%s octets PCM)", len(audio_data))
+            await self._play_on_line(
+                VOICEMAIL_GOODBYE,
+                already_in_voice_mode=self._use_modem_voice_serial(),
+                recorder=rec,
+            )
+        except Exception as e:
+            logger.exception("Erreur mode répondeur simple: %s", e)
+
+    async def _play_beep_on_line(self, recorder: Optional[_IncomingLineRecorder] = None) -> bool:
+        """
+        Joue un bip court sur la ligne (WAV 8 kHz généré localement).
+
+        @param recorder Enregistreur entrant à mettre en pause pendant le bip.
+        @returns True si la lecture a réussi.
+        """
+        if not self.modem.is_initialized:
+            return False
+        ivr_dir = self._ensure_ivr_wav_dir()
+        beep_path = ivr_dir / "voicemail_beep.wav"
+        write_beep_wav_8k(beep_path)
+        rec = recorder or self._incoming_recorder
+        if rec:
+            await rec.pause()
+        try:
+            if self._use_modem_voice_serial():
+                return await self.modem.play_wav_via_serial(beep_path, already_in_voice_mode=True)
+            proc = await asyncio.create_subprocess_exec(
+                "aplay", "-D", self._alsa_play, "-q", str(beep_path),
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+            return proc.returncode == 0
+        finally:
+            if rec:
+                await rec.resume(already_in_voice_mode=True)
+
     async def _handle_voice_interaction(self, recorder: Optional[_IncomingLineRecorder] = None):
         """Gère l'interaction vocale avec l'appelant"""
         logger.info("Démarrage de l'interaction vocale")
@@ -372,6 +514,8 @@ class CallManager:
                 duration=self.config.voicemail_max_duration,
                 already_in_voice_mode=self._use_modem_voice_serial(),
                 recorder=recorder,
+                stop_on_remote_hangup=True,
+                silence_timeout_sec=float(getattr(self.config, "voicemail_silence_timeout_sec", 5) or 0),
             )
             
             if not audio_data:
@@ -544,17 +688,32 @@ class CallManager:
         except ImportError:
             logger.warning("pydub manquant: pip install pydub pour jouer l'IVR sur la ligne")
             return False
-        temp_tts = await self.voice_synthesis.speak(text)
-        if not temp_tts or not Path(temp_tts).exists():
-            return False
-        ivr_dir = self._ensure_ivr_wav_dir()
-        out_wav = ivr_dir / f"ivr_live_{hash(text) % 2**31}.wav"
-        try:
-            segment = AudioSegment.from_file(str(temp_tts))
-            export_wav_8k_8bit(segment, out_wav)
-        except Exception as e:
-            logger.exception("Conversion TTS -> WAV 8k: %s", e)
-            return False
+
+        basename = self._ivr_basename_for_text(text)
+        out_wav: Optional[Path] = None
+        if basename:
+            out_wav = self._ivr_cache.get_if_fresh(text, basename)
+
+        if not out_wav:
+            temp_tts = await self.voice_synthesis.speak(
+                text,
+                rate=getattr(self.config, "edge_tts_rate", "+12%"),
+            )
+            if not temp_tts or not Path(temp_tts).exists():
+                return False
+            ivr_dir = self._ensure_ivr_wav_dir()
+            out_wav = ivr_dir / f"ivr_live_{hash(text) % 2**31}.wav"
+            try:
+                segment = AudioSegment.from_file(str(temp_tts))
+                thresh = -40.0
+                if segment.dBFS != float("-inf"):
+                    thresh = max(-45.0, segment.dBFS - 18.0)
+                segment = trim_leading_trailing_silence(segment, silence_threshold=thresh, padding_ms=15)
+                export_wav_8k_8bit(segment, out_wav, normalize=True)
+            except Exception as e:
+                logger.exception("Conversion TTS -> WAV 8k: %s", e)
+                return False
+
         if self._use_modem_voice_serial():
             ok = await self.modem.play_wav_via_serial(out_wav, already_in_voice_mode=already_in_voice_mode)
         else:
@@ -573,6 +732,9 @@ class CallManager:
         duration: int,
         already_in_voice_mode: bool = False,
         recorder: Optional[_IncomingLineRecorder] = None,
+        *,
+        stop_on_remote_hangup: bool = True,
+        silence_timeout_sec: float = 0.0,
     ) -> bytes:
         """
         Enregistre l'audio depuis la ligne (modem VRX ou ALSA), puis retourne
@@ -581,6 +743,9 @@ class CallManager:
         Args:
             duration: Durée d'enregistrement en secondes
             already_in_voice_mode: True si le modem est déjà en mode voix (après play_wav_via_serial)
+            recorder: Enregistreur parallèle entrant (pause / reprise)
+            stop_on_remote_hangup: True pour couper si l'appelant raccroche
+            silence_timeout_sec: Couper après N secondes de silence (0 = désactivé)
 
         Returns:
             Données PCM 16-bit 16 kHz mono (bytes)
@@ -599,7 +764,11 @@ class CallManager:
         try:
             if self._use_modem_voice_serial():
                 ok = await self.modem.record_wav_via_serial(
-                    float(duration), temp_wav, already_in_voice_mode=already_in_voice_mode
+                    float(duration),
+                    temp_wav,
+                    already_in_voice_mode=already_in_voice_mode,
+                    stop_on_remote_hangup=stop_on_remote_hangup,
+                    silence_timeout_sec=silence_timeout_sec,
                 )
             else:
                 proc = await asyncio.create_subprocess_exec(
@@ -637,15 +806,13 @@ class CallManager:
         logger.info("Enregistrement d'un message vocal")
         rec = recorder or self._incoming_recorder
         try:
-            await self._play_on_line(
-                "Veuillez laisser votre message après le bip.",
-                already_in_voice_mode=self._use_modem_voice_serial(),
-                recorder=rec,
-            )
+            await self._play_beep_on_line(recorder=rec)
             audio_data = await self._record_audio(
                 self.config.voicemail_max_duration,
                 already_in_voice_mode=self._use_modem_voice_serial(),
                 recorder=rec,
+                stop_on_remote_hangup=True,
+                silence_timeout_sec=float(getattr(self.config, "voicemail_silence_timeout_sec", 5) or 0),
             )
             if self.current_call_id and audio_data:
                 logger.info("Message enregistré (inclus dans l'enregistrement global de l'appel)")

@@ -6,6 +6,7 @@ Implémentation dédiée au processus telephony : une seule responsabilité, tes
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
 from typing import TYPE_CHECKING
@@ -46,6 +47,10 @@ class PublicApiEventRelay:
         return cls(base, token)
 
     async def __call__(self, event: Event) -> None:
+        """Relais non bloquant : ne retarde pas le decrochage modem."""
+        asyncio.create_task(self._relay_event(event))
+
+    async def _relay_event(self, event: Event) -> None:
         if not self._token:
             logger.debug("telephony relay: pas de TELEPHONY_INTERNAL_TOKEN, skip")
             return
@@ -62,7 +67,7 @@ class PublicApiEventRelay:
                     url,
                     json=payload,
                     headers={"X-VocalGuard-Internal": self._token},
-                    timeout=10.0,
+                    timeout=2.0,
                 )
             if r.status_code >= 400:
                 self._throttled_warning(

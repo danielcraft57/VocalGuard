@@ -74,13 +74,20 @@ class VoiceSynthesis:
             self.pyttsx3_engine = None
             return False
     
-    async def speak(self, text: str, save_to_file: Optional[Path] = None) -> Optional[Path]:
+    async def speak(
+        self,
+        text: str,
+        save_to_file: Optional[Path] = None,
+        *,
+        rate: Optional[str] = None,
+    ) -> Optional[Path]:
         """
         Génère la parole à partir du texte
         
         Args:
             text: Texte à prononcer
             save_to_file: Chemin optionnel pour sauvegarder l'audio
+            rate: Vitesse edge-tts (ex. "+12%"), ignoré pour les autres moteurs
             
         Returns:
             Chemin du fichier audio généré (si sauvegardé)
@@ -142,14 +149,21 @@ class VoiceSynthesis:
             logger.exception(f"Erreur lors de la synthèse gTTS: {e}")
             return None
 
-    async def _speak_edgetts(self, text: str, save_to_file: Optional[Path] = None) -> Optional[Path]:
+    async def _speak_edgetts(
+        self,
+        text: str,
+        save_to_file: Optional[Path] = None,
+        *,
+        rate: Optional[str] = None,
+    ) -> Optional[Path]:
         """Synthétise avec edge-tts (Microsoft, nombreuses voix)."""
         try:
             import edge_tts
             voice = getattr(self.config, "edge_tts_voice", None) or "fr-FR-DeniseNeural"
+            speech_rate = rate or getattr(self.config, "edge_tts_rate", None) or "+0%"
             if not save_to_file:
                 save_to_file = self.cache_dir / f"temp_{hash(text)}.mp3"
-            communicate = edge_tts.Communicate(text, voice)
+            communicate = edge_tts.Communicate(text, voice, rate=speech_rate)
             await communicate.save(str(save_to_file))
             logger.debug(f"Audio généré avec edge-tts: {save_to_file}")
             return save_to_file

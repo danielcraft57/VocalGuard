@@ -20,6 +20,8 @@ from typing import Optional, Tuple
 import serial
 from loguru import logger
 
+from backend.voice.audio_utils import pcm_u8_chunk_peak
+
 # Mode voix (callattendant) : commandes AT pour jouer vers la ligne
 # Voir https://github.com/emxsys/callattendant (Bruce Schubert / emxsys)
 _VOICE_MODE = "AT+FCLASS=8"
@@ -167,6 +169,7 @@ class ModemHandler:
             # Envoyer des commandes AT pour initialiser
             await self.send_command("AT")
             await self.send_command("ATE0")  # Désactiver l'écho
+            await self.send_command("AT+FCLASS=0")  # Mode data : indispensable pour recevoir RING
             await self.send_command("AT+VCID=1")  # Activer le Caller ID
             
             # Type de modem : Conexant / USR 5637 = mode voix série supporté
@@ -232,6 +235,7 @@ class ModemHandler:
             await asyncio.sleep(0.8)
             await self.send_command("AT", _retry=False)
             await self.send_command("ATE0", _retry=False)
+            await self.send_command("AT+FCLASS=0", _retry=False)
             await self.send_command("AT+VCID=1", _retry=False)
             logger.info("Modem reconnexion reussie sur {}", self.port)
             return True
@@ -332,13 +336,18 @@ class ModemHandler:
             name.group(1).strip() if name else None,
         )
 
-    async def answer_call(self) -> Tuple[bool, Optional[str], Optional[str]]:
+    async def answer_call(self, fast_voice_seize: bool = False) -> Tuple[bool, Optional[str], Optional[str]]:
         """
         Decroche l'appel entrant.
         Essaie ATA (reponse OK ou CONNECT), puis ATH1 (off-hook) si besoin.
+        Si ``fast_voice_seize`` est True (USR/Conexant, rings=0), passe directement
+        en mode voix AT+VLS=1 pour couper la sonnerie du fixe parallele plus vite.
+
         Retourne (succes, caller_id, caller_name) ; caller_id/name peuvent etre remplis
         si le modem envoie NMBR=/NAME= dans la reponse a ATA.
         """
+        if fast_voice_seize and self._is_conexant:
+            return await self._answer_call_voice_seize()
         caller_id, caller_name = None, None
         try:
             # Ne pas s'arreter sur RING : le modem envoie souvent DATE/NMBR/NAME/RING puis OK ou CONNECT
@@ -371,6 +380,31 @@ class ModemHandler:
         except Exception as e:
             logger.error("Erreur lors du decrochage: {}", e)
             return (False, None, None)
+
+    async def _answer_call_voice_seize(self) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        Decrochage rapide entrant : mode voix (FCLASS=8 + VLS=1) sans attendre ATA/ATH1.
+        """
+        caller_id, caller_name = None, None
+        try:
+            logger.info("Decrochage rapide entrant (mode voix direct)")
+            r_mode = await self.send_command_full(_VOICE_MODE, timeout=2.0)
+            if b"OK" not in r_mode:
+                logger.warning("Decrochage rapide: AT+FCLASS=8 echoue, fallback ATA")
+                return await self.answer_call(fast_voice_seize=False)
+            vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
+            await self.send_command_full(vsd, timeout=2.0)
+            r_hook = await self.send_command_full(_TAD_OFF_HOOK, timeout=2.0)
+            logger.info(
+                "Modem AT+VLS=1 (rapide) -> {}",
+                r_hook.decode("utf-8", errors="ignore").strip().replace("\r\n", " | ") or "(vide)",
+            )
+            if b"OK" in r_hook:
+                return (True, caller_id, caller_name)
+            return await self.answer_call(fast_voice_seize=False)
+        except Exception as e:
+            logger.error("Erreur decrochage rapide: {}", e)
+            return (False, caller_id, caller_name)
     
     async def hangup(self) -> bool:
         """
@@ -561,6 +595,12 @@ class ModemHandler:
                 end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
                 self.serial_connection.write(end_seq)
                 self.serial_connection.flush()
+                time.sleep(0.12)
+                try:
+                    while self.serial_connection.in_waiting > 0:
+                        self.serial_connection.read(self.serial_connection.in_waiting)
+                except (OSError, serial.SerialException):
+                    pass
             return True
         except Exception as e:
             logger.exception("Erreur lecture WAV via serie: {}", e)
@@ -576,12 +616,41 @@ class ModemHandler:
         except Exception:
             return None
 
+    def _read_vrx_chunk_unlocked(self) -> bytes:
+        """
+        Lit un bloc du flux VRX sans bloquer longtemps (tolère EIO USB).
+
+        @returns Octets lus sur le port série.
+        """
+        if not self.serial_connection or not self.serial_connection.is_open:
+            return b""
+        try:
+            pending = self.serial_connection.in_waiting
+        except OSError as e:
+            if getattr(e, "errno", None) != errno.EIO:
+                raise
+            pending = 0
+        if pending > 0:
+            return self.serial_connection.read(min(pending, 4096))
+        old_timeout = self.serial_connection.timeout
+        try:
+            self.serial_connection.timeout = 0.2
+            return self.serial_connection.read(4096) or b""
+        except OSError as e:
+            if getattr(e, "errno", None) == errno.EIO:
+                return b""
+            raise
+        finally:
+            self.serial_connection.timeout = old_timeout
+
     def _record_wav_serial_impl(
         self,
         duration_sec: float,
         out_path: Path,
         already_in_voice_mode: bool = False,
         stop_on_remote_hangup: bool = False,
+        silence_timeout_sec: float = 0.0,
+        silence_threshold: int = 14,
     ) -> bool:
         """
         Enregistre l'audio depuis la ligne telephonique via le mode voix (AT+VRX).
@@ -620,10 +689,16 @@ class ModemHandler:
             if not self._send_command_sync(_VOICE_RX, expect="CONNECT", timeout=10.0):
                 logger.warning("record_wav_serial: AT+VRX (CONNECT) a echoue")
                 return False
-            if stop_on_remote_hangup:
+            if stop_on_remote_hangup or silence_timeout_sec > 0:
+                details = []
+                if stop_on_remote_hangup:
+                    details.append("raccrochage distant")
+                if silence_timeout_sec > 0:
+                    details.append(f"silence {silence_timeout_sec:.0f}s")
                 logger.info(
-                    "Enregistrement ligne (VRX) max {} s — arret anticipe si raccrochage (marqueurs / DCD si disponible)",
+                    "Enregistrement ligne (VRX) max {} s — arret anticipe si {}",
                     duration_sec,
+                    " ou ".join(details),
                 )
             else:
                 logger.info("Enregistrement ligne (VRX) pendant {} s...", duration_sec)
@@ -631,6 +706,9 @@ class ModemHandler:
             deadline = time.monotonic() + duration_sec
             carrier_initial = self._serial_carrier_cd_sync() if stop_on_remote_hangup else None
             hangup_tail = bytearray()
+            silence_started: Optional[float] = None
+            min_record_before_silence = 1.5
+            record_started = time.monotonic()
             old_timeout = self.serial_connection.timeout
             self.serial_connection.timeout = 0.2
             io_error = False
@@ -647,9 +725,8 @@ class ModemHandler:
                                     "Enregistrement VRX interrompu: perte porteuse DCD (raccrochage probable)"
                                 )
                                 break
-                        n = self.serial_connection.in_waiting
-                        if n > 0:
-                            raw = self.serial_connection.read(n)
+                        raw = self._read_vrx_chunk_unlocked()
+                        if raw:
                             chunks.append(raw)
                             if stop_on_remote_hangup:
                                 hangup_tail.extend(raw)
@@ -660,6 +737,19 @@ class ModemHandler:
                                         "Enregistrement VRX interrompu: marqueur fin de ligne dans le flux serie"
                                     )
                                     break
+                            if silence_timeout_sec > 0:
+                                elapsed = time.monotonic() - record_started
+                                if elapsed >= min_record_before_silence:
+                                    if pcm_u8_chunk_peak(raw) >= silence_threshold:
+                                        silence_started = None
+                                    elif silence_started is None:
+                                        silence_started = time.monotonic()
+                                    elif time.monotonic() - silence_started >= silence_timeout_sec:
+                                        logger.info(
+                                            "Enregistrement VRX interrompu: silence {} s apres la parole",
+                                            silence_timeout_sec,
+                                        )
+                                        break
                         else:
                             time.sleep(0.02)
                     except (OSError, serial.SerialException) as e:
@@ -812,6 +902,7 @@ class ModemHandler:
         already_in_voice_mode: bool = False,
         *,
         stop_on_remote_hangup: bool = False,
+        silence_timeout_sec: float = 0.0,
     ) -> bool:
         """
         Enregistre l'audio depuis la ligne téléphonique via le port série (AT+VRX).
@@ -819,6 +910,7 @@ class ModemHandler:
 
         Si ``stop_on_remote_hangup`` est True, coupe l'enregistrement dès détection d'un marqueur type
         NO CARRIER dans le flux ou d'une perte DCD quand la porteuse était True au départ.
+        Si ``silence_timeout_sec`` > 0, coupe après ce délai de silence une fois la parole terminée.
         """
         loop = asyncio.get_event_loop()
         async with self._serial_io_lock:
@@ -830,6 +922,7 @@ class ModemHandler:
                     out_path,
                     already_in_voice_mode,
                     stop_on_remote_hangup,
+                    silence_timeout_sec,
                 ),
             )
 
@@ -867,6 +960,37 @@ class ModemHandler:
         async with self._serial_io_lock:
             return await loop.run_in_executor(None, self._half_duplex_uplink_sync, u8_pcm)
 
+    def _read_serial_unsolicited_unlocked(self) -> bytes:
+        """
+        Lit les messages spontanes du modem (RING, NMBR=, etc.) sans bloquer longtemps.
+
+        Evite ``in_waiting`` seul : sur certains USB ACM (USR5637), un EIO sur ``in_waiting``
+        empechait toute detection d'appel entrant pendant des jours.
+
+        @returns Octets lus sur le port serie (peut etre vide).
+        """
+        if not self.serial_connection or not self.serial_connection.is_open:
+            return b""
+        pending = 0
+        try:
+            pending = self.serial_connection.in_waiting
+        except OSError as e:
+            if getattr(e, "errno", None) != errno.EIO:
+                raise
+            pending = 0
+        if pending > 0:
+            return self.serial_connection.read(min(pending, 256))
+        old_timeout = self.serial_connection.timeout
+        try:
+            self.serial_connection.timeout = 0.05
+            return self.serial_connection.read(256) or b""
+        except OSError as e:
+            if getattr(e, "errno", None) == errno.EIO:
+                return b""
+            raise
+        finally:
+            self.serial_connection.timeout = old_timeout
+
     async def monitor_calls(self):
         """
         Surveille les appels entrants en lisant les données du modem.
@@ -879,6 +1003,7 @@ class ModemHandler:
         buffer = b""
         last_eio_log = 0.0
         eio_count = 0
+        eio_since_reconnect = 0
 
         while self.is_initialized:
             try:
@@ -892,11 +1017,9 @@ class ModemHandler:
                 async with self._serial_io_lock:
                     if not self.serial_connection or not self.serial_connection.is_open:
                         break
-                    n = self.serial_connection.in_waiting
-                    if n > 0:
-                        chunk_size = min(n, 256)
-                        data = self.serial_connection.read(chunk_size)
+                    data = self._read_serial_unsolicited_unlocked()
                 if data:
+                    eio_since_reconnect = 0
                     buffer += data
                     while b"\r\n" in buffer:
                         line, buffer = buffer.split(b"\r\n", 1)
@@ -910,14 +1033,25 @@ class ModemHandler:
                     break
                 if e.errno == errno.EIO:
                     eio_count += 1
+                    eio_since_reconnect += 1
                     now = time.monotonic()
                     if now - last_eio_log >= 30.0:
-                        logger.debug(
-                            "EIO sur le port modem (normal sur certains USB), reprise: {} occurrences",
-                            eio_count,
+                        logger.warning(
+                            "EIO sur le port modem ({} occurrences depuis le dernier redemarrage surveillance)",
+                            eio_since_reconnect,
                         )
                         last_eio_log = now
-                    await asyncio.sleep(0.5)
+                    if eio_since_reconnect >= 20:
+                        logger.warning(
+                            "Trop d'EIO consecutifs ({} total), reconnexion modem...",
+                            eio_count,
+                        )
+                        if await self.reconnect():
+                            eio_since_reconnect = 0
+                        else:
+                            await asyncio.sleep(2.0)
+                    else:
+                        await asyncio.sleep(0.5)
                 else:
                     logger.error("Erreur OS sur le modem: {}", e)
                     await asyncio.sleep(1)

@@ -4,6 +4,7 @@ Export WAV 8 kHz, mono, 8-bit pour compatibilité modem voix (callattendant, Voc
 Lecture et conversion pour STT (16 kHz 16-bit).
 """
 
+import math
 import re
 import subprocess
 import wave
@@ -14,7 +15,79 @@ if TYPE_CHECKING:
     from pydub import AudioSegment
 
 
-def export_wav_8k_8bit(segment: "AudioSegment", out_path: Path) -> None:
+def write_beep_wav_8k(out_path: Path, *, freq_hz: int = 1000, duration_ms: int = 650) -> None:
+    """
+    Génère un bip court compatible modem (8 kHz, mono, 8-bit non signé).
+
+    @param out_path Fichier WAV de sortie.
+    @param freq_hz Fréquence du bip en hertz.
+    @param duration_ms Durée du bip en millisecondes.
+    """
+    rate = 8000
+    sample_count = max(1, int(rate * duration_ms / 1000))
+    samples = bytearray(sample_count)
+    amplitude = 115
+    for i in range(sample_count):
+        t = i / rate
+        # Deux tons brefs pour rester audible sur ligne PSTN / modem.
+        wave_val = 0.65 * math.sin(2.0 * math.pi * freq_hz * t)
+        wave_val += 0.35 * math.sin(2.0 * math.pi * (freq_hz * 1.25) * t)
+        value = 128 + int(amplitude * wave_val)
+        samples[i] = max(0, min(255, value))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(out_path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(1)
+        wf.setframerate(rate)
+        wf.writeframes(bytes(samples))
+
+
+def pcm_u8_chunk_peak(raw: bytes) -> int:
+    """
+    Pic d'amplitude d'un bloc PCM 8-bit centré sur 128 (0 = silence).
+
+    @param raw Octets audio bruts du flux VRX.
+    @returns Écart maximal par rapport au silence (0-127).
+    """
+    if not raw:
+        return 0
+    peak = 0
+    for byte in raw:
+        deviation = abs(byte - 128)
+        if deviation > peak:
+            peak = deviation
+    return peak
+
+
+def trim_leading_trailing_silence(
+    segment: "AudioSegment",
+    *,
+    silence_threshold: float = -40.0,
+    chunk_size: int = 10,
+    padding_ms: int = 30,
+) -> "AudioSegment":
+    """
+    Retire le silence au debut et a la fin (compatible pydub sans strip_silence).
+    """
+    from pydub.silence import detect_leading_silence
+
+    if len(segment) <= 0:
+        return segment
+    start = detect_leading_silence(
+        segment, silence_threshold=silence_threshold, chunk_size=chunk_size
+    )
+    end = detect_leading_silence(
+        segment.reverse(), silence_threshold=silence_threshold, chunk_size=chunk_size
+    )
+    start = max(0, start - padding_ms)
+    end = max(0, end - padding_ms)
+    duration = len(segment)
+    if start + end >= duration:
+        return segment
+    return segment[start : duration - end]
+
+
+def export_wav_8k_8bit(segment: "AudioSegment", out_path: Path, *, normalize: bool = False) -> None:
     """
     Exporte un AudioSegment en WAV 8 kHz, mono, 8-bit non signé.
     Format attendu par le modem Conexant (mode voix série) et IVR téléphone.
@@ -22,14 +95,23 @@ def export_wav_8k_8bit(segment: "AudioSegment", out_path: Path) -> None:
     Args:
         segment: Segment pydub (peut être 16-bit, autre rate).
         out_path: Fichier WAV de sortie.
+        normalize: Normalise le niveau (~ -3 dBFS) avant conversion 8-bit.
     """
-    segment = segment.set_frame_rate(8000).set_channels(1)
+    segment = segment.set_channels(1).set_frame_rate(8000)
+    if normalize:
+        peak = segment.max or 0
+        if peak > 0:
+            # Cible ~28000 sur 32767 (-3 dB) pour limiter la distorsion 8-bit.
+            target = 28000.0
+            gain_db = 20.0 * math.log10(target / float(peak))
+            if abs(gain_db) > 0.05:
+                segment = segment.apply_gain(gain_db)
     raw = segment.raw_data
-    samples_8 = []
+    samples_8 = bytearray()
     for i in range(0, len(raw), 2):
         s16 = int.from_bytes(raw[i : i + 2], "little", signed=True)
-        u8 = max(0, min(255, (s16 >> 8) + 128))
-        samples_8.append(u8)
+        u8 = int(round((s16 / 32768.0) * 127.0 + 128.0))
+        samples_8.append(max(0, min(255, u8)))
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(out_path), "wb") as wf:
         wf.setnchannels(1)
