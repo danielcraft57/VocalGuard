@@ -2,35 +2,27 @@
 
 from __future__ import annotations
 
+from backend.api.routes import outgoing_audio
 from backend.core.config import Config
 from backend.telephony_daemon.factory import create_telephony_app
 
 
-def _collect_paths(routes: list) -> list[str]:
-    """
-    Recupere tous les chemins, y compris sous-routeurs (Starlette/FastAPI recent).
-
-    Sur certaines versions, include_router pose un Mount a path vide : les routes
-    filles ne sont pas visibles dans app.routes sans parcours recursif.
-    """
-    out: list[str] = []
-    for route in routes:
-        path = getattr(route, "path", None) or ""
-        if path:
-            out.append(path)
-        nested = getattr(route, "routes", None)
-        if nested:
-            out.extend(_collect_paths(list(nested)))
-    return out
-
-
 def test_create_telephony_app_exposes_health_and_calls_routes() -> None:
+    """
+    Verifie health + routes sortantes.
+
+    Depuis FastAPI 0.137, app.routes contient des _IncludedRouter sans .path :
+    on lit le schema OpenAPI (stable) et le router websocket directement.
+    """
     app = create_telephony_app(Config())
     assert getattr(app.state, "is_vocalguard_telephony_daemon", False) is True
-    paths = _collect_paths(list(app.routes))
-    assert "/health" in paths, paths
-    assert any("outgoing/start" in p for p in paths), paths
-    assert any("outgoing-call" in p and "audio" in p for p in paths), paths
+
+    openapi_paths = list(app.openapi().get("paths", {}))
+    assert "/health" in openapi_paths, openapi_paths
+    assert any("outgoing/start" in p for p in openapi_paths), openapi_paths
+
+    ws_paths = [getattr(r, "path", "") or "" for r in outgoing_audio.router.routes]
+    assert any("outgoing-call" in p and "audio" in p for p in ws_paths), ws_paths
 
 
 def test_create_telephony_app_has_lifespan() -> None:

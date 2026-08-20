@@ -134,6 +134,7 @@ if (-not $RestartOnly) {
             --exclude=audio_cache `
             --exclude=data `
             --exclude=recordings `
+            --exclude=scripts/experimental `
             --exclude=*.db `
             --exclude=.env `
             --exclude=.env.prod `
