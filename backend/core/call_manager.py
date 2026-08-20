@@ -23,8 +23,8 @@ from backend.voice.audio_utils import export_wav_8k_8bit, load_wav_as_16k16bit_p
 from backend.voice.ivr_cache import IvrAudioCache
 
 DEFAULT_VOICEMAIL_GREETING = (
-    "Bonjour, Daniel Craft. Absents pour le moment. "
-    "Laissez votre message après le bip."
+    "Bonjour, vous êtes bien chez DanielCraft, de Loïc Daniel, "
+    "merci de laisser un message."
 )
 VOICEMAIL_GOODBYE = "Merci, votre message a bien été enregistré. Au revoir."
 from backend.services.call_service import CallService

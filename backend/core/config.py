@@ -105,8 +105,8 @@ class Config(BaseSettings):
     voicemail_mode: str = Field(default="simple")  # simple (repondeur) ou ivr (dialogue STT)
     voicemail_greeting: str = Field(
         default=(
-            "Bonjour, Daniel Craft. Absents pour le moment. "
-            "Laissez votre message après le bip."
+            "Bonjour, vous êtes bien chez DanielCraft, de Loïc Daniel, "
+            "merci de laisser un message."
         )
     )
     voicemail_max_duration: int = Field(default=60)  # secondes (durée max enregistrement)

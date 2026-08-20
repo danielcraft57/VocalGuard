@@ -65,8 +65,8 @@ commercial_detection:
 voicemail_enabled: true
 voicemail_mode: simple
 voicemail_greeting: >-
-  Bonjour, Daniel Craft. Absents pour le moment.
-  Laissez votre message après le bip.
+  Bonjour, vous êtes bien chez DanielCraft, de Loïc Daniel,
+  merci de laisser un message.
 voicemail_max_duration: 60  # secondes
 voicemail_silence_timeout_sec: 5
 
