@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke tests stack API + telephony (a lancer sur node11 ou depuis SSH).
+# Smoke tests stack API + telephony (a lancer sur node14 ou depuis SSH).
 # Usage: bash scripts/smoke_telephony_stack.sh [/opt/vocalguard]
 # Depuis Windows / CI sans bash : python scripts/test_api_stack.py (memes checks HTTP de base).
 set -euo pipefail

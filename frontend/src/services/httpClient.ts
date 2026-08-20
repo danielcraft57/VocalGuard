@@ -45,7 +45,7 @@ export function getWsBaseUrl(): string {
 
 /**
  * WebSocket audio appel sortant : avec USE_TELEPHONY_DAEMON la session vit sur le daemon
- * (ex. node11:8090), pas sur l API locale — definir NEXT_PUBLIC_TELEPHONY_WS_BASE (ex. ws://node11.lan:8090).
+ * (ex. node14:8090), pas sur l API locale — definir NEXT_PUBLIC_TELEPHONY_WS_BASE (ex. ws://node14.lan:8090).
  */
 export function getOutgoingAudioWsBaseUrl(): string {
   const tel = (process.env.NEXT_PUBLIC_TELEPHONY_WS_BASE ?? "").trim();

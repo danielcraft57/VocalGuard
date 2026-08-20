@@ -16,7 +16,7 @@ jobs:
         run: |
           echo "CD mode: pull-based deployment."
           echo "The production server should run scripts/prod_auto_update.sh from cron."
-          echo "Reason: node11.lan is private and not reachable from GitHub-hosted runners."
+          echo "Reason: node14.lan is private and not reachable from GitHub-hosted runners."
           echo "Commit pushed to master: $GITHUB_SHA"
 
   notify-success:

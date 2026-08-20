@@ -10,14 +10,14 @@ Ce projet inclut maintenant :
   - mode **pull-based** (pas de SSH direct depuis GitHub)
   - le serveur met à jour via `scripts/prod_auto_update.sh` (cron)
 
-## Pourquoi pas de SSH direct GitHub -> node11.lan ?
+## Pourquoi pas de SSH direct GitHub -> node14.lan ?
 
-`node11.lan` est un hostname privé LAN, inaccessible depuis les runners GitHub hébergés.
+`node14.lan` est un hostname privé LAN, inaccessible depuis les runners GitHub hébergés.
 Donc la stratégie fiable est :
 
 1. merge sur `master`
 2. workflow CI/CD valide le push
-3. cron sur `node11` fait `fetch/pull + restart`
+3. cron sur `node14` fait `fetch/pull + restart`
 
 ## Secrets GitHub (optionnels)
 

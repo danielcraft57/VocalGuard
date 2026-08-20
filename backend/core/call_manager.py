@@ -197,7 +197,7 @@ class CallManager:
         """Initialise tous les composants"""
         logger.info("Initialisation du gestionnaire d'appels...")
         
-        # Modem : sur l API principale avec USE_TELEPHONY_DAEMON=1 le modem est sur le daemon (ex. node11).
+        # Modem : sur l API principale avec USE_TELEPHONY_DAEMON=1 le modem est sur le daemon (ex. node14).
         # Ne pas ouvrir MODEM_PORT ici (evite /dev/ttyACM0 sur Windows et traces inutiles).
         modem_initialized = False
         if self.config.use_telephony_daemon:

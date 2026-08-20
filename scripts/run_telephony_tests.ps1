@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Lance les tests telephony : pytest local, smoke sur SSH (node11), ou checks HTTP vers node11.
+  Lance les tests telephony : pytest local, smoke sur SSH (node14), ou checks HTTP vers node14.
 
 .PARAMETER Mode
   Unit       — pytest backend/tests (sans modem, offline).
@@ -9,7 +9,7 @@
   Stack      — meme checks via scripts/test_api_stack.py (Python, portable Linux/macOS/Windows).
 
 .PARAMETER FetchTokenFromRemote
-  (Endpoints) Lit TELEPHONY_INTERNAL_TOKEN sur le serveur via SSH (aligne avec l’API sur node11).
+  (Endpoints) Lit TELEPHONY_INTERNAL_TOKEN sur le serveur via SSH (aligne avec l’API sur node14).
 
 .PARAMETER StrictInternalPost
   (Endpoints) Echoue si le POST interne n’est pas 202 ; sinon un 401 n’est qu’un avertissement (token local ≠ serveur).
@@ -18,21 +18,21 @@
   .\scripts\run_telephony_tests.ps1 -Mode Unit
 
 .EXAMPLE
-  .\scripts\run_telephony_tests.ps1 -Mode RemoteSsh -RemoteHost node11.lan
+  .\scripts\run_telephony_tests.ps1 -Mode RemoteSsh -RemoteHost node14.lan
 
 .EXAMPLE
-  .\scripts\run_telephony_tests.ps1 -Mode Endpoints -RemoteHost node11.lan -FetchTokenFromRemote
+  .\scripts\run_telephony_tests.ps1 -Mode Endpoints -RemoteHost node14.lan -FetchTokenFromRemote
 
 .EXAMPLE
-  .\scripts\run_telephony_tests.ps1 -Mode Endpoints -RemoteHost node11.lan -InternalToken "meme_secret_que_sur_pi"
+  .\scripts\run_telephony_tests.ps1 -Mode Endpoints -RemoteHost node14.lan -InternalToken "meme_secret_que_sur_pi"
 
 .EXAMPLE
-  .\scripts\run_telephony_tests.ps1 -Mode Stack -RemoteHost node11.lan
+  .\scripts\run_telephony_tests.ps1 -Mode Stack -RemoteHost node14.lan
 #>
 param(
     [ValidateSet("Unit", "RemoteSsh", "Endpoints", "Stack")]
     [string]$Mode = "Unit",
-    [string]$RemoteHost = "node11.lan",
+    [string]$RemoteHost = "node14.lan",
     [string]$RemoteUser = "pi",
     [string]$RemoteDir = "/opt/vocalguard",
     [int]$ApiPort = 8000,
@@ -170,7 +170,7 @@ switch ($Mode) {
                     if ($resp) { $code = [int]$resp.StatusCode }
                 } catch { }
                 if ($code -eq 401) {
-                    Write-Host "401 Non autorise : le TELEPHONY_INTERNAL_TOKEN du PC ne correspond pas au .env sur node11." -ForegroundColor Yellow
+                    Write-Host "401 Non autorise : le TELEPHONY_INTERNAL_TOKEN du PC ne correspond pas au .env sur node14." -ForegroundColor Yellow
                     Write-Host "  Utilise : -FetchTokenFromRemote   ou   -InternalToken '<valeur du Pi>'" -ForegroundColor DarkYellow
                     if ($StrictInternalPost) { exit 1 }
                 } else {

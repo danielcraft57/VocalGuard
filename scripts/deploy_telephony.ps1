@@ -12,7 +12,7 @@
   Ne rebuild pas l'archive : redemarre seulement systemd sur le serveur (code deja a jour).
 
 .EXAMPLE
-  .\scripts\deploy_telephony.ps1 -AppServerName node11.lan -RunTests
+  .\scripts\deploy_telephony.ps1 -AppServerName node14.lan -RunTests
 
 .EXAMPLE
   .\scripts\deploy_telephony.ps1 -RestartOnly -RunTests
@@ -36,7 +36,7 @@ if (-not $AppServerName -or $AppServerName.Trim() -eq "") {
     } elseif ($env:RPI_SERVER -and $env:RPI_SERVER.Trim() -ne "") {
         $AppServerName = $env:RPI_SERVER.Trim()
     } else {
-        $AppServerName = "node11.lan"
+        $AppServerName = "node14.lan"
     }
 }
 if (-not $AppServerUser -or $AppServerUser.Trim() -eq "") {

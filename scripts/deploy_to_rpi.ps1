@@ -34,7 +34,7 @@ if (-not $AppServerName -or $AppServerName.Trim() -eq "") {
         # compat legacy
         $AppServerName = $env:RPI_SERVER.Trim()
     } else {
-        $AppServerName = "node11.lan"
+        $AppServerName = "node14.lan"
     }
 }
 if (-not $AppServerUser -or $AppServerUser.Trim() -eq "") {

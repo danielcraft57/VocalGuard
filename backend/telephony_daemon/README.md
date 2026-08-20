@@ -23,7 +23,7 @@ Même dépôt / même `Config` que l’API (base de données, secrets `TELEPHONY
 |--------|--------|
 | `scripts/deploy_telephony.ps1` | Depuis le PC : archive, sync `.env.prod`, `pip`, systemd `vocalguard-telephony`, option `-RunTests` / `-RestartOnly`. |
 | `scripts/run_telephony_daemon.sh` | Sur le Pi : lance uvicorn (bind `TELEPHONY_BIND_*`). |
-| `scripts/run_telephony_tests.ps1` | **Unit** : pytest local. **RemoteSsh** : `smoke_telephony_stack.sh` sur le serveur (normalisation CRLF avant bash). **Endpoints** : HTTP vers `node11` ; POST interne avec `-FetchTokenFromRemote` ou `-InternalToken` si le token du PC ≠ `.env` du Pi. |
+| `scripts/run_telephony_tests.ps1` | **Unit** : pytest local. **RemoteSsh** : `smoke_telephony_stack.sh` sur le serveur (normalisation CRLF avant bash). **Endpoints** : HTTP vers `node14` ; POST interne avec `-FetchTokenFromRemote` ou `-InternalToken` si le token du PC ≠ `.env` du Pi. |
 | `scripts/smoke_telephony_stack.sh` | Sur le serveur (répertoire app) : curl + pytest. |
 
 Tests unitaires : `pytest backend/tests/test_telephony_pipeline.py backend/tests/telephony_daemon -q`.

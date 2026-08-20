@@ -4,7 +4,7 @@ Tests HTTP « stack » VocalGuard (API + daemon téléphonie + relais interne op
 
 Usage (depuis la racine du dépôt) :
   python scripts/test_api_stack.py
-  python scripts/test_api_stack.py --api-origin http://127.0.0.1:8000 --daemon-url http://node11.lan:8090
+  python scripts/test_api_stack.py --api-origin http://127.0.0.1:8000 --daemon-url http://node14.lan:8090
 
 Variables d'environnement (priorité après les arguments) :
   VOCALGUARD_API_ORIGIN   ex. http://127.0.0.1:8000  (sans /api/v1 ; /health est à la racine)
@@ -99,7 +99,7 @@ def main() -> int:
     ap.add_argument(
         "--daemon-url",
         default=None,
-        help="URL du daemon téléphonie pour GET /health (ex. http://node11.lan:8090)",
+        help="URL du daemon téléphonie pour GET /health (ex. http://node14.lan:8090)",
     )
     ap.add_argument(
         "--env-file",

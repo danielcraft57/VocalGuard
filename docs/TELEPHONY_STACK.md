@@ -14,7 +14,7 @@ Sur une même machine (ex. Raspberry Pi), les deux peuvent coexister avec `TELEP
 | Variable | Où | Rôle |
 |----------|-----|------|
 | `USE_TELEPHONY_DAEMON` | API principale | `1` : pas d’ouverture du modem dans ce processus ; proxification des routes sortantes vers `TELEPHONY_DAEMON_URL`. **Sur le service `vocalguard-telephony`, cette valeur est ignorée** (le daemon traite toujours les appels en local). |
-| `TELEPHONY_DAEMON_URL` | API principale | URL du daemon (ex. `http://node11.lan:8090`). |
+| `TELEPHONY_DAEMON_URL` | API principale | URL du daemon (ex. `http://node14.lan:8090`). |
 | `TELEPHONY_PUBLIC_API_URL` | **Daemon** | URL joignable **depuis le Pi** vers l’API qui reçoit les événements (ex. `http://192.168.x.x:8000` si l’API tourne sur un PC). |
 | `TELEPHONY_INTERNAL_TOKEN` | API + daemon | Même secret pour l’en-tête `X-VocalGuard-Internal` sur `/internal/telephony-events`. |
 | `TELEPHONY_BIND_HOST` / `TELEPHONY_BIND_PORT` | Daemon | Écoute (souvent `0.0.0.0:8090` sur le réseau local). |
@@ -27,7 +27,7 @@ Sur une même machine (ex. Raspberry Pi), les deux peuvent coexister avec `TELEP
 
 2. **Frontend** : pour entendre la ligne dans le navigateur, la session audio vit sur le daemon. Définir dans `frontend/.env.local` :
    ```env
-   NEXT_PUBLIC_TELEPHONY_WS_BASE=ws://node11.lan:8090
+   NEXT_PUBLIC_TELEPHONY_WS_BASE=ws://node14.lan:8090
    ```
    (`NEXT_PUBLIC_*` : redémarrer `next dev` après modification.)
 
@@ -36,7 +36,7 @@ Sur une même machine (ex. Raspberry Pi), les deux peuvent coexister avec `TELEP
 ## Déploiement daemon seul
 
 ```powershell
-.\scripts\deploy_telephony.ps1 -RemoteHost node11.lan
+.\scripts\deploy_telephony.ps1 -AppServerName node14.lan
 ```
 
 Synchronise le dépôt, copie `.env.prod` → `.env` distant, `pip`, service `vocalguard-telephony`.
@@ -44,6 +44,6 @@ Synchronise le dépôt, copie `.env.prod` → `.env` distant, `pip`, service `vo
 ## Vérifications HTTP
 
 - Script portable : `python scripts/test_api_stack.py` (racine du dépôt).
-- PowerShell : `.\scripts\run_telephony_tests.ps1 -Mode Stack -RemoteHost node11.lan`
+- PowerShell : `.\scripts\run_telephony_tests.ps1 -Mode Stack -RemoteHost node14.lan`
 
 Voir aussi `backend/telephony_daemon/README.md` et `scripts/smoke_telephony_stack.sh` (sur le serveur Linux).
