@@ -11,7 +11,7 @@ from sqlalchemy import func, or_
 
 from backend.api.models import DashboardStatsResponse, DailyStatsItem
 from backend.database.database import get_db
-from backend.database.models import Call, Appointment, Quote, PhoneNumberProfile
+from backend.database.models import Call, Appointment, Quote, PhoneNumberProfile, Voicemail
 
 
 router = APIRouter()
@@ -57,6 +57,20 @@ async def get_dashboard_stats(db: Session = Depends(get_db)) -> DashboardStatsRe
         db.query(func.count(Call.id)).filter(Call.status == "blocked").scalar() or 0
     )
 
+    voicemails_today = (
+        db.query(func.count(Voicemail.id))
+        .filter(Voicemail.created_at >= today_start, Voicemail.created_at < today_end)
+        .scalar()
+        or 0
+    )
+    voicemails_unread = (
+        db.query(func.count(Voicemail.id))
+        .filter(Voicemail.is_read == False, Voicemail.is_archived == False)  # noqa: E712
+        .scalar()
+        or 0
+    )
+    voicemails_total = db.query(func.count(Voicemail.id)).scalar() or 0
+
     daily_series = _build_daily_series(db)
 
     return DashboardStatsResponse(
@@ -66,6 +80,9 @@ async def get_dashboard_stats(db: Session = Depends(get_db)) -> DashboardStatsRe
         suspects_count=suspects_count,
         total_calls=total_calls,
         total_blocked=total_blocked,
+        voicemails_today=voicemails_today,
+        voicemails_unread=voicemails_unread,
+        voicemails_total=voicemails_total,
         daily_series=daily_series,
     )
 
@@ -107,6 +124,12 @@ def _build_daily_series(db: Session) -> list:
             .scalar()
             or 0
         )
+        voicemails = (
+            db.query(func.count(Voicemail.id))
+            .filter(Voicemail.created_at >= day_start, Voicemail.created_at < day_end)
+            .scalar()
+            or 0
+        )
         jour_label = JOURS[d.weekday()]
         result.append(
             DailyStatsItem(
@@ -116,6 +139,7 @@ def _build_daily_series(db: Session) -> list:
                 rdv=rdv,
                 quotes=quotes,
                 spam=spam,
+                voicemails=voicemails,
             )
         )
     return result

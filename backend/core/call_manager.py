@@ -516,13 +516,19 @@ class CallManager:
                     if call_row:
                         phone = call_row.phone_number
                         cname = call_row.caller_name
-                await self.call_service.save_voicemail(
+                vm = await self.call_service.save_voicemail(
                     wav_rel,
                     call_id=self.current_call_id,
                     phone_number=phone,
                     caller_name=cname,
                     duration=duration_sec,
                 )
+                # STT en arriere-plan (Vosk/Whisper) pour ne pas retarder le message de fin.
+                if audio_data and self._recognition_available and vm:
+                    asyncio.create_task(
+                        self._transcribe_voicemail_async(vm.id, audio_data),
+                        name=f"stt_vm_{vm.id}",
+                    )
             elif persist_path.exists():
                 logger.info("Message trop court ignore ({})", persist_path.name)
                 try:
@@ -537,6 +543,24 @@ class CallManager:
             )
         except Exception as e:
             logger.exception("Erreur mode répondeur simple: %s", e)
+
+    async def _transcribe_voicemail_async(self, voicemail_id: int, audio_pcm_16k: bytes) -> None:
+        """
+        Transcrit un message vocal (STT) sans bloquer la ligne telephonique.
+
+        @param voicemail_id ID du message en base.
+        @param audio_pcm_16k PCM 16 kHz 16-bit mono (sortie de ``_record_audio``).
+        """
+        try:
+            text = await self.voice_recognition.transcribe(audio_pcm_16k, sample_rate=16000)
+            text = (text or "").strip()
+            if not text:
+                logger.info("STT message #{} : vide / inaudible", voicemail_id)
+                return
+            await self.call_service.set_voicemail_transcription(voicemail_id, text)
+            logger.info("STT message #{} : {}", voicemail_id, text[:120])
+        except Exception:
+            logger.exception("STT message #{} echoue", voicemail_id)
 
     async def _play_beep_on_line(self, recorder: Optional[_IncomingLineRecorder] = None) -> bool:
         """

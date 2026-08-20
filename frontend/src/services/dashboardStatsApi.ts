@@ -11,6 +11,7 @@ export interface DailyStatsItem {
   rdv: number;
   quotes: number;
   spam: number;
+  voicemails?: number;
 }
 
 export interface DashboardStats {
@@ -20,6 +21,9 @@ export interface DashboardStats {
   suspects_count: number;
   total_calls: number;
   total_blocked: number;
+  voicemails_today: number;
+  voicemails_unread: number;
+  voicemails_total: number;
   daily_series: DailyStatsItem[];
 }
 

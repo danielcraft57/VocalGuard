@@ -546,13 +546,14 @@ class SettingsResponse(BaseModel):
 
 
 class DailyStatsItem(BaseModel):
-    """Stats par jour pour les graphiques (volume d'appels, RDV, devis, blocages)."""
+    """Stats par jour pour les graphiques (volume d'appels, RDV, devis, blocages, messages)."""
     day: str  # Libelle court : Lun, Mar, ...
     date: str  # ISO date pour coherence
     calls: int = 0
     rdv: int = 0
     quotes: int = 0
     spam: int = 0
+    voicemails: int = 0
 
 
 class DashboardStatsResponse(BaseModel):
@@ -563,6 +564,9 @@ class DashboardStatsResponse(BaseModel):
     suspects_count: int = 0
     total_calls: int = 0
     total_blocked: int = 0
+    voicemails_today: int = 0
+    voicemails_unread: int = 0
+    voicemails_total: int = 0
     daily_series: List["DailyStatsItem"] = []
 
 

@@ -308,6 +308,7 @@ class CallService:
         phone_number: Optional[str] = None,
         caller_name: Optional[str] = None,
         duration: Optional[int] = None,
+        transcription: Optional[str] = None,
     ) -> Voicemail:
         """
         Persiste un message vocal apres le bip (fichier deja ecrit sur disque).
@@ -317,6 +318,7 @@ class CallService:
         @param phone_number Numero Caller ID.
         @param caller_name Nom Caller ID.
         @param duration Duree estimee en secondes.
+        @param transcription Texte STT si deja disponible.
         @returns Ligne voicemails creee.
         """
         caller = None
@@ -329,6 +331,7 @@ class CallService:
             caller_id=caller.id if caller else None,
             call_id=call_id,
             duration=duration,
+            transcription=transcription,
         )
         await event_bus.publish(
             Event(
@@ -340,10 +343,20 @@ class CallService:
                     "phone_number": phone_number,
                     "audio_file": audio_file,
                     "duration": duration,
+                    "transcription": transcription,
                 },
                 source="CallService",
             )
         )
         logger.info("Message vocal enregistre: id={} file={}", vm.id, audio_file)
         return vm
+
+    async def set_voicemail_transcription(
+        self, voicemail_id: int, transcription: str
+    ) -> Optional[Voicemail]:
+        """Met a jour la transcription STT d un message vocal."""
+        text = (transcription or "").strip()
+        if not text:
+            return self.voicemail_repo.get_by_id(voicemail_id)
+        return self.voicemail_repo.update(voicemail_id, transcription=text)
 

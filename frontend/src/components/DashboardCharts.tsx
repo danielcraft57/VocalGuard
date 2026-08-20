@@ -142,6 +142,14 @@ export const DashboardCharts: React.FC<DashboardChartsProps> = ({ stats, loading
                 fill="#6366f1"
                 name="Devis"
               />
+              <Area
+                type="monotone"
+                dataKey="voicemails"
+                stroke="#f59e0b"
+                fillOpacity={0.2}
+                fill="#f59e0b"
+                name="Messages"
+              />
             </AreaChart>
           </ResponsiveContainer>
         </div>
