@@ -5,13 +5,17 @@ Diffuse les événements du `event_bus` (CALL_INCOMING, CALL_BLOCKED, etc.)
 vers les clients frontend afin d'afficher les appels en cours en temps réel.
 """
 
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Optional
 from datetime import datetime
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Body
 from loguru import logger
 
+from backend.core.config import Config
 from backend.core.events import Event, EventType, event_bus
+from backend.database import database as db_module
+from backend.database.models import ApiPublicToken
 
 
 router = APIRouter()
@@ -93,19 +97,88 @@ if TYPE_CHECKING:
     from backend.core.config import Config
 
 
+def _extract_ws_token(websocket: WebSocket) -> Optional[str]:
+    """
+    Lit le token API depuis query ou header Authorization.
+
+    @param websocket Connexion WebSocket entrante.
+    @returns Token brut ou None.
+    """
+    token = (websocket.query_params.get("token") or "").strip()
+    if token:
+        return token
+    auth = (websocket.headers.get("authorization") or websocket.headers.get("Authorization") or "").strip()
+    if auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return None
+
+
+def _is_same_origin_ui(websocket: WebSocket) -> bool:
+    """
+    True si le client est le front servi par la meme API (Origin == Host).
+
+    Sans Origin (outils locaux / scripts), on autorise aussi : le dashboard LAN
+    et les tests ne portent pas de token API publique.
+
+    @param websocket Connexion WebSocket entrante.
+    @returns True si l'UI locale peut s'abonner sans token.
+    """
+    origin = (websocket.headers.get("origin") or "").strip()
+    host = (websocket.headers.get("host") or "").strip()
+    if not origin:
+        return True
+    if not host:
+        return False
+    try:
+        return urlparse(origin).netloc.lower() == host.lower()
+    except Exception:
+        return False
+
+
+def _validate_ws_api_token(token_value: str) -> bool:
+    """
+    Verifie token actif avec permission can_subscribe_realtime.
+
+    @param token_value Valeur du token API publique.
+    @returns True si le token peut s'abonner au flux realtime.
+    """
+    session_factory = db_module.SessionLocal
+    if session_factory is None:
+        return False
+    db = session_factory()
+    try:
+        row = (
+            db.query(ApiPublicToken)
+            .filter(ApiPublicToken.token == token_value, ApiPublicToken.is_active.is_(True))
+            .first()
+        )
+        if not row:
+            return False
+        return bool(getattr(row, "can_subscribe_realtime", False))
+    finally:
+        db.close()
+
+
 @router.websocket("/ws/events")
 async def websocket_events(websocket: WebSocket) -> None:
     """
     WebSocket temps réel.
 
-    Le client reçoit un flux JSON:
-    {
-        "type": "call.incoming" | "call.blocked" | ...,
-        "timestamp": "...",
-        "data": { ... payload specifique ... },
-        "source": "CallService" | ...
-    }
+    Le client recoit un flux JSON d'evenements appels / voicemail.
+    - Front VocalGuard (same-origin) : pas de token requis.
+    - Clients externes / mobile : `?token=<api_token>` ou Authorization Bearer
+      avec permission can_subscribe_realtime.
     """
+    token_value = _extract_ws_token(websocket)
+    if token_value:
+        if not _validate_ws_api_token(token_value):
+            await websocket.close(code=4401)
+            return
+    elif not _is_same_origin_ui(websocket):
+        # Prod / hors UI : pas de token et origine etrangere → refuse.
+        await websocket.close(code=4401)
+        return
+
     await manager.connect(websocket)
     try:
         while True:
@@ -141,4 +214,3 @@ async def publish_osint_event(payload: dict = Body(...)) -> dict:
         )
     )
     return {"accepted": True}
-

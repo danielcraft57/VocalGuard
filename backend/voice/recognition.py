@@ -171,42 +171,46 @@ class VoiceRecognition:
             return ""
     
     async def _transcribe_vosk(self, audio_data: bytes, sample_rate: int) -> str:
-        """Transcrit avec VOSK"""
+        """Transcrit avec VOSK (CPU hors boucle asyncio pour ne pas bloquer le modem)."""
         try:
-            import json
-            
-            # VOSK attend des données PCM 16-bit mono.
-            # Le recognizer est initialisé avec un sample rate fixe (16000 Hz).
-            # On remet l'état du recognizer à zéro pour chaque nouvelle séquence.
             if self.vosk_recognizer is None:
                 await self._init_vosk()
-            else:
-                self.vosk_recognizer.Reset()
-            
-            # Traiter les données par chunks
-            text_parts = []
-            chunk_size = 4000
-            
-            for i in range(0, len(audio_data), chunk_size):
-                chunk = audio_data[i:i + chunk_size]
-                
-                if self.vosk_recognizer.AcceptWaveform(chunk):
-                    result = json.loads(self.vosk_recognizer.Result())
-                    if 'text' in result:
-                        text_parts.append(result['text'])
-            
-            # Récupérer le résultat final
-            final_result = json.loads(self.vosk_recognizer.FinalResult())
-            if 'text' in final_result:
-                text_parts.append(final_result['text'])
-            
-            text = ' '.join(text_parts).strip()
-            logger.debug(f"Transcription VOSK: {text}")
-            return text
-            
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(
+                None,
+                self._transcribe_vosk_sync,
+                audio_data,
+            )
         except Exception as e:
             logger.exception(f"Erreur lors de la transcription VOSK: {e}")
             return ""
+
+    def _transcribe_vosk_sync(self, audio_data: bytes) -> str:
+        """
+        Transcription VOSK synchrone (thread pool).
+
+        @param audio_data PCM 16-bit mono 16 kHz.
+        @returns Texte transcrit.
+        """
+        import json
+
+        if self.vosk_recognizer is None:
+            return ""
+        self.vosk_recognizer.Reset()
+        text_parts = []
+        chunk_size = 4000
+        for i in range(0, len(audio_data), chunk_size):
+            chunk = audio_data[i : i + chunk_size]
+            if self.vosk_recognizer.AcceptWaveform(chunk):
+                result = json.loads(self.vosk_recognizer.Result())
+                if "text" in result:
+                    text_parts.append(result["text"])
+        final_result = json.loads(self.vosk_recognizer.FinalResult())
+        if "text" in final_result:
+            text_parts.append(final_result["text"])
+        text = " ".join(text_parts).strip()
+        logger.debug(f"Transcription VOSK: {text}")
+        return text
 
     def outgoing_stream_start(self, session_key: str) -> bool:
         """

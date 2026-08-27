@@ -105,3 +105,25 @@ export function playHangupSound(): void {
   o.start(t0);
   o.stop(t0 + 0.25);
 }
+
+/** Alerte douce pour appel entrant (deux tons, style sonnerie courte). */
+export function playIncomingAlertSound(): void {
+  const ctx = getCtx();
+  if (!ctx) return;
+  const t0 = ctx.currentTime;
+  const play = (start: number, f: number, dur: number) => {
+    const o = ctx!.createOscillator();
+    const g = ctx!.createGain();
+    o.type = "sine";
+    o.frequency.setValueAtTime(f, start);
+    g.gain.setValueAtTime(0, start);
+    g.gain.linearRampToValueAtTime(0.11, start + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.001, start + dur);
+    o.connect(g);
+    g.connect(ctx!.destination);
+    o.start(start);
+    o.stop(start + dur + 0.02);
+  };
+  play(t0, 440, 0.18);
+  play(t0 + 0.22, 480, 0.22);
+}

@@ -17,6 +17,7 @@ import {
 } from "../../services/callsApi";
 import { getWsBaseUrl } from "../../services/httpClient";
 import { useOutgoingCallAudio, unlockOutgoingAudioContext } from "../../hooks/useOutgoingCallAudio";
+import { formatApiDateTime } from "../../utils/dateTime";
 
 function formatStatus(status: string): { label: string; className: string } {
   const normalized = status.toLowerCase();
@@ -500,7 +501,7 @@ export default function CallsPage() {
   };
 
   const renderCallRow = (call: CallWithOsint): React.ReactNode => {
-    const date = new Date(call.call_time).toLocaleString("fr-FR", {
+    const date = formatApiDateTime(call.call_time, {
       day: "2-digit",
       month: "2-digit",
       hour: "2-digit",
@@ -918,10 +919,26 @@ export default function CallsPage() {
         }
 
         const t = msg.type;
+        const isCallEvent =
+          typeof t === "string" &&
+          (t.startsWith("call.") || t === "voicemail.recorded");
+
+        // Toujours rafraichir la liste sur evenement d'appel (y compris missed / updated).
+        if (isCallEvent) {
+          fetchCallsWithOsint()
+            .then((data) => {
+              setCalls(data);
+            })
+            .catch(() => {
+              /* garde la liste precedente */
+            });
+        }
+
         let tag: LiveTag | null = null;
         if (t === "call.incoming") tag = "screened";
         else if (t === "call.blocked") tag = "blocked";
         else if (t === "call.answered" || t === "call.completed") tag = "permitted";
+        else if (t === "call.missed") tag = "screened";
 
         if (!tag) return;
 
@@ -931,15 +948,6 @@ export default function CallsPage() {
           tag,
           eventType: t
         });
-
-        // Rafraichir la liste des appels pour refleter l'etat courant sans recharger la page
-        fetchCallsWithOsint()
-          .then((data) => {
-            setCalls(data);
-          })
-          .catch(() => {
-            // on garde l'erreur eventuelle geree par l'effet initial
-          });
       } catch {
         // Ignorer les messages invalides
       }
@@ -956,6 +964,17 @@ export default function CallsPage() {
     return () => {
       dispose();
     };
+  }, []);
+
+  // Filet de securite : refresh periodique si le WS rate un event.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const id = window.setInterval(() => {
+      fetchCallsWithOsint()
+        .then(setCalls)
+        .catch(() => undefined);
+    }, 4000);
+    return () => window.clearInterval(id);
   }, []);
 
   useEffect(() => {
@@ -1192,7 +1211,7 @@ export default function CallsPage() {
                       {detailCall.caller_name ? ` · ${detailCall.caller_name}` : ""}
                     </div>
                     <div style={{ fontSize: "0.78rem", color: "#6b7280", marginTop: "0.35rem" }}>
-                      {new Date(detailCall.call_time).toLocaleString("fr-FR")} · statut {detailCall.status}
+                      {formatApiDateTime(detailCall.call_time)} · statut {detailCall.status}
                       {detailCall.duration != null ? ` · ${detailCall.duration}s` : ""}
                     </div>
                   </div>

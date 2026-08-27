@@ -9,6 +9,7 @@ services adequats.
 
 from typing import Optional
 from datetime import datetime
+import asyncio
 from sqlalchemy.orm import Session
 from loguru import logger
 
@@ -80,11 +81,22 @@ class CallService:
         )
 
         if phone:
+            # OSINT hors chemin critique (ne doit jamais retarder un decrochage).
+            caller_fk = caller.id if caller else None
+            phone_copy = phone
+
+            async def _osint_bg() -> None:
+                try:
+                    await asyncio.to_thread(
+                        self.phone_osint_service.ensure_profile_for_number,
+                        phone_copy,
+                        caller_fk,
+                    )
+                except Exception as exc:
+                    logger.warning("OSINT background pour {}: {}", phone_copy, exc)
+
             try:
-                self.phone_osint_service.ensure_profile_for_number(
-                    phone_number=phone,
-                    caller_id=caller.id if caller else None,
-                )
+                asyncio.create_task(_osint_bg(), name=f"osint_call_{call.id}")
             except Exception as exc:
                 logger.warning(f"Impossible de planifier l'OSINT pour {phone}: {exc}")
 
@@ -176,7 +188,11 @@ class CallService:
         await event_bus.publish(Event(
             event_type=EventType.CALL_ANSWERED,
             timestamp=datetime.utcnow(),
-            data={"call_id": call_id},
+            data={
+                "call_id": call_id,
+                "phone_number": call.phone_number,
+                "caller_name": call.caller_name,
+            },
             source="CallService"
         ))
         
@@ -342,7 +358,21 @@ class CallService:
             update_data["caller_name"] = caller_name
         if not update_data:
             return call
-        return self.call_repo.update(call_id, **update_data)
+        call = self.call_repo.update(call_id, **update_data)
+        await event_bus.publish(
+            Event(
+                event_type=EventType.CALL_UPDATED,
+                timestamp=datetime.utcnow(),
+                data={
+                    "call_id": call.id,
+                    "phone_number": call.phone_number,
+                    "caller_name": call.caller_name,
+                    "status": call.status,
+                },
+                source="CallService",
+            )
+        )
+        return call
 
     async def save_voicemail(
         self,

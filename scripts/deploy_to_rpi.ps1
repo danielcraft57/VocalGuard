@@ -412,27 +412,115 @@ if ($ConfigureNginx) {
     $serverNameLine = ($serverNames -join " ")
     $proxyTarget = if ($AppServerName -and $AppServerName.Trim() -ne "") { "${AppServerName}:8000" } else { "127.0.0.1:8000" }
 
+    $telephonyWsTarget = if ($AppServerName -and $AppServerName.Trim() -ne "") { "${AppServerName}:8090" } else { "127.0.0.1:8090" }
     $nginxOutgoingWs = ""
+    $nginxUpstreamTelephony = ""
     if ($EnableTelephonyDaemon) {
-        $telephonyWsTarget = if ($AppServerName -and $AppServerName.Trim() -ne "") { "${AppServerName}:8090" } else { "127.0.0.1:8090" }
+        $nginxUpstreamTelephony = @"
+
+upstream vocalguard_telephony {
+    server $telephonyWsTarget;
+    keepalive 8;
+}
+"@
         $nginxOutgoingWs = @"
 
     location /ws/outgoing-call/ {
-        proxy_pass http://$telephonyWsTarget;
+        proxy_pass http://vocalguard_telephony;
         proxy_http_version 1.1;
         proxy_set_header Host `$host;
         proxy_set_header X-Real-IP `$remote_addr;
         proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto `$scheme;
         proxy_set_header Upgrade `$http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection `$connection_upgrade;
+        proxy_set_header Origin `$http_origin;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_cache off;
+        gzip off;
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
+        proxy_connect_timeout 10s;
     }
 "@
     }
 
-    $nginxConfigHttp = @"
+    $nginxPreamble = @"
+map `$http_upgrade `$connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+upstream vocalguard_api {
+    server $proxyTarget;
+    keepalive 16;
+}
+"@ + $nginxUpstreamTelephony
+
+    $nginxStaticAndWs = @"
+
+    location /_next/static/ {
+        proxy_pass http://vocalguard_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host `$host;
+        proxy_set_header X-Real-IP `$remote_addr;
+        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto `$scheme;
+        proxy_set_header Connection "";
+        expires 7d;
+        add_header Cache-Control "public, max-age=604800, immutable";
+    }
+
+    location /_next/ {
+        proxy_pass http://vocalguard_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host `$host;
+        proxy_set_header X-Real-IP `$remote_addr;
+        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto `$scheme;
+        proxy_set_header Connection "";
+        expires 1h;
+        add_header Cache-Control "public, max-age=3600";
+    }
+"@ + $nginxOutgoingWs + @"
+
+    location /ws/ {
+        proxy_pass http://vocalguard_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host `$host;
+        proxy_set_header X-Real-IP `$remote_addr;
+        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto `$scheme;
+        proxy_set_header Upgrade `$http_upgrade;
+        proxy_set_header Connection `$connection_upgrade;
+        proxy_set_header Origin `$http_origin;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_cache off;
+        gzip off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_connect_timeout 10s;
+    }
+
+    location / {
+        proxy_pass http://vocalguard_api;
+        proxy_http_version 1.1;
+        proxy_set_header Host `$host;
+        proxy_set_header X-Real-IP `$remote_addr;
+        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto `$scheme;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 120s;
+        proxy_read_timeout 120s;
+        add_header Cache-Control "no-cache";
+    }
+"@
+
+    $nginxConfigHttp = $nginxPreamble + @"
+
 server {
     listen 80;
     listen [::]:80;
@@ -443,47 +531,12 @@ server {
     location /.well-known/acme-challenge/ {
         root /var/www/html;
     }
-
-    location /_next/ {
-        proxy_pass http://$proxyTarget;
-        proxy_http_version 1.1;
-        proxy_set_header Host `$host;
-        proxy_set_header X-Real-IP `$remote_addr;
-        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto `$scheme;
-        expires 1h;
-        add_header Cache-Control "public, max-age=3600";
-    }
-"@ + $nginxOutgoingWs + @"
-
-    location /ws/ {
-        proxy_pass http://$proxyTarget;
-        proxy_http_version 1.1;
-        proxy_set_header Host `$host;
-        proxy_set_header X-Real-IP `$remote_addr;
-        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto `$scheme;
-        proxy_set_header Upgrade `$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-    }
-
-    location / {
-        proxy_pass http://$proxyTarget;
-        proxy_http_version 1.1;
-        proxy_set_header Host `$host;
-        proxy_set_header X-Real-IP `$remote_addr;
-        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto `$scheme;
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 120s;
-        proxy_read_timeout 120s;
-    }
+"@ + $nginxStaticAndWs + @"
 }
 "@
 
-    $nginxConfigHttps = @"
+    $nginxConfigHttps = $nginxPreamble + @"
+
 server {
     listen 80;
     listen [::]:80;
@@ -512,43 +565,7 @@ server {
     ssl_protocols TLSv1.2 TLSv1.3;
 
     client_max_body_size 25m;
-
-    location /_next/ {
-        proxy_pass http://$proxyTarget;
-        proxy_http_version 1.1;
-        proxy_set_header Host `$host;
-        proxy_set_header X-Real-IP `$remote_addr;
-        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto `$scheme;
-        expires 1h;
-        add_header Cache-Control "public, max-age=3600";
-    }
-"@ + $nginxOutgoingWs + @"
-
-    location /ws/ {
-        proxy_pass http://$proxyTarget;
-        proxy_http_version 1.1;
-        proxy_set_header Host `$host;
-        proxy_set_header X-Real-IP `$remote_addr;
-        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto `$scheme;
-        proxy_set_header Upgrade `$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
-    }
-
-    location / {
-        proxy_pass http://$proxyTarget;
-        proxy_http_version 1.1;
-        proxy_set_header Host `$host;
-        proxy_set_header X-Real-IP `$remote_addr;
-        proxy_set_header X-Forwarded-For `$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto `$scheme;
-        proxy_connect_timeout 60s;
-        proxy_send_timeout 120s;
-        proxy_read_timeout 120s;
-    }
+"@ + $nginxStaticAndWs + @"
 }
 "@
 

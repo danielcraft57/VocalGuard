@@ -2,9 +2,18 @@
 Modèles Pydantic pour l'API
 """
 
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timezone
 from typing import Optional, List, Dict, Any, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
+
+
+def _utc_iso(dt: Optional[datetime]) -> Optional[str]:
+    """Serialise un datetime naif (stocke UTC) avec suffixe Z pour le front."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat().replace("+00:00", "Z")
 
 
 class CallResponse(BaseModel):
@@ -25,6 +34,11 @@ class CallResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @field_serializer("call_time", "answer_time", "end_time")
+    def serialize_call_datetimes(self, value: Optional[datetime]) -> Optional[str]:
+        """Expose les horodatages UTC avec Z (evite le decalage navigateur)."""
+        return _utc_iso(value)
 
     @classmethod
     def from_orm(cls, obj):
@@ -107,6 +121,11 @@ class VoicemailResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+    @field_serializer("created_at")
+    def serialize_created_at(self, value: Optional[datetime]) -> Optional[str]:
+        """Expose created_at UTC avec Z (evite le decalage navigateur)."""
+        return _utc_iso(value)
     
     @classmethod
     def from_orm(cls, obj):

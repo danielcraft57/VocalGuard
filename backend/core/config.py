@@ -76,9 +76,11 @@ class Config(BaseSettings):
     vosk_model_path: Optional[str] = Field(default=None)
     
     # Appels
-    rings_before_answer: int = Field(default=2)
+    rings_before_answer: int = Field(default=0)
     # Fenetre courte pour capter NMBR= avant ATA (meme si rings=0 coupe-sonnerie).
     cid_wait_sec: float = Field(default=2.5)
+    # Delai max (s) avant VLS=1 au 1er RING si rings=0 (CID FR arrive souvent apres ~0.3s).
+    instant_seize_cid_grace_sec: float = Field(default=0.35)
     max_call_duration: int = Field(default=300)  # secondes
     # True = le modem decroche (repondeur). False = CID/historique seulement, le fixe gere l'appel.
     incoming_auto_answer: bool = Field(default=True)

@@ -46,6 +46,9 @@ class _IncomingLineRecorder:
         self._task: Optional[asyncio.Task] = None
         self._stop = asyncio.Event()
         self._active = False
+        # True seulement apres start() reussi : evite resume() apres bip en mode simple
+        # (qui rouverait VRX et bloquerait l'enregistrement / le raccrochage).
+        self._session = False
 
     async def start(self, already_in_voice_mode: bool = True) -> None:
         if not self._cm._use_modem_voice_serial():
@@ -54,6 +57,7 @@ class _IncomingLineRecorder:
         if not ok:
             logger.warning("Enregistrement entrant: impossible d'ouvrir VRX")
             return
+        self._session = True
         self._active = True
         self._stop.clear()
         self._task = asyncio.create_task(self._read_loop(), name="incoming_vrx_recorder")
@@ -71,12 +75,12 @@ class _IncomingLineRecorder:
                 await asyncio.sleep(0.02)
 
     async def pause(self) -> None:
-        if not self._active:
+        if not self._session or not self._active:
             return
         self._stop.set()
         if self._task:
             try:
-                await asyncio.wait_for(self._task, timeout=3.0)
+                await asyncio.wait_for(self._task, timeout=2.0)
             except (asyncio.TimeoutError, asyncio.CancelledError):
                 self._task.cancel()
                 try:
@@ -88,15 +92,20 @@ class _IncomingLineRecorder:
             await self._cm.modem.end_outgoing_vrx_stream()
         except Exception:
             pass
+        self._active = False
         self._stop.clear()
 
     async def resume(self, already_in_voice_mode: bool = True) -> None:
-        if not self._cm._use_modem_voice_serial():
+        """Reprend VRX seulement si start() a ouvert une session (mode IVR)."""
+        if not self._session or not self._cm._use_modem_voice_serial():
+            return
+        if self._active:
             return
         ok = await self._cm.modem.start_outgoing_vrx_stream(already_in_voice_mode=already_in_voice_mode)
         if not ok:
             return
         self._active = True
+        self._stop.clear()
         self._task = asyncio.create_task(self._read_loop(), name="incoming_vrx_recorder")
 
     def append_pcm(self, data: bytes) -> None:
@@ -106,6 +115,7 @@ class _IncomingLineRecorder:
     async def save(self, call_id: int) -> None:
         await self.pause()
         self._active = False
+        self._session = False
         if not self.chunks:
             return
         base = Path(self._cm.config.base_path) if self._cm.config.base_path else Path.cwd()
@@ -315,7 +325,25 @@ class CallManager:
         m.modem_country_gci = str(gci).strip() if gci else None
         m.enable_distinctive_ring = bool(getattr(self.config, "modem_distinctive_ring", False))
         m.enable_pcw_off_for_cid = bool(getattr(self.config, "modem_pcw_off_for_cid", True))
+        try:
+            m.instant_seize_cid_grace_sec = float(
+                getattr(self.config, "instant_seize_cid_grace_sec", 0.35) or 0.35
+            )
+        except (TypeError, ValueError):
+            m.instant_seize_cid_grace_sec = 0.35
+        self._refresh_instant_ring_seize()
 
+    def _refresh_instant_ring_seize(self) -> None:
+        """Active le seize sync au RING si repondeur + rings=0."""
+        auto = bool(getattr(self.config, "incoming_auto_answer", True))
+        rings = int(getattr(self.config, "rings_before_answer", 0) or 0)
+        self.modem.instant_ring_seize = bool(auto and rings <= 0)
+        logger.info(
+            "instant_ring_seize={} (auto_answer={}, rings={})",
+            self.modem.instant_ring_seize,
+            auto,
+            rings,
+        )
     def _arm_call_deadline(self) -> None:
         """Pose une deadline wall-clock pour max_call_duration."""
         import time as _time
@@ -406,12 +434,18 @@ class CallManager:
             auto_answer = apply_schedule_to_auto_answer(self.config)
             cid_wait = float(getattr(self.config, "cid_wait_sec", 2.5) or 2.5)
             timed_out = False
-            if rings > 0:
+
+            # Repondeur coupe-sonnerie (rings=0) : decrocher tout de suite, CID en parallele / via ATA.
+            # Sinon (rings>0 ou mode telephone) : fenetre CID avant action.
+            immediate_answer = bool(auto_answer and rings <= 0)
+            if immediate_answer:
+                timeout_sec = 0.0
+            elif rings > 0:
                 timeout_sec = max(cid_wait, float(rings) * 6.0)
             else:
                 timeout_sec = max(1.2, cid_wait)
 
-            if not self._pending_cid:
+            if timeout_sec > 0 and not self._pending_cid:
                 logger.info(
                     "Attente Caller ID jusqu a {:.1f}s avant {} (rings={})",
                     timeout_sec,
@@ -423,13 +457,13 @@ class CallManager:
                 except asyncio.TimeoutError:
                     timed_out = True
                     logger.info("Pas de Caller ID apres {:.1f}s", timeout_sec)
-            else:
-                # CID deja la : attente courte NAME= via event (pas sleep aveugle).
-                if not self._pending_cname:
-                    try:
-                        await asyncio.wait_for(self._cname_event.wait(), timeout=0.6)
-                    except asyncio.TimeoutError:
-                        pass
+            elif timeout_sec > 0 and self._pending_cid and not self._pending_cname:
+                try:
+                    await asyncio.wait_for(self._cname_event.wait(), timeout=0.6)
+                except asyncio.TimeoutError:
+                    pass
+            elif immediate_answer:
+                logger.info("Repondeur: decrochage immediat (rings=0, pas d'attente CID)")
 
             caller_id = self._pending_cid or caller_id
             caller_name = self._pending_cname or caller_name
@@ -446,7 +480,7 @@ class CallManager:
                 getattr(self.modem, "last_cid_raw", None),
             )
 
-            # Whitelist : sonnerie seule (fixe) si option activee.
+            # Whitelist : sonnerie seule (fixe) si option activee (besoin d'un numero).
             if (
                 auto_answer
                 and caller_id
@@ -456,6 +490,7 @@ class CallManager:
                     if await self.block_service.is_whitelisted(caller_id):
                         logger.info("Whitelist ring-only: pas de ATA pour {}", caller_id)
                         auto_answer = False
+                        immediate_answer = False
                 except Exception as exc:
                     logger.debug("whitelist check: {}", exc)
 
@@ -478,16 +513,20 @@ class CallManager:
                     await self.call_service.set_call_caller_info(
                         call.id, phone_number=caller_id, caller_name=caller_name
                     )
-                # Fin des RING = pris ailleurs ou abandon ; on marque manque (pas d'audio modem).
                 await self.call_service.miss_call(call.id)
                 logger.info("Mode telephone: fin appel #{} ({})", call.id, outcome)
                 self.current_call_id = None
                 return
 
-            # Si on a le numero : saisie rapide OK. Sinon ATA classique (souvent renvoie NMBR=).
-            have_cid = bool(caller_id and str(caller_id).strip())
-            fast_seize = have_cid and rings <= 0 and self.modem.supports_voice_serial
-            ok, ata_cid, ata_cname = await self.modem.answer_call(fast_voice_seize=fast_seize)
+            # PRIORITE: couper la sonnerie (souvent deja fait en sync au RING).
+            seized = self.modem.consume_incoming_seize()
+            if seized is not None:
+                ok = bool(seized)
+                ata_cid, ata_cname = None, None
+                logger.info("Repondeur: seize sync deja fait au RING (ok={})", ok)
+            else:
+                fast_seize = rings <= 0 and self.modem.supports_voice_serial
+                ok, ata_cid, ata_cname = await self.modem.answer_call(fast_voice_seize=fast_seize)
             self._line_already_answered = ok
             if not caller_id and ata_cid:
                 caller_id = normalize_cid_value(ata_cid)
@@ -497,15 +536,19 @@ class CallManager:
             caller_id = self._pending_cid or caller_id
             caller_name = self._pending_cname or caller_name
 
+            # UI temps reel apres seize (ne doit pas retarder VLS=1).
             call = await self.call_service.create_incoming_call(
                 phone_number=caller_id,
                 caller_name=caller_name,
             )
             self.current_call_id = call.id
             self._arm_call_deadline()
+            if caller_id or caller_name:
+                await self.call_service.set_call_caller_info(
+                    call.id, phone_number=caller_id, caller_name=caller_name
+                )
 
             if not ok:
-                # Fixe deja decroche / appel parti : ne pas reessayer ATA ni jouer l'accueil.
                 logger.error(
                     "Impossible de decrocher au RING — on laisse le fixe, pas de message d'accueil"
                 )
@@ -540,6 +583,10 @@ class CallManager:
             self._cname_event = None
             self._phone_mode_ring_event = None
             self._call_deadline = None
+            try:
+                self.modem.clear_incoming_seize()
+            except Exception:
+                pass
     
     async def _handle_blocked_call(self, skip_answer: bool = False):
         """Traite un appel bloqué"""
@@ -668,7 +715,7 @@ class CallManager:
                 already_in_voice_mode=self._use_modem_voice_serial(),
                 recorder=rec,
                 stop_on_remote_hangup=True,
-                silence_timeout_sec=float(getattr(self.config, "voicemail_silence_timeout_sec", 5) or 0),
+                silence_timeout_sec=float(getattr(self.config, "voicemail_silence_timeout_sec", 3) or 3),
                 persist_wav=persist_path,
             )
             if audio_data:
@@ -690,7 +737,7 @@ class CallManager:
                     caller_name=cname,
                     duration=duration_sec,
                 )
-                # STT en arriere-plan (Vosk/Whisper) pour ne pas retarder le message de fin.
+                # STT en arriere-plan (Vosk/Whisper) pour ne pas retarder le raccrochage.
                 if audio_data and self._recognition_available and vm:
                     asyncio.create_task(
                         self._transcribe_voicemail_async(vm.id, audio_data),
@@ -703,11 +750,14 @@ class CallManager:
                 except OSError:
                     pass
 
-            await self._play_on_line(
-                VOICEMAIL_GOODBYE,
-                already_in_voice_mode=self._use_modem_voice_serial(),
-                recorder=rec,
-            )
+            if self.modem.remote_hangup_detected():
+                logger.info("Appelant a raccroche — fin immediate sans message de fin")
+            else:
+                await self._play_on_line(
+                    VOICEMAIL_GOODBYE,
+                    already_in_voice_mode=self._use_modem_voice_serial(),
+                    recorder=rec,
+                )
         except Exception as e:
             logger.exception("Erreur mode répondeur simple: %s", e)
 
@@ -777,7 +827,7 @@ class CallManager:
                 already_in_voice_mode=self._use_modem_voice_serial(),
                 recorder=recorder,
                 stop_on_remote_hangup=True,
-                silence_timeout_sec=float(getattr(self.config, "voicemail_silence_timeout_sec", 5) or 0),
+                silence_timeout_sec=float(getattr(self.config, "voicemail_silence_timeout_sec", 3) or 3),
             )
             
             if not audio_data:
@@ -1084,7 +1134,7 @@ class CallManager:
                 already_in_voice_mode=self._use_modem_voice_serial(),
                 recorder=rec,
                 stop_on_remote_hangup=True,
-                silence_timeout_sec=float(getattr(self.config, "voicemail_silence_timeout_sec", 5) or 0),
+                silence_timeout_sec=float(getattr(self.config, "voicemail_silence_timeout_sec", 3) or 3),
             )
             if self.current_call_id and audio_data:
                 logger.info("Message enregistré (inclus dans l'enregistrement global de l'appel)")

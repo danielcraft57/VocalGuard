@@ -5,6 +5,8 @@ import { usePathname } from "next/navigation";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { PageLoader } from "./PageLoader";
+import { IncomingCallModal } from "./IncomingCallModal";
+import { useIncomingCallLive } from "../hooks/useIncomingCallLive";
 
 export interface AppLayoutProps {
   /** Contenu principal de la page. */
@@ -19,7 +21,7 @@ export interface AppLayoutProps {
 
 /**
  * Layout principal de l'application VocalGuard.
- * Menu sticky + loader de transition sur toutes les pages.
+ * Menu sticky + loader de transition + modale appel entrant temps reel.
  */
 export const AppLayout: React.FC<AppLayoutProps> = ({
   children,
@@ -31,6 +33,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
   const pathname = usePathname();
   const [routeLoading, setRouteLoading] = useState(false);
   const isFirstPath = useRef(true);
+  const { live, dismiss } = useIncomingCallLive();
 
   useEffect(() => {
     if (isFirstPath.current) {
@@ -72,6 +75,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
       </div>
       {sidebarOpen ? <div className="vg-sidebar-backdrop" onClick={handleCloseSidebar} /> : null}
       {routeLoading ? <PageLoader variant="overlay" label="Chargement…" /> : null}
+      <IncomingCallModal live={live} onDismiss={dismiss} />
     </div>
   );
 };

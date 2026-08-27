@@ -31,12 +31,15 @@ edge_tts_voice: "fr-FR-DeniseNeural"
 edge_tts_rate: "+12%"
 
 # Appels
-# rings=0 = coupe-sonnerie apres fenetre CID courte (cid_wait_sec)
+# rings=0 = coupe-sonnerie + decrochage immediat (CID en parallele / via ATA)
 rings_before_answer: 0
+# Fenetre CID avant seize voix au 1er RING (rings=0) : plus bas = moins de sonnerie fixe parallele.
+instant_seize_cid_grace_sec: 0.35
 cid_wait_sec: 2.5
 max_call_duration: 300  # secondes
 # true = repondeur modem. false = journalise l'appel, le telephone parallele repond seul
 # Bascule aussi via UI (topbar) -> PUT /api/v1/settings/incoming-line-mode
+# En repondeur + rings=0 : pas d'attente CID avant ATA (prise immediate).
 incoming_auto_answer: true
 # Planning (optionnel) : ecrase le switch UI sur des creneaux (lundi=0 ... dimanche=6)
 # incoming_line_schedule:

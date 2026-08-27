@@ -1819,5 +1819,156 @@ html.vg-theme-dark .vg-page-loader--overlay {
   background: rgba(2, 6, 23, 0.45);
 }
 
+/* ---------- Modale appel entrant (temps reel) ---------- */
+
+.vg-incoming-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(6px);
+  animation: vg-incoming-fade 0.22s ease-out;
+}
+
+@keyframes vg-incoming-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.vg-incoming-modal {
+  width: min(380px, 100%);
+  border-radius: 28px;
+  padding: 1.75rem 1.5rem 1.5rem;
+  text-align: center;
+  background: linear-gradient(165deg, #1e293b 0%, #0f172a 70%);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 24px 64px rgba(0, 0, 0, 0.35);
+  color: #f8fafc;
+  transform: translateY(0);
+  animation: vg-incoming-pop 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes vg-incoming-pop {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.vg-incoming-pulse {
+  width: 88px;
+  height: 88px;
+  margin: 0 auto 1.1rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: rgba(56, 189, 248, 0.12);
+  border: 2px solid rgba(56, 189, 248, 0.45);
+}
+
+.vg-incoming-pulse--on {
+  animation: vg-incoming-ring 1.4s ease-in-out infinite;
+}
+
+@keyframes vg-incoming-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.45);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 14px rgba(56, 189, 248, 0);
+    transform: scale(1.04);
+  }
+}
+
+.vg-incoming-icon {
+  font-size: 2.4rem !important;
+  color: #7dd3fc;
+}
+
+.vg-incoming-modal--answered .vg-incoming-icon {
+  color: #86efac;
+}
+
+.vg-incoming-modal--answered .vg-incoming-pulse {
+  border-color: rgba(74, 222, 128, 0.5);
+  background: rgba(74, 222, 128, 0.12);
+}
+
+.vg-incoming-modal--blocked .vg-incoming-icon,
+.vg-incoming-modal--ended .vg-incoming-icon {
+  color: #fda4af;
+}
+
+.vg-incoming-eyebrow {
+  margin: 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.vg-incoming-number {
+  margin: 0.45rem 0 0.2rem;
+  font-size: clamp(1.45rem, 4vw, 1.85rem);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
+.vg-incoming-name {
+  margin: 0;
+  font-size: 1rem;
+  color: #e2e8f0;
+}
+
+.vg-incoming-name--muted {
+  color: #64748b;
+  font-size: 0.9rem;
+}
+
+.vg-incoming-meta {
+  margin: 0.85rem 0 0;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.vg-incoming-hint {
+  margin: 1.1rem 0 0;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.vg-incoming-dismiss {
+  margin-top: 1.15rem;
+  border: none;
+  border-radius: 999px;
+  padding: 0.65rem 1.4rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: rgba(248, 250, 252, 0.12);
+  color: #f8fafc;
+}
+
+.vg-incoming-dismiss:hover {
+  background: rgba(248, 250, 252, 0.2);
+}
+
+
 
 

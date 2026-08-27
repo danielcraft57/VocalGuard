@@ -10,6 +10,7 @@ import {
   voicemailAudioUrl,
   Voicemail,
 } from "../../services/voicemailsApi";
+import { formatApiDateTime } from "../../utils/dateTime";
 
 /**
  * Page Messages : boite vocale apres le bip (style callattendant).
@@ -159,7 +160,7 @@ export default function MessagesPage() {
                   <span style={{ marginLeft: "0.5rem", fontSize: "0.85rem" }}>nouveau</span>
                 ) : null}
                 <div style={{ fontSize: "0.9rem", opacity: 0.8 }}>
-                  {new Date(vm.created_at).toLocaleString("fr-FR")}
+                  {formatApiDateTime(vm.created_at)}
                   {vm.duration != null ? ` · ${vm.duration}s` : ""}
                   {vm.call_id != null ? ` · appel #${vm.call_id}` : ""}
                 </div>
