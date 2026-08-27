@@ -298,6 +298,9 @@ async def get_telephony_status(
     if is_daemon and cm is not None:
         snap = cm.modem.health_snapshot()
         relay = getattr(request.app.state, "event_relay", None)
+        last_decision = None
+        if hasattr(cm, "incoming_policy"):
+            last_decision = cm.incoming_policy.last_decision_summary
         return TelephonyStatusResponse(
             status="ok" if snap.get("modem_initialized") else "degraded",
             modem_initialized=bool(snap.get("modem_initialized")),
@@ -310,6 +313,7 @@ async def get_telephony_status(
             in_call=bool(cm.current_call_id),
             relay_failures=int(getattr(relay, "failure_count", 0) or 0),
             daemon_reachable=True,
+            last_incoming_decision=last_decision,
         )
 
     # API principale : proxy vers daemon si configure

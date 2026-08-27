@@ -71,6 +71,7 @@ export type TelephonyStatus = {
   in_call: boolean;
   relay_failures: number;
   daemon_reachable?: boolean | null;
+  last_incoming_decision?: string | null;
 };
 
 /**

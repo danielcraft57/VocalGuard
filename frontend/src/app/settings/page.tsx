@@ -45,7 +45,7 @@ const TILES: HubTile[] = [
     title: "Profils et sonneries",
     description: "Autorises, inconnus, bloques — actions et rings",
     icon: <FilterListIcon color="primary" />,
-    ready: false
+    ready: true
   },
   {
     href: "/settings/incoming-audio",

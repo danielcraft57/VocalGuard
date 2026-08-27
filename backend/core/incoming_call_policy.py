@@ -21,6 +21,39 @@ from backend.core.incoming_call_types import (
 )
 
 
+def match_number_pattern_profile(
+    caller_id: Optional[str],
+    settings: IncomingCallSettingsData,
+) -> Optional[IncomingProfileName]:
+    """
+    Applique les regles number_patterns si activees.
+
+    @param caller_id Numero normalise ou masque (P/O).
+    @param settings Configuration.
+    @returns Profil force ou None.
+    """
+    np = settings.number_patterns
+    if not np.enabled or not caller_id:
+        return None
+    cid = caller_id.strip().upper()
+    for rule in np.rules:
+        if not rule.enabled:
+            continue
+        pat = (rule.pattern or "").strip()
+        if not pat:
+            continue
+        matched = False
+        if pat in ("P", "O"):
+            matched = cid in ("P", "O", "PRIVATE", "UNKNOWN", "ANONYMOUS")
+        elif pat.endswith("%"):
+            matched = cid.startswith(pat[:-1].upper())
+        else:
+            matched = cid == pat.upper() or cid.endswith(pat.lstrip("+"))
+        if matched:
+            return rule.action
+    return None
+
+
 def classify_profile_sync(
     *,
     is_whitelisted: bool = False,
@@ -96,22 +129,80 @@ class IncomingCallPolicy:
   def resolve_sync(
       self,
       *,
+      caller_id: Optional[str] = None,
       is_whitelisted: bool = False,
       is_blocked: bool = False,
   ) -> CallDecision:
     """
-    Resout la decision pour un appel (version synchrone, sans DB).
+    Resout la decision pour un appel (sync, flags deja connus).
 
+    @param caller_id Numero pour patterns.
     @param is_whitelisted Liste blanche.
     @param is_blocked Liste noire.
     @returns CallDecision.
     """
-    profile = classify_profile_sync(
+    pattern_profile = match_number_pattern_profile(caller_id, self.settings)
+    if pattern_profile is not None:
+      profile = pattern_profile
+    else:
+      profile = classify_profile_sync(
+          is_whitelisted=is_whitelisted,
+          is_blocked=is_blocked,
+          screened_when_unknown=bool(self.settings.screened_when_unknown),
+      )
+    decision = build_call_decision(self.settings, profile)
+    if (
+        profile == "permitted"
+        and is_whitelisted
+        and self.settings.whitelist_ring_only
+        and "ignore" in decision.actions
+    ):
+      decision = decision.model_copy(update={"should_ignore": True, "should_answer": False})
+    return decision
+
+  async def resolve_async(
+      self,
+      block_service,
+      *,
+      caller_id: Optional[str] = None,
+      caller_name: Optional[str] = None,
+  ) -> CallDecision:
+    """
+    Classifie via block_service puis resout la decision.
+
+    @param block_service Service listes blanche/noire.
+    @param caller_id Numero appelant.
+    @param caller_name Nom CID.
+    @returns CallDecision memorisee.
+    """
+    is_whitelisted = False
+    is_blocked = False
+    if caller_id:
+      try:
+        is_whitelisted = await block_service.is_whitelisted(caller_id)
+      except Exception:
+        pass
+    if not is_whitelisted and caller_id:
+      try:
+        is_blocked = await block_service.is_blocked(caller_id, caller_name)
+      except Exception:
+        pass
+    decision = self.resolve_sync(
+        caller_id=caller_id,
         is_whitelisted=is_whitelisted,
         is_blocked=is_blocked,
-        screened_when_unknown=bool(self.settings.screened_when_unknown),
     )
-    return build_call_decision(self.settings, profile)
+    self.remember_decision(decision)
+    return decision
+
+  def resolve_sync_legacy(
+      self,
+      *,
+      is_whitelisted: bool = False,
+      is_blocked: bool = False,
+  ) -> CallDecision:
+    """Alias tests S1 (sans caller_id)."""
+    return self.resolve_sync(is_whitelisted=is_whitelisted, is_blocked=is_blocked)
 
   @property
   def last_decision_summary(self) -> Optional[str]:

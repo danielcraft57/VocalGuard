@@ -580,7 +580,7 @@ class TelephonyStatusResponse(BaseModel):
     incoming_line_mode: Literal["voicemail", "phone"] = "voicemail"
     in_call: bool = False
     relay_failures: int = 0
-    daemon_reachable: Optional[bool] = None
+    last_incoming_decision: Optional[str] = None
 
 
 class IncomingLineModeUpdate(BaseModel):

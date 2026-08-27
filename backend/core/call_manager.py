@@ -6,6 +6,7 @@ Version améliorée avec services et événements
 import asyncio
 import os
 import tempfile
+import time
 import wave
 from datetime import datetime
 from pathlib import Path
@@ -19,7 +20,11 @@ from backend.core.events import Event, EventType, event_bus
 from backend.core.phone_cid import classify_cid_outcome, normalize_cid_value
 from backend.core.incoming_line_schedule import apply_schedule_to_auto_answer
 from backend.core.incoming_call_policy import IncomingCallPolicy
-from backend.core.incoming_call_settings import load_incoming_call_settings, apply_incoming_call_settings
+from backend.core.incoming_call_settings import (
+    load_incoming_call_settings,
+    apply_incoming_call_settings,
+    resolve_profile_decision,
+)
 from backend.voice.recognition import VoiceRecognition
 from backend.voice.synthesis import VoiceSynthesis
 from backend.voice.ivr_patterns import IvrPatternsEngine
@@ -175,6 +180,7 @@ class CallManager:
         self._call_deadline: Optional[float] = None
         self._last_ring_seen: float = 0.0
         self._phone_mode_ring_event: Optional[asyncio.Event] = None
+        self._call_rings_heard: int = 0
 
         # Mode audio modem: voix série (Conexant) ou ALSA. USE_MODEM_VOICE_MODE=0 force ALSA (evite ton aigu).
         _voice_env = os.environ.get("USE_MODEM_VOICE_MODE", "").strip().lower()
@@ -337,15 +343,27 @@ class CallManager:
         self._refresh_instant_ring_seize()
 
     def _refresh_instant_ring_seize(self) -> None:
-        """Active le seize sync au RING si repondeur + rings=0 (pas en mode telephone)."""
+        """Active le seize sync au RING si repondeur + rings=0 effectifs (policy)."""
         auto = bool(getattr(self.config, "incoming_auto_answer", True))
-        rings = int(getattr(self.config, "rings_before_answer", 0) or 0)
-        self.modem.instant_ring_seize = bool(auto and rings <= 0)
+        whitelist_ring_only = bool(getattr(self.config, "whitelist_ring_only", False))
+        min_answer_rings = int(getattr(self.config, "rings_before_answer", 0) or 0)
+        if hasattr(self, "incoming_policy"):
+            answer_rings: list[int] = []
+            for profile in ("screened", "blocked", "permitted"):
+                resolved = resolve_profile_decision(self.incoming_policy.settings, profile)  # type: ignore[arg-type]
+                if "answer" in resolved.actions:
+                    answer_rings.append(int(resolved.rings_before_answer))
+            if answer_rings:
+                min_answer_rings = min(answer_rings)
+        self.modem.instant_ring_seize = bool(
+            auto and min_answer_rings <= 0 and not whitelist_ring_only
+        )
         logger.info(
-            "instant_ring_seize={} (auto_answer={}, rings={})",
+            "instant_ring_seize={} (auto_answer={}, min_answer_rings={}, whitelist_ring_only={})",
             self.modem.instant_ring_seize,
             auto,
-            rings,
+            min_answer_rings,
+            whitelist_ring_only,
         )
 
     def reload_incoming_policy(self) -> None:
@@ -383,7 +401,17 @@ class CallManager:
         self._phone_mode_ring_event = asyncio.Event()
         self._last_ring_seen = _time.monotonic()
         deadline = _time.monotonic() + max_wait_sec
-        quiet_sec = 6.0
+        quiet_sec = float(
+            getattr(
+                getattr(self, "incoming_policy", None),
+                "settings",
+                None,
+            ).ring_quiet_abort_sec
+            if getattr(self, "incoming_policy", None) is not None
+            else 6.0
+        )
+        if quiet_sec <= 0:
+            quiet_sec = 6.0
         while _time.monotonic() < deadline:
             if self._phone_mode_ring_event.is_set():
                 self._phone_mode_ring_event.clear()
@@ -392,6 +420,102 @@ class CallManager:
                 return "answered_elsewhere"
             await asyncio.sleep(0.4)
         return "timeout"
+
+    async def _wait_for_rings_before_answer(self, target_rings: int) -> bool:
+        """
+        Attend N sonneries avant decrochage (style Call Attendant).
+
+        @param target_rings Nombre total de RING souhaites avant answer.
+        @returns False si le fixe parallele a decroche (silence RING).
+        """
+        import time as _time
+
+        if target_rings <= 0:
+            return True
+        quiet_sec = 6.0
+        cycle_sec = 6.0
+        if hasattr(self, "incoming_policy"):
+            quiet_sec = float(
+                getattr(self.incoming_policy.settings, "ring_quiet_abort_sec", 6.0) or 6.0
+            )
+            cycle_sec = float(
+                getattr(self.incoming_policy.settings, "ring_cycle_sec", 6.0) or 6.0
+            )
+        abort_parallel = True
+        adv = getattr(getattr(self.incoming_policy, "settings", None), "advanced", None)
+        if adv is not None:
+            abort_parallel = bool(getattr(adv, "abort_answer_if_parallel_pickup", True))
+
+        deadline = _time.monotonic() + float(target_rings) * cycle_sec + quiet_sec + 5.0
+        logger.info(
+            "wait_for_rings: entendu={}/{} (quiet={}s)",
+            self._call_rings_heard,
+            target_rings,
+            quiet_sec,
+        )
+        while _time.monotonic() < deadline:
+            if self._call_rings_heard >= target_rings:
+                return True
+            if abort_parallel and self._call_rings_heard > 0:
+                if self._phone_mode_ring_event and self._phone_mode_ring_event.is_set():
+                    self._phone_mode_ring_event.clear()
+                    self._last_ring_seen = _time.monotonic()
+                elif (_time.monotonic() - self._last_ring_seen) >= quiet_sec:
+                    logger.info("wait_for_rings: silence — fixe parallele ou fin appel")
+                    return False
+            await asyncio.sleep(0.3)
+        return self._call_rings_heard >= target_rings
+
+    async def _release_line_if_seized(self) -> None:
+        """
+        Raccroche si un seize sync a eu lieu alors que la policy demande ignore.
+
+        Libere la ligne pour le telephone parallele.
+        """
+        seized = self.modem.consume_incoming_seize()
+        if seized or self._line_already_answered:
+            try:
+                await self.modem.hangup()
+            except Exception:
+                pass
+        self._line_already_answered = False
+
+    async def _journal_parallel_call(
+        self,
+        caller_id: Optional[str],
+        caller_name: Optional[str],
+        *,
+        rings: int,
+        reason: str,
+    ) -> None:
+        """
+        Journalise un appel sans repondeur modem (fixe gere la ligne).
+
+        @param caller_id Numero.
+        @param caller_name Nom CID.
+        @param rings Sonneries configurees pour l'attente.
+        @param reason Motif log (policy ignore, mode telephone).
+        """
+        call = await self.call_service.create_incoming_call(
+            phone_number=caller_id,
+            caller_name=caller_name,
+        )
+        self.current_call_id = call.id
+        logger.info("{} — pas de ATA (appel #{}), fixe parallele", reason, call.id)
+        cycle = 8.0
+        if hasattr(self, "incoming_policy"):
+            cycle = float(getattr(self.incoming_policy.settings, "ring_cycle_sec", 8.0) or 8.0)
+        wait_sec = max(12.0, float(max(rings, 1)) * cycle)
+        outcome = await self._wait_phone_mode_rings_end(max_wait_sec=wait_sec)
+        caller_id = self._pending_cid or caller_id
+        caller_name = self._pending_cname or caller_name
+        if caller_id or caller_name:
+            await self.call_service.set_call_caller_info(
+                call.id, phone_number=caller_id, caller_name=caller_name
+            )
+        await self.call_service.miss_call(call.id)
+        logger.info("Fin journalisation appel #{} ({})", call.id, outcome)
+        self.current_call_id = None
 
     async def handle_incoming_call(self, caller_id: Optional[str] = None, caller_name: Optional[str] = None):
         """
@@ -419,9 +543,12 @@ class CallManager:
             if self._cid_event and self._pending_cid:
                 self._cid_event.set()
 
-        # RING supplementaires en mode telephone (fin de sonnerie).
-        if self._incoming_handling and self._phone_mode_ring_event is not None and not caller_id and not caller_name:
-            self._phone_mode_ring_event.set()
+        # RING supplementaires (mode telephone ou wait_for_rings).
+        if self._incoming_handling:
+            self._call_rings_heard += 1
+            if self._phone_mode_ring_event is not None and not caller_id and not caller_name:
+                self._phone_mode_ring_event.set()
+            self._last_ring_seen = time.monotonic()
 
         if self._incoming_handling:
             if (caller_id or caller_name) and self.current_call_id:
@@ -435,6 +562,11 @@ class CallManager:
         # Flag avant tout await : evite deux handlers RING en parallele.
         self._incoming_handling = True
         self._line_already_answered = False
+        self._call_rings_heard = 1
+        import time as _time
+
+        self._last_ring_seen = _time.monotonic()
+        self._phone_mode_ring_event = asyncio.Event()
         self._cid_event = asyncio.Event()
         self._cname_event = asyncio.Event()
         if caller_id:
@@ -446,14 +578,20 @@ class CallManager:
         logger.info("Appel entrant de {} ({})", caller_id, caller_name)
 
         try:
+            auto_answer_cfg = apply_schedule_to_auto_answer(self.config)
             rings = int(getattr(self.config, "rings_before_answer", 0) or 0)
-            auto_answer = apply_schedule_to_auto_answer(self.config)
+            whitelist_ring_only = bool(getattr(self.config, "whitelist_ring_only", False))
             cid_wait = float(getattr(self.config, "cid_wait_sec", 2.5) or 2.5)
             timed_out = False
 
-            # Repondeur coupe-sonnerie (rings=0) : decrocher tout de suite, CID en parallele / via ATA.
-            # Sinon (rings>0 ou mode telephone) : fenetre CID avant action.
-            immediate_answer = bool(auto_answer and rings <= 0)
+            need_cid_before_action = (
+                not auto_answer_cfg
+                or rings > 0
+                or (auto_answer_cfg and whitelist_ring_only)
+            )
+            immediate_answer = bool(
+                auto_answer_cfg and rings <= 0 and not need_cid_before_action
+            )
             if immediate_answer:
                 timeout_sec = 0.0
             elif rings > 0:
@@ -463,9 +601,8 @@ class CallManager:
 
             if timeout_sec > 0 and not self._pending_cid:
                 logger.info(
-                    "Attente Caller ID jusqu a {:.1f}s avant {} (rings={})",
+                    "Attente Caller ID jusqu a {:.1f}s avant decision (rings={})",
                     timeout_sec,
-                    "ATA" if auto_answer else "journalisation",
                     rings,
                 )
                 try:
@@ -496,43 +633,48 @@ class CallManager:
                 getattr(self.modem, "last_cid_raw", None),
             )
 
-            # Whitelist : sonnerie seule (fixe) si option activee (besoin d'un numero).
-            if (
-                auto_answer
-                and caller_id
-                and bool(getattr(self.config, "whitelist_ring_only", False))
-            ):
-                try:
-                    if await self.block_service.is_whitelisted(caller_id):
-                        logger.info("Whitelist ring-only: pas de ATA pour {}", caller_id)
-                        auto_answer = False
-                        immediate_answer = False
-                except Exception as exc:
-                    logger.debug("whitelist check: {}", exc)
+            decision = await self.incoming_policy.resolve_async(
+                self.block_service,
+                caller_id=caller_id,
+                caller_name=caller_name,
+            )
+            rings = int(decision.rings_before_answer)
+            auto_answer = bool(auto_answer_cfg and decision.should_answer)
+            logger.info(
+                "Policy: profile={} source={} ignore={} answer={} rings={} actions={}",
+                decision.profile,
+                decision.source,
+                decision.should_ignore,
+                decision.should_answer,
+                rings,
+                decision.actions,
+            )
 
-            # Mode "fixe seul" : on journalise l'appel, pas de repondeur modem.
-            if not auto_answer:
-                call = await self.call_service.create_incoming_call(
-                    phone_number=caller_id,
-                    caller_name=caller_name,
+            if decision.should_ignore or not auto_answer:
+                await self._release_line_if_seized()
+                await self._journal_parallel_call(
+                    caller_id,
+                    caller_name,
+                    rings=rings if decision.should_ignore else rings,
+                    reason=(
+                        f"policy:{decision.profile}"
+                        if decision.should_ignore
+                        else "incoming_auto_answer=false"
+                    ),
                 )
-                self.current_call_id = call.id
-                logger.info(
-                    "incoming_auto_answer=false — pas de ATA (appel #{}), le telephone parallele gere la ligne",
-                    call.id,
-                )
-                wait_sec = max(12.0, float(max(rings, 1)) * 8.0)
-                outcome = await self._wait_phone_mode_rings_end(max_wait_sec=wait_sec)
-                caller_id = self._pending_cid or caller_id
-                caller_name = self._pending_cname or caller_name
-                if caller_id or caller_name:
-                    await self.call_service.set_call_caller_info(
-                        call.id, phone_number=caller_id, caller_name=caller_name
-                    )
-                await self.call_service.miss_call(call.id)
-                logger.info("Mode telephone: fin appel #{} ({})", call.id, outcome)
-                self.current_call_id = None
                 return
+
+            if rings > 0:
+                ok_rings = await self._wait_for_rings_before_answer(rings)
+                if not ok_rings:
+                    await self._release_line_if_seized()
+                    await self._journal_parallel_call(
+                        caller_id,
+                        caller_name,
+                        rings=rings,
+                        reason="parallel_pickup_before_rings",
+                    )
+                    return
 
             # PRIORITE: couper la sonnerie (souvent deja fait en sync au RING).
             seized = self.modem.consume_incoming_seize()
@@ -580,7 +722,7 @@ class CallManager:
                 self.current_call_id = None
                 return
 
-            is_blocked = await self.block_service.is_blocked(caller_id, caller_name)
+            is_blocked = decision.profile == "blocked"
 
             if is_blocked:
                 logger.info("Appel bloqué: {}", caller_id)
