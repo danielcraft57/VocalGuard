@@ -181,8 +181,37 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/health", include_in_schema=True)
     async def health():
-        """Endpoint de santé"""
-        return {"status": "healthy"}
+        """
+        Sante API (+ ping daemon si USE_TELEPHONY_DAEMON=1).
+        """
+        payload = {"status": "healthy", "role": "api"}
+        cfg = getattr(app.state, "config", None)
+        if cfg is None:
+            try:
+                from backend.core.config import Config
+
+                cfg = Config()
+            except Exception:
+                cfg = None
+        if cfg and getattr(cfg, "use_telephony_daemon", False):
+            url = (getattr(cfg, "telephony_daemon_url", None) or "http://127.0.0.1:8090").rstrip("/")
+            payload["telephony_daemon_url"] = url
+            try:
+                async with httpx.AsyncClient(timeout=1.5) as client:
+                    r = await client.get(f"{url}/health")
+                payload["telephony_daemon_reachable"] = True
+                payload["telephony_daemon_http"] = r.status_code
+                try:
+                    payload["telephony"] = r.json()
+                except Exception:
+                    payload["telephony"] = None
+                if r.status_code >= 500:
+                    payload["status"] = "degraded"
+            except Exception as exc:
+                payload["telephony_daemon_reachable"] = False
+                payload["telephony_daemon_error"] = str(exc)
+                payload["status"] = "degraded"
+        return payload
 
     @app.get("/favicon.svg", include_in_schema=False)
     async def favicon_svg():

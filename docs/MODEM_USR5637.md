@@ -421,22 +421,26 @@ AT+GCAP
 
 ## 11. Usage dans VocalGuard
 
-Implementation : `backend/core/modem_handler.py`.
+Implementation : `backend/core/modem_handler.py`, orchestration `backend/core/call_manager.py`.
+Stack runtime (daemon, ports, Pi, CID, modes) : [TELEPHONY_STACK.md](TELEPHONY_STACK.md).
 
 | Besoin | Commandes / comportement |
 |--------|--------------------------|
-| Init | `AT`, `ATE0`, `AT+FCLASS=0`, `AT+VCID=1`, detection type via `ATI` |
-| Entrant | surveillance `RING` + champs CID ; `ATA` / `ATH1` ou seize rapide `FCLASS=8` + `VLS=1` |
+| Init | `AT`, `ATE0`, `AT+FCLASS=0`, `AT+PCW=0` (option), `AT+VCID=1`, `ATI` / `ATI3`, `+GCI` pays optionnel |
+| Entrant | surveillance `RING` + champs CID ; fenetre `cid_wait_sec` ; `ATA` / seize rapide `FCLASS=8` + `VLS=1` |
 | Sortant | `ATD<numero>;` |
 | DTMF | `AT+VTS=...` |
-| Playback | `+VSM=128,8000` (USR) puis `+VTX` |
-| Record / live | `+VRX` (PCM 8 kHz 8-bit) |
-| Hangup | sortir du stream transparent puis `ATH` |
+| Playback | `+VSM=128,8000` (USR) puis `+VTX` ; PCM avec escape DLE (`0x10` double) |
+| Record / live | `+VRX` (PCM 8 kHz 8-bit) ; stop hangup / silence |
+| Hangup | sortir du stream transparent puis `ATH`, retour `+FCLASS=0` + `+VCID=1` |
+| Gains | `+VGR` / `+VGT` si `modem_voice_vgr` / `modem_voice_vgt` en config |
 
-Stack runtime (daemon, ports, Pi) : [TELEPHONY_STACK.md](TELEPHONY_STACK.md).  
 Perimetre appels sortants : [MODEM_APPELS_MVP_SCOPE.md](MODEM_APPELS_MVP_SCOPE.md).
 
-Le code gere aussi un autre modem type Conexant/Zoom (`+VSM=1,8000,0,0`, `+VSD=0,0`) ; pour le **USR5637** rester sur les variantes USR ci-dessus.
+Le code gere aussi un autre modem type Conexant/Zoom (`+VSM=1,8000,0,0`, `+VSD=0,0`) ; pour le **USR5637** rester sur les variantes USR ci-dessus. Firmware recommande : **1.2.23** (`ATI3`).
+
+Lab CID sans UI : `python scripts/modem_lab_cid_wait.py --port /dev/modem56k`.
+
 
 ---
 

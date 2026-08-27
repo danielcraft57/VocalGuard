@@ -35,6 +35,18 @@ class BlockService:
         self.osint_service = OSINTService(config)
         self.db = db
     
+    async def is_whitelisted(self, phone_number: Optional[str]) -> bool:
+        """
+        True si le numero est en liste blanche.
+
+        @param phone_number Numero a tester.
+        @returns True si whitelist.
+        """
+        if not phone_number:
+            return False
+        caller = self.caller_repo.get_by_phone_number(phone_number)
+        return bool(caller and caller.is_whitelisted)
+
     async def is_blocked(self, phone_number: Optional[str], caller_name: Optional[str] = None) -> bool:
         """
         Vérifie si un appelant doit être bloqué

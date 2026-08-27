@@ -82,6 +82,22 @@ class Config(BaseSettings):
     max_call_duration: int = Field(default=300)  # secondes
     # True = le modem decroche (repondeur). False = CID/historique seulement, le fixe gere l'appel.
     incoming_auto_answer: bool = Field(default=True)
+    # Planning YAML (voir incoming_line_schedule) : ecrase auto_answer sur creneaux.
+    incoming_line_schedule: Optional[dict] = Field(default=None)
+    # Si True, les numeros whitelist sonnent au fixe sans ATA modem.
+    whitelist_ring_only: bool = Field(default=False)
+    # Modem : gains voix (None = ne pas envoyer AT+VGR/VGT).
+    modem_voice_vgr: Optional[int] = Field(default=None)
+    modem_voice_vgt: Optional[int] = Field(default=None)
+    # Code pays ITU T.35 hex (France = 3D). None = ne pas envoyer +GCI.
+    modem_country_gci: Optional[str] = Field(default="3D")
+    modem_distinctive_ring: bool = Field(default=False)
+    modem_pcw_off_for_cid: bool = Field(default=True)
+    # Sortant : essai full-duplex VTR (fallback talkspurt si False / echec).
+    outgoing_use_vtr: bool = Field(default=False)
+    # VAD micro sortant (RMS s16le).
+    mic_vad_rms: int = Field(default=500)
+    mic_vad_hangover_ms: int = Field(default=500)
     
     # Blocage (inspire de callattendant: NOMOROBO USA, SHOULDIANSWER hors USA, ou vide pour desactiver)
     block_enabled: bool = Field(default=True)
@@ -211,6 +227,47 @@ class Config(BaseSettings):
                 self.telephony_bind_port = int(os.environ.get("TELEPHONY_BIND_PORT", "").strip())
             except ValueError:
                 pass
+        if os.environ.get("MODEM_BAUDRATE"):
+            try:
+                self.modem_baudrate = int(os.environ.get("MODEM_BAUDRATE", "").strip())
+            except ValueError:
+                pass
+        if os.environ.get("CID_WAIT_SEC"):
+            try:
+                self.cid_wait_sec = float(os.environ.get("CID_WAIT_SEC", "").strip())
+            except ValueError:
+                pass
+        if os.environ.get("RINGS_BEFORE_ANSWER"):
+            try:
+                self.rings_before_answer = int(os.environ.get("RINGS_BEFORE_ANSWER", "").strip())
+            except ValueError:
+                pass
+        if os.environ.get("INCOMING_AUTO_ANSWER"):
+            self.incoming_auto_answer = os.environ.get("INCOMING_AUTO_ANSWER", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+        if os.environ.get("MODEM_COUNTRY_GCI"):
+            self.modem_country_gci = os.environ.get("MODEM_COUNTRY_GCI", "").strip() or None
+        if os.environ.get("MODEM_VOICE_VGR"):
+            try:
+                self.modem_voice_vgr = int(os.environ.get("MODEM_VOICE_VGR", "").strip())
+            except ValueError:
+                pass
+        if os.environ.get("MODEM_VOICE_VGT"):
+            try:
+                self.modem_voice_vgt = int(os.environ.get("MODEM_VOICE_VGT", "").strip())
+            except ValueError:
+                pass
+        if os.environ.get("WHITELIST_RING_ONLY"):
+            self.whitelist_ring_only = os.environ.get("WHITELIST_RING_ONLY", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
 
     def load_from_yaml(self, path: Path):
         """

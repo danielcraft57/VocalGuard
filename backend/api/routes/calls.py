@@ -406,8 +406,14 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
                 START_SPEECH_BYTES = 4800  # ~150 ms pour demarrer
                 KEEP_ON_START_BYTES = 9600  # ~300 ms de pre-roll
                 MAX_MIC_BACKLOG = 48000  # ~1.5 s
-                HANGOVER_SILENCE_MS = 500.0
-                MIC_VAD_RMS = 500.0
+                HANGOVER_SILENCE_MS = float(
+                    getattr(call_manager.config, "mic_vad_hangover_ms", 500) or 500
+                )
+                MIC_VAD_RMS = float(getattr(call_manager.config, "mic_vad_rms", 500) or 500)
+                if getattr(call_manager.config, "outgoing_use_vtr", False):
+                    logger.info(
+                        "outgoing_use_vtr=true mais VTR non branche : fallback talkspurt VTX"
+                    )
                 uplink_open = False
                 silence_ms = 0.0
                 talkspurts = 0

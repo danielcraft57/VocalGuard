@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session
 from backend.core.config import Config
 from backend.core.modem_handler import ModemHandler
 from backend.core.events import Event, EventType, event_bus
+from backend.core.phone_cid import classify_cid_outcome, normalize_cid_value
+from backend.core.incoming_line_schedule import apply_schedule_to_auto_answer
 from backend.voice.recognition import VoiceRecognition
 from backend.voice.synthesis import VoiceSynthesis
 from backend.voice.ivr_patterns import IvrPatternsEngine
@@ -57,10 +59,14 @@ class _IncomingLineRecorder:
         self._task = asyncio.create_task(self._read_loop(), name="incoming_vrx_recorder")
 
     async def _read_loop(self) -> None:
+        max_chunks = 9000  # ~ ~30 min a ~2 ko/chunk ; coupe les pics memoire
         while not self._stop.is_set():
             chunk = await self._cm.modem.read_outgoing_vrx_chunk(2048)
             if chunk:
                 self.chunks.append(chunk)
+                if len(self.chunks) > max_chunks:
+                    # Garde la fin (message recent) pour ne pas exploser la RAM.
+                    self.chunks = self.chunks[-max_chunks // 2 :]
             else:
                 await asyncio.sleep(0.02)
 
@@ -151,8 +157,12 @@ class CallManager:
         self._pending_cid: Optional[str] = None
         self._pending_cname: Optional[str] = None
         self._cid_event: Optional[asyncio.Event] = None
+        self._cname_event: Optional[asyncio.Event] = None
         self._voice_available = True  # False si STT ou TTS non disponibles (app demarre quand meme)
         self._recognition_available = False
+        self._call_deadline: Optional[float] = None
+        self._last_ring_seen: float = 0.0
+        self._phone_mode_ring_event: Optional[asyncio.Event] = None
 
         # Mode audio modem: voix série (Conexant) ou ALSA. USE_MODEM_VOICE_MODE=0 force ALSA (evite ton aigu).
         _voice_env = os.environ.get("USE_MODEM_VOICE_MODE", "").strip().lower()
@@ -208,13 +218,15 @@ class CallManager:
                 "USE_TELEPHONY_DAEMON=1 : modem gere par le service telephony — pas de port serie sur ce processus."
             )
         else:
+            # Appliquer gains / pays / VDR depuis la config avant init modem.
+            self._apply_modem_runtime_options()
             modem_initialized = await self.modem.initialize()
             if not modem_initialized:
                 logger.warning("Modem non disponible - l'API fonctionnera sans gestion d'appels")
             else:
                 self.modem.on_incoming_call = self.handle_incoming_call
                 logger.info("Modem initialisé")
-        
+
         # Initialiser la reconnaissance vocale (optionnel : si absent, pas de transcription IVR)
         try:
             await self.voice_recognition.initialize()
@@ -286,6 +298,57 @@ class CallManager:
             # Lancer la surveillance du modem dans une tâche séparée
             await self.modem.monitor_calls()
     
+    def _apply_modem_runtime_options(self) -> None:
+        """Copie les options config vers le ModemHandler (gains, pays, VDR, PCW)."""
+        m = self.modem
+        vgr = getattr(self.config, "modem_voice_vgr", None)
+        vgt = getattr(self.config, "modem_voice_vgt", None)
+        try:
+            m.voice_vgr = int(vgr) if vgr is not None and str(vgr).strip() != "" else None
+        except (TypeError, ValueError):
+            m.voice_vgr = None
+        try:
+            m.voice_vgt = int(vgt) if vgt is not None and str(vgt).strip() != "" else None
+        except (TypeError, ValueError):
+            m.voice_vgt = None
+        gci = getattr(self.config, "modem_country_gci", None)
+        m.modem_country_gci = str(gci).strip() if gci else None
+        m.enable_distinctive_ring = bool(getattr(self.config, "modem_distinctive_ring", False))
+        m.enable_pcw_off_for_cid = bool(getattr(self.config, "modem_pcw_off_for_cid", True))
+
+    def _arm_call_deadline(self) -> None:
+        """Pose une deadline wall-clock pour max_call_duration."""
+        import time as _time
+
+        max_sec = int(getattr(self.config, "max_call_duration", 300) or 300)
+        self._call_deadline = _time.monotonic() + max(30, max_sec)
+
+    def _call_deadline_exceeded(self) -> bool:
+        import time as _time
+
+        return bool(self._call_deadline and _time.monotonic() >= self._call_deadline)
+
+    async def _wait_phone_mode_rings_end(self, *, max_wait_sec: float) -> str:
+        """
+        Mode telephone : attend la fin des RING (ou timeout).
+
+        @returns ``answered_elsewhere`` si plus de RING longtemps, ``timeout`` sinon.
+        """
+        import time as _time
+
+        self._phone_mode_ring_event = asyncio.Event()
+        self._last_ring_seen = _time.monotonic()
+        deadline = _time.monotonic() + max_wait_sec
+        quiet_sec = 6.0
+        while _time.monotonic() < deadline:
+            if self._phone_mode_ring_event.is_set():
+                self._phone_mode_ring_event.clear()
+                self._last_ring_seen = _time.monotonic()
+            elif (_time.monotonic() - self._last_ring_seen) >= quiet_sec:
+                return "answered_elsewhere"
+            await asyncio.sleep(0.4)
+        return "timeout"
+
     async def handle_incoming_call(self, caller_id: Optional[str] = None, caller_name: Optional[str] = None):
         """
         Traite un appel entrant.
@@ -298,14 +361,23 @@ class CallManager:
             caller_id: Numéro de téléphone de l'appelant
             caller_name: Nom de l'appelant (si disponible)
         """
+        caller_id = normalize_cid_value(caller_id)
+        caller_name = normalize_cid_value(caller_name)
+
         if caller_id:
             self._pending_cid = caller_id
             if self._cid_event:
                 self._cid_event.set()
         if caller_name:
             self._pending_cname = caller_name
+            if self._cname_event:
+                self._cname_event.set()
             if self._cid_event and self._pending_cid:
                 self._cid_event.set()
+
+        # RING supplementaires en mode telephone (fin de sonnerie).
+        if self._incoming_handling and self._phone_mode_ring_event is not None and not caller_id and not caller_name:
+            self._phone_mode_ring_event.set()
 
         if self._incoming_handling:
             if (caller_id or caller_name) and self.current_call_id:
@@ -320,18 +392,20 @@ class CallManager:
         self._incoming_handling = True
         self._line_already_answered = False
         self._cid_event = asyncio.Event()
+        self._cname_event = asyncio.Event()
         if caller_id:
             self._pending_cid = caller_id
             self._cid_event.set()
         if caller_name:
             self._pending_cname = caller_name
-        logger.info(f"Appel entrant de {caller_id} ({caller_name})")
+            self._cname_event.set()
+        logger.info("Appel entrant de {} ({})", caller_id, caller_name)
 
         try:
             rings = int(getattr(self.config, "rings_before_answer", 0) or 0)
-            auto_answer = bool(getattr(self.config, "incoming_auto_answer", True))
+            auto_answer = apply_schedule_to_auto_answer(self.config)
             cid_wait = float(getattr(self.config, "cid_wait_sec", 2.5) or 2.5)
-            # rings>0 : ancienne logique (plusieurs cycles). rings=0 : fenetre courte CID.
+            timed_out = False
             if rings > 0:
                 timeout_sec = max(cid_wait, float(rings) * 6.0)
             else:
@@ -347,13 +421,43 @@ class CallManager:
                 try:
                     await asyncio.wait_for(self._cid_event.wait(), timeout=timeout_sec)
                 except asyncio.TimeoutError:
+                    timed_out = True
                     logger.info("Pas de Caller ID apres {:.1f}s", timeout_sec)
             else:
-                # CID deja la : laisse arriver NAME= eventuel (~0.4s)
-                await asyncio.sleep(0.4)
+                # CID deja la : attente courte NAME= via event (pas sleep aveugle).
+                if not self._pending_cname:
+                    try:
+                        await asyncio.wait_for(self._cname_event.wait(), timeout=0.6)
+                    except asyncio.TimeoutError:
+                        pass
 
             caller_id = self._pending_cid or caller_id
             caller_name = self._pending_cname or caller_name
+            cause = classify_cid_outcome(
+                caller_id=caller_id,
+                source="ring",
+                timed_out=timed_out,
+            )
+            logger.info(
+                "CID decision cause={} id={} name={} raw={}",
+                cause,
+                caller_id,
+                caller_name,
+                getattr(self.modem, "last_cid_raw", None),
+            )
+
+            # Whitelist : sonnerie seule (fixe) si option activee.
+            if (
+                auto_answer
+                and caller_id
+                and bool(getattr(self.config, "whitelist_ring_only", False))
+            ):
+                try:
+                    if await self.block_service.is_whitelisted(caller_id):
+                        logger.info("Whitelist ring-only: pas de ATA pour {}", caller_id)
+                        auto_answer = False
+                except Exception as exc:
+                    logger.debug("whitelist check: {}", exc)
 
             # Mode "fixe seul" : on journalise l'appel, pas de repondeur modem.
             if not auto_answer:
@@ -366,16 +470,17 @@ class CallManager:
                     "incoming_auto_answer=false — pas de ATA (appel #{}), le telephone parallele gere la ligne",
                     call.id,
                 )
-                # Attendre la fin des sonneries pour marquer manque / termine sans audio modem.
-                await asyncio.sleep(max(8.0, float(max(rings, 1)) * 6.0))
-                # Derniere chance CID pendant que le fixe sonne.
+                wait_sec = max(12.0, float(max(rings, 1)) * 8.0)
+                outcome = await self._wait_phone_mode_rings_end(max_wait_sec=wait_sec)
                 caller_id = self._pending_cid or caller_id
                 caller_name = self._pending_cname or caller_name
                 if caller_id or caller_name:
                     await self.call_service.set_call_caller_info(
                         call.id, phone_number=caller_id, caller_name=caller_name
                     )
+                # Fin des RING = pris ailleurs ou abandon ; on marque manque (pas d'audio modem).
                 await self.call_service.miss_call(call.id)
+                logger.info("Mode telephone: fin appel #{} ({})", call.id, outcome)
                 self.current_call_id = None
                 return
 
@@ -385,10 +490,10 @@ class CallManager:
             ok, ata_cid, ata_cname = await self.modem.answer_call(fast_voice_seize=fast_seize)
             self._line_already_answered = ok
             if not caller_id and ata_cid:
-                caller_id = ata_cid
+                caller_id = normalize_cid_value(ata_cid)
+                logger.info("CID via ATA: {}", caller_id)
             if not caller_name and ata_cname:
-                caller_name = ata_cname
-            # CID parfois encore en pending pendant ATA
+                caller_name = normalize_cid_value(ata_cname)
             caller_id = self._pending_cid or caller_id
             caller_name = self._pending_cname or caller_name
 
@@ -397,6 +502,7 @@ class CallManager:
                 caller_name=caller_name,
             )
             self.current_call_id = call.id
+            self._arm_call_deadline()
 
             if not ok:
                 # Fixe deja decroche / appel parti : ne pas reessayer ATA ni jouer l'accueil.
@@ -414,7 +520,7 @@ class CallManager:
             is_blocked = await self.block_service.is_blocked(caller_id, caller_name)
 
             if is_blocked:
-                logger.info(f"Appel bloqué: {caller_id}")
+                logger.info("Appel bloqué: {}", caller_id)
                 await self.call_service.block_call(call.id)
                 await self._handle_blocked_call(skip_answer=True)
             else:
@@ -422,7 +528,7 @@ class CallManager:
                 await self._handle_permitted_call(skip_modem_answer=True)
 
         except Exception as e:
-            logger.exception(f"Erreur lors du traitement de l'appel: {e}")
+            logger.exception("Erreur lors du traitement de l'appel: {}", e)
             if self.current_call_id:
                 await self.call_service.miss_call(self.current_call_id)
         finally:
@@ -431,6 +537,9 @@ class CallManager:
             self._pending_cid = None
             self._pending_cname = None
             self._cid_event = None
+            self._cname_event = None
+            self._phone_mode_ring_event = None
+            self._call_deadline = None
     
     async def _handle_blocked_call(self, skip_answer: bool = False):
         """Traite un appel bloqué"""
@@ -478,7 +587,18 @@ class CallManager:
                 )
 
             greeting = self._greeting_text()
-            await self._play_on_line(greeting, already_in_voice_mode=True, recorder=None)
+            played = await self._play_on_line(greeting, already_in_voice_mode=True, recorder=None)
+            # Call screening : si le fixe a pris pendant l'accueil, on coupe et on laisse la ligne.
+            if getattr(self.modem, "_playback_interrupted", False) or played is False:
+                logger.info("Accueil interrompu (tel parallele / hangup) — fin sans repondeur")
+                if self.current_call_id:
+                    await self.call_service.complete_call(self.current_call_id, duration=None)
+                    self.current_call_id = None
+                return
+
+            if self._call_deadline_exceeded():
+                logger.warning("max_call_duration atteint juste apres accueil")
+                return
 
             vm_mode = (getattr(self.config, "voicemail_mode", "simple") or "simple").strip().lower()
             vm_simple = self.config.voicemail_enabled and vm_mode != "ivr"
@@ -897,6 +1017,12 @@ class CallManager:
         if not self.modem.is_initialized:
             await asyncio.sleep(min(duration, 2))
             return b""
+        # Respecte max_call_duration si une deadline est posee.
+        if self._call_deadline is not None:
+            import time as _time
+
+            remaining = max(1.0, self._call_deadline - _time.monotonic())
+            duration = int(min(float(duration), remaining))
         rec = recorder or self._incoming_recorder
         if rec:
             await rec.pause()

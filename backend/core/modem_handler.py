@@ -20,6 +20,7 @@ from typing import Optional, Tuple
 import serial
 from loguru import logger
 
+from backend.core.phone_cid import normalize_cid_value
 from backend.voice.audio_utils import pcm_u8_chunk_peak
 
 # Mode voix (callattendant) : commandes AT pour jouer vers la ligne
@@ -32,11 +33,30 @@ _VOICE_COMPRESSION_CONEXANT = "AT+VSM=1,8000,0,0"  # 8-bit PCM, 8 kHz (Zoom 3095
 _TAD_OFF_HOOK = "AT+VLS=1"
 _VOICE_TX = "AT+VTX"
 _VOICE_RX = "AT+VRX"
+_DLE = 0x10
 _DTE_END_VOICE_TX = (chr(16) + chr(3)).encode()  # DLE ETX (USR)
 _DTE_END_VOICE_TX_CONEXANT = (chr(16) * 3 + chr(3)).encode()   # DLE DLE DLE ETX (Conexant)
 _DTE_END_VOICE_RX_CONEXANT = (chr(16) * 3 + chr(33)).encode()   # DLE DLE DLE ! (Conexant)
 _VRX_SAMPLE_RATE = 8000
 _VRX_BYTES_PER_SEC = 8000  # 8 kHz, 8-bit mono
+_EXPECTED_FIRMWARE_HINT = "1.2.23"
+
+
+def _escape_dle_pcm(data: bytes) -> bytes:
+    """
+    Double les octets DLE (0x10) dans le PCM pour le mode transparent V.253.
+
+    @param data PCM 8-bit brut.
+    @returns PCM safe pour VTX.
+    """
+    if not data or _DLE not in data:
+        return data
+    out = bytearray()
+    for b in data:
+        out.append(b)
+        if b == _DLE:
+            out.append(_DLE)
+    return bytes(out)
 
 
 def _vrx_buffer_has_hangup_marker(blob: bytes) -> bool:
@@ -106,6 +126,19 @@ class ModemHandler:
         self._vtx_active = False
         # Demande d'arret urgent (raccrochage UI) : coupe les ecritures VTX pacees.
         self._voice_abort = False
+        # Diagnostics sante / CID (exposes via /health).
+        self.firmware_ati3: Optional[str] = None
+        self.last_ring_at: Optional[float] = None
+        self.last_cid_raw: Optional[str] = None
+        self.last_error: Optional[str] = None
+        # Gains voix optionnels (None = ne pas envoyer la commande).
+        self.voice_vgr: Optional[int] = None
+        self.voice_vgt: Optional[int] = None
+        self.modem_country_gci: Optional[str] = None
+        self.enable_distinctive_ring: bool = False
+        self.enable_pcw_off_for_cid: bool = True
+        # Coupe playback si evenement parallele / hangup detecte pendant VTX.
+        self._playback_interrupted = False
     
     async def detect_modem(self) -> Optional[str]:
         """
@@ -179,13 +212,38 @@ class ModemHandler:
             
             # Envoyer des commandes AT pour initialiser
             await self.send_command("AT")
-            await self.send_command("ATE0")  # Désactiver l'écho
+            await self.send_command("ATE0")  # Desactiver l'echo
             await self.send_command("AT+FCLASS=0")  # Mode data : indispensable pour recevoir RING
+            if self.enable_pcw_off_for_cid:
+                # Call Waiting off aide parfois le CID formate (retours USR / communautaires).
+                r_pcw = await self.send_command_full("AT+PCW=0", timeout=2.0)
+                logger.info(
+                    "Modem AT+PCW=0 -> {}",
+                    (r_pcw or b"").decode("utf-8", errors="ignore").strip().replace("\r\n", " | ") or "(vide)",
+                )
             await self.send_command("AT+VCID=1")  # Activer le Caller ID
-            
-            # Type de modem : Conexant / USR 5637 = mode voix série supporté
+            if self.enable_distinctive_ring:
+                await self.send_command_full("AT+VDR=1,0", timeout=2.0)
+            if self.modem_country_gci:
+                gci = str(self.modem_country_gci).strip().upper().lstrip("0X")
+                await self.send_command_full(f"AT+GCI={gci}", timeout=2.0)
+
+            # Type de modem : Conexant / USR 5637 = mode voix serie supporté
             response_ati = await self.send_command_full("ATI", timeout=2.0)
             response_ati0 = await self.send_command_full("ATI0", timeout=2.0)
+            response_ati3 = await self.send_command_full("ATI3", timeout=2.0)
+            self.firmware_ati3 = (
+                (response_ati3 or b"").decode("utf-8", errors="ignore").strip().replace("\r\n", " ")
+                or None
+            )
+            if self.firmware_ati3:
+                logger.info("Modem ATI3 (firmware): {}", self.firmware_ati3)
+                if _EXPECTED_FIRMWARE_HINT not in self.firmware_ati3:
+                    logger.warning(
+                        "Firmware modem ({}) hors hint {} — CID / voix peuvent etre foireux",
+                        self.firmware_ati3,
+                        _EXPECTED_FIRMWARE_HINT,
+                    )
             combined = (response_ati or b"") + (response_ati0 or b"")
             self._is_conexant = bool(
                 combined
@@ -200,13 +258,15 @@ class ModemHandler:
                 logger.info("Modem Conexant/USR detecte (mode voix serie disponible)")
             else:
                 logger.info("Modem detecte (type non identifie). Reponses ATI: {}", combined.decode("utf-8", errors="ignore").strip() or "(vide)")
-            
+
             self.is_initialized = True
+            self.last_error = None
             logger.info("Modem initialisé avec succès")
             return True
-            
+
         except Exception as e:
             # Pas de traceback complet : erreur courante en dev (mauvais port, OS sans /dev/ttyACM0).
+            self.last_error = str(e)
             logger.warning(
                 "Modem indisponible sur {} — verifier MODEM_PORT ou laisser vide pour auto-detect: {}",
                 self.port,
@@ -342,11 +402,60 @@ class ModemHandler:
         text = response.decode("utf-8", errors="ignore")
         nmbr = re.search(r"NMBR\s*=\s*(\S+)", text, flags=re.IGNORECASE)
         name = re.search(r"NAME\s*=\s*([^\r\n]+)", text, flags=re.IGNORECASE)
-        cid = nmbr.group(1).strip().strip('"').strip("'") if nmbr else None
-        cname = name.group(1).strip().strip('"').strip("'") if name else None
-        if cname and cname.upper() in ("O", "P", "OUT_OF_AREA", "PRIVATE", "UNAVAILABLE"):
-            cname = None
-        return (cid or None, cname or None)
+        cid = normalize_cid_value(nmbr.group(1) if nmbr else None)
+        cname = normalize_cid_value(name.group(1) if name else None)
+        if nmbr and not cid:
+            logger.info("Caller ID masque dans reponse ATA: NMBR={}", nmbr.group(1).strip())
+        return (cid, cname)
+
+    def health_snapshot(self) -> dict:
+        """
+        Etat modem pour /health (sans ouvrir le port).
+
+        @returns Dict serialisable JSON.
+        """
+        return {
+            "modem_initialized": bool(self.is_initialized),
+            "modem_port": self.port,
+            "firmware_ati3": self.firmware_ati3,
+            "last_ring_at": self.last_ring_at,
+            "last_cid_raw": self.last_cid_raw,
+            "last_error": self.last_error,
+            "vtx_active": bool(self._vtx_active),
+            "outgoing_owns_serial": bool(self._outgoing_owns_serial),
+        }
+
+    def _apply_voice_gains_sync(self) -> None:
+        """Envoie +VGR / +VGT si configures (apres FCLASS=8)."""
+        if self.voice_vgr is not None:
+            self._send_command_sync(f"AT+VGR={int(self.voice_vgr)}")
+        if self.voice_vgt is not None:
+            self._send_command_sync(f"AT+VGT={int(self.voice_vgt)}")
+
+    def _peek_serial_interrupt_sync(self) -> bool:
+        """
+        Lit le buffer serie pendant VTX : hangup / pickup parallele.
+
+        @returns True si il faut couper le playback.
+        """
+        if not self.serial_connection or not self.serial_connection.is_open:
+            return False
+        try:
+            if self.serial_connection.in_waiting <= 0:
+                return False
+            blob = self.serial_connection.read(self.serial_connection.in_waiting)
+        except (OSError, serial.SerialException):
+            return False
+        if _vrx_buffer_has_hangup_marker(blob) or _serial_buffer_shows_remote_pickup(blob):
+            logger.info("Playback interrompu (evenement ligne pendant VTX)")
+            self._playback_interrupted = True
+            return True
+        # DLE + h / H = local hangup (tel parallele) sur beaucoup de firmwares V.253
+        if b"\x10h" in blob or b"\x10H" in blob:
+            logger.info("Playback interrompu (DLE hook local pendant VTX)")
+            self._playback_interrupted = True
+            return True
+        return False
 
     async def answer_call(self, fast_voice_seize: bool = False) -> Tuple[bool, Optional[str], Optional[str]]:
         """
@@ -500,6 +609,11 @@ class ModemHandler:
 
             resp = _ath_once()
             if b"OK" in resp:
+                try:
+                    self._send_command_sync("AT+FCLASS=0")
+                    self._send_command_sync("AT+VCID=1")
+                except Exception:
+                    pass
                 return True
             # Reponse polluee par du PCM : re-drain + 2e ATH.
             logger.warning(
@@ -514,9 +628,21 @@ class ModemHandler:
             except (OSError, serial.SerialException):
                 pass
             resp2 = _ath_once()
-            return b"OK" in resp2
+            ok = b"OK" in resp2
+            # Remettre le modem en veille data + CID (evite de rester bloque en voix).
+            try:
+                self._send_command_sync("AT+FCLASS=0")
+                self._send_command_sync("AT+VCID=1")
+            except Exception:
+                pass
+            return ok
         except Exception as e:
             logger.warning("force_hangup: {}", e)
+            try:
+                self._send_command_sync("AT+FCLASS=0")
+                self._send_command_sync("AT+VCID=1")
+            except Exception:
+                pass
             return False
 
     @staticmethod
@@ -647,7 +773,8 @@ class ModemHandler:
                 # Desactiver la detection de silence (comme callattendant) pour eviter que le modem coupe la ligne
                 vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
                 self._send_command_sync(vsd)
-                # Certains modems Conexant acceptent le format USR (128,8000) et refusent 1,8000,0,0
+                self._apply_voice_gains_sync()
+                # VSM : USR d'abord ; fallback Conexant seulement si modem detecte Conexant.
                 vsm_ok = False
                 if self._is_conexant:
                     vsm_ok = self._send_command_sync(_VOICE_COMPRESSION_USR)
@@ -668,32 +795,38 @@ class ModemHandler:
                 if not self._send_command_sync(_VOICE_TX, expect="CONNECT", timeout=10.0):
                     logger.warning("play_wav_serial: AT+VTX (CONNECT) a echoue")
                     return False
+                self._vtx_active = True
+                self._playback_interrupted = False
                 # Envoyer les trames PCM en temps reel : 1024 octets = 128 ms a 8 kHz
                 chunk = 1024
                 sleep_interval = chunk / float(framerate) if framerate else 0.128
                 logger.info("Lecture WAV vers ligne (VTX), chunk={} sleep={:.3f}s", chunk, sleep_interval)
                 data = wf.readframes(chunk)
                 while data:
+                    if self._voice_abort or self._peek_serial_interrupt_sync():
+                        break
                     if sampwidth == 2:  # 16-bit signed LE -> 8-bit unsigned (128 = silence)
                         out = []
                         for i in range(0, len(data), 2):
                             sample = int.from_bytes(data[i : i + 2], "little", signed=True)
                             out.append(max(0, min(255, (sample >> 8) + 128)))
                         data = bytes(out)
-                    self.serial_connection.write(data)
+                    self.serial_connection.write(_escape_dle_pcm(data))
                     data = wf.readframes(chunk)
                     time.sleep(sleep_interval)
                 end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
                 self.serial_connection.write(end_seq)
                 self.serial_connection.flush()
+                self._vtx_active = False
                 time.sleep(0.12)
                 try:
                     while self.serial_connection.in_waiting > 0:
                         self.serial_connection.read(self.serial_connection.in_waiting)
                 except (OSError, serial.SerialException):
                     pass
-            return True
+            return not self._playback_interrupted
         except Exception as e:
+            self._vtx_active = False
             logger.exception("Erreur lecture WAV via serie: {}", e)
             return False
 
@@ -941,9 +1074,10 @@ class ModemHandler:
         self._vrx_saved_timeout = None
 
     def _apply_voice_pcm_params_sync(self) -> None:
-        """Configure VSD / VSM pour PCM 8-bit 8 kHz (avant VTX ou VRX)."""
+        """Configure VSD / VSM / gains pour PCM 8-bit 8 kHz (avant VTX ou VRX)."""
         vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
         self._send_command_sync(vsd)
+        self._apply_voice_gains_sync()
         if self._is_conexant:
             if not self._send_command_sync(_VOICE_COMPRESSION_USR):
                 self._send_command_sync(_VOICE_COMPRESSION_CONEXANT)
@@ -989,7 +1123,7 @@ class ModemHandler:
                 if self._voice_abort:
                     return False
                 piece = u8_pcm[i : i + chunk]
-                self.serial_connection.write(piece)
+                self.serial_connection.write(_escape_dle_pcm(piece))
                 time.sleep(len(piece) / float(_VRX_SAMPLE_RATE))
             return True
         except Exception as e:
@@ -1285,27 +1419,44 @@ class ModemHandler:
             except Exception as exc:
                 logger.exception("Callback appel entrant: {}", exc)
 
-        # Détecter un appel entrant (RING)
+        # Detecter un appel entrant (RING)
         if "RING" in line_str.upper() and not line_str.upper().startswith("NMBR"):
             # Evite de traiter "something RING" weird; RING seul ou avec espaces.
             if line_str.strip().upper() == "RING" or line_str.strip().upper().startswith("RING"):
+                self.last_ring_at = time.time()
                 logger.info("Appel entrant détecté!")
                 asyncio.create_task(_notify(), name="vg_incoming_ring")
 
         # Caller ID : NMBR= / NAME= (parfois prefixe espaces, parfois dans une ligne mixte)
+        date_m = re.search(r"DATE\s*=\s*(\S+)", line_str, flags=re.IGNORECASE)
+        time_m = re.search(r"TIME\s*=\s*(\S+)", line_str, flags=re.IGNORECASE)
+        if date_m or time_m:
+            logger.debug(
+                "CID meta DATE={} TIME={}",
+                date_m.group(1) if date_m else "-",
+                time_m.group(1) if time_m else "-",
+            )
+
         nmbr_m = re.search(r"NMBR\s*=\s*([^\r\n]+)", line_str, flags=re.IGNORECASE)
         if nmbr_m:
-            caller_id = nmbr_m.group(1).strip().strip('"').strip("'")
+            raw = nmbr_m.group(1).strip().strip('"').strip("'")
+            self.last_cid_raw = raw
+            caller_id = normalize_cid_value(raw)
             if caller_id:
                 logger.info("Caller ID: {}", caller_id)
                 asyncio.create_task(_notify(caller_id=caller_id), name="vg_incoming_cid")
+            else:
+                logger.info("Caller ID masque ignore: NMBR={}", raw)
 
         name_m = re.search(r"NAME\s*=\s*([^\r\n]+)", line_str, flags=re.IGNORECASE)
         if name_m:
-            caller_name = name_m.group(1).strip().strip('"').strip("'")
-            if caller_name and caller_name.upper() not in ("O", "P", "OUT_OF_AREA", "PRIVATE", "UNAVAILABLE"):
+            raw_name = name_m.group(1).strip().strip('"').strip("'")
+            caller_name = normalize_cid_value(raw_name)
+            if caller_name:
                 logger.info("Caller NAME: {}", caller_name)
                 asyncio.create_task(_notify(caller_name=caller_name), name="vg_incoming_name")
+            else:
+                logger.info("Caller NAME masque ignore: NAME={}", raw_name)
     
     def close(self):
         """Ferme la connexion au modem"""

@@ -14,6 +14,20 @@ export type SettingsSnapshot = {
   incoming_line_mode: IncomingLineMode;
 };
 
+export type TelephonyStatus = {
+  status: string;
+  modem_initialized: boolean;
+  modem_port?: string | null;
+  firmware_ati3?: string | null;
+  last_ring_at?: number | null;
+  last_cid_raw?: string | null;
+  last_error?: string | null;
+  incoming_line_mode: IncomingLineMode;
+  in_call: boolean;
+  relay_failures: number;
+  daemon_reachable?: boolean | null;
+};
+
 /**
  * Lit le snapshot settings (mode ligne entrante inclus).
  *
@@ -25,6 +39,19 @@ export async function fetchSettings(): Promise<SettingsSnapshot> {
     throw new Error(`Erreur API settings: ${res.status}`);
   }
   return (await res.json()) as SettingsSnapshot;
+}
+
+/**
+ * Etat modem / daemon (pastille topbar).
+ *
+ * @returns Snapshot telephonie.
+ */
+export async function fetchTelephonyStatus(): Promise<TelephonyStatus> {
+  const res = await fetch(`${getApiBaseUrl()}/telephony/status`);
+  if (!res.ok) {
+    throw new Error(`Erreur API telephony status: ${res.status}`);
+  }
+  return (await res.json()) as TelephonyStatus;
 }
 
 /**

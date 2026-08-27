@@ -38,6 +38,26 @@ max_call_duration: 300  # secondes
 # true = repondeur modem. false = journalise l'appel, le telephone parallele repond seul
 # Bascule aussi via UI (topbar) -> PUT /api/v1/settings/incoming-line-mode
 incoming_auto_answer: true
+# Planning (optionnel) : ecrase le switch UI sur des creneaux (lundi=0 ... dimanche=6)
+# incoming_line_schedule:
+#   enabled: true
+#   rules:
+#     - days: [0, 1, 2, 3, 4]
+#       start: "22:00"
+#       end: "07:00"
+#       mode: voicemail
+whitelist_ring_only: false
+
+# Modem voix / CID
+modem_country_gci: "3D"  # France
+modem_pcw_off_for_cid: true
+modem_distinctive_ring: false
+# Gains V.253 (null = ne pas envoyer) ; calibrer sur node14
+modem_voice_vgr: null
+modem_voice_vgt: null
+outgoing_use_vtr: false  # reserve ; fallback talkspurt si true sans support
+mic_vad_rms: 500
+mic_vad_hangover_ms: 500
 
 # Blocage (inspire de callattendant: NOMOROBO USA, SHOULDIANSWER hors USA, ou vide)
 block_enabled: true

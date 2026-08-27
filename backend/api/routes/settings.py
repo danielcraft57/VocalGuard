@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 
 from backend.api.dependencies import get_config
-from backend.api.models import IncomingLineModeUpdate, SettingsResponse
+from backend.api.models import IncomingLineModeUpdate, SettingsResponse, TelephonyStatusResponse
 from backend.core.config import Config
 from backend.core.incoming_line_mode import (
     apply_incoming_line_mode,
@@ -159,3 +159,74 @@ async def put_incoming_line_mode(
         save_incoming_line_mode(config)
         return SettingsResponse(**data)
     return _apply_live(request, config, body.mode)
+
+
+@router.get("/telephony/status", response_model=TelephonyStatusResponse)
+async def get_telephony_status(
+    request: Request,
+    config: Config = Depends(get_config),
+) -> TelephonyStatusResponse:
+    """
+    Etat modem / daemon pour la pastille topbar (sans autre UI).
+
+    @param request Contexte (CallManager local ou proxy daemon).
+    @param config Configuration.
+    @returns Snapshot telephonie.
+    """
+    # Daemon local (processus telephony) uniquement — pas le CallManager API sans modem.
+    is_daemon = bool(getattr(request.app.state, "is_vocalguard_telephony_daemon", False))
+    cm = getattr(request.app.state, "call_manager", None)
+    if is_daemon and cm is not None:
+        snap = cm.modem.health_snapshot()
+        relay = getattr(request.app.state, "event_relay", None)
+        return TelephonyStatusResponse(
+            status="ok" if snap.get("modem_initialized") else "degraded",
+            modem_initialized=bool(snap.get("modem_initialized")),
+            modem_port=snap.get("modem_port"),
+            firmware_ati3=snap.get("firmware_ati3"),
+            last_ring_at=snap.get("last_ring_at"),
+            last_cid_raw=snap.get("last_cid_raw"),
+            last_error=snap.get("last_error"),
+            incoming_line_mode=resolve_incoming_line_mode(config),
+            in_call=bool(cm.current_call_id),
+            relay_failures=int(getattr(relay, "failure_count", 0) or 0),
+            daemon_reachable=True,
+        )
+
+    # API principale : proxy vers daemon si configure
+    if getattr(config, "use_telephony_daemon", False):
+        url = (getattr(config, "telephony_daemon_url", None) or "http://127.0.0.1:8090").rstrip("/")
+        try:
+            async with httpx.AsyncClient(timeout=2.0) as client:
+                r = await client.get(f"{url}/health")
+            data = r.json() if r.content else {}
+            return TelephonyStatusResponse(
+                status=str(data.get("status") or ("ok" if r.status_code < 500 else "degraded")),
+                modem_initialized=bool(data.get("modem_initialized")),
+                modem_port=data.get("modem_port"),
+                firmware_ati3=data.get("firmware_ati3"),
+                last_ring_at=data.get("last_ring_at"),
+                last_cid_raw=data.get("last_cid_raw"),
+                last_error=data.get("last_error"),
+                incoming_line_mode=data.get("incoming_line_mode")
+                or resolve_incoming_line_mode(config),
+                in_call=bool(data.get("in_call")),
+                relay_failures=int(data.get("relay_failures") or 0),
+                daemon_reachable=True,
+            )
+        except Exception as exc:
+            logger.warning("telephony status: daemon injoignable: {}", exc)
+            return TelephonyStatusResponse(
+                status="unreachable",
+                modem_initialized=False,
+                incoming_line_mode=resolve_incoming_line_mode(config),
+                last_error=str(exc),
+                daemon_reachable=False,
+            )
+
+    return TelephonyStatusResponse(
+        status="local-no-modem",
+        modem_initialized=False,
+        incoming_line_mode=resolve_incoming_line_mode(config),
+        daemon_reachable=None,
+    )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -29,6 +29,14 @@ async def _drain_relay_tasks() -> None:
         await asyncio.gather(*pending, return_exceptions=True)
 
 
+def _fake_client(post_return: object) -> MagicMock:
+    client = MagicMock()
+    client.is_closed = False
+    client.post = AsyncMock(return_value=post_return)
+    client.aclose = AsyncMock()
+    return client
+
+
 @pytest.mark.asyncio
 async def test_public_api_relay_skips_without_token() -> None:
     relay = PublicApiEventRelay("http://127.0.0.1:8000", "")
@@ -51,20 +59,7 @@ async def test_public_api_relay_posts_json() -> None:
         status_code = 202
         text = ""
 
-        def json(self) -> dict:
-            return {}
-
-    class FakeClient:
-        def __init__(self) -> None:
-            self.post = AsyncMock(return_value=FakeResp())
-
-        async def __aenter__(self) -> FakeClient:
-            return self
-
-        async def __aexit__(self, *args: object) -> None:
-            return None
-
-    fake = FakeClient()
+    fake = _fake_client(FakeResp())
     ev = Event(
         event_type=EventType.CALL_OUTGOING_DIALING,
         timestamp=datetime.now(UTC),
@@ -84,6 +79,7 @@ async def test_public_api_relay_posts_json() -> None:
     body = kwargs["json"]
     assert body["event_type"] == "call.outgoing.dialing"
     assert body["data"]["call_id"] == 7
+    assert relay.success_count == 1
 
 
 @pytest.mark.asyncio
@@ -104,16 +100,10 @@ async def test_public_api_relay_logs_http_error() -> None:
         status_code = 500
         text = "boom"
 
-    class FakeClient:
-        post = AsyncMock(return_value=BadResp())
-
-        async def __aenter__(self) -> FakeClient:
-            return self
-
-        async def __aexit__(self, *args: object) -> None:
-            return None
-
-    with patch("backend.telephony_daemon.relay.httpx.AsyncClient", return_value=FakeClient()):
+    with patch(
+        "backend.telephony_daemon.relay.httpx.AsyncClient",
+        return_value=_fake_client(BadResp()),
+    ):
         await relay(
             Event(
                 event_type=EventType.CALL_SESSION_LOG,
@@ -122,6 +112,7 @@ async def test_public_api_relay_logs_http_error() -> None:
             )
         )
         await _drain_relay_tasks()
+    assert relay.failure_count == 1
 
 
 @pytest.mark.asyncio

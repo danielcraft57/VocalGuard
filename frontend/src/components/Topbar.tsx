@@ -3,8 +3,10 @@
 import React, { useCallback, useEffect, useState } from "react";
 import {
   fetchSettings,
+  fetchTelephonyStatus,
   setIncomingLineMode,
-  type IncomingLineMode
+  type IncomingLineMode,
+  type TelephonyStatus
 } from "../services/settingsApi";
 
 export interface TopbarProps {
@@ -15,12 +17,13 @@ export interface TopbarProps {
 }
 
 /**
- * Bandeau superieur : menu, switch mode ligne (Material), titre, statut.
+ * Bandeau superieur : menu, switch mode ligne (Material), titre, pastille modem.
  */
 export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
   const [mode, setMode] = useState<IncomingLineMode>("voicemail");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [tel, setTel] = useState<TelephonyStatus | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -35,6 +38,34 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = () => {
+      fetchTelephonyStatus()
+        .then((s) => {
+          if (!cancelled) setTel(s);
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setTel({
+              status: "unreachable",
+              modem_initialized: false,
+              incoming_line_mode: mode,
+              in_call: false,
+              relay_failures: 0,
+              daemon_reachable: false
+            });
+          }
+        });
+    };
+    tick();
+    const id = window.setInterval(tick, 8000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [mode]);
 
   const switchMode = useCallback(async (next: IncomingLineMode) => {
     if (busy || next === mode) return;
@@ -52,6 +83,28 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
 
   const modeLabel =
     mode === "voicemail" ? "Répondeur (coupe sonnerie)" : "Téléphone (fixe seul)";
+
+  const modemOk = Boolean(tel?.modem_initialized);
+  const modemLabel = !tel
+    ? "Modem…"
+    : tel.daemon_reachable === false
+      ? "Daemon HS"
+      : modemOk
+        ? tel.in_call
+          ? "En appel"
+          : "Modem OK"
+        : "Modem KO";
+  const modemTitle = tel
+    ? [
+        `status=${tel.status}`,
+        tel.modem_port ? `port=${tel.modem_port}` : null,
+        tel.firmware_ati3 ? `fw=${tel.firmware_ati3}` : null,
+        tel.last_cid_raw ? `cid=${tel.last_cid_raw}` : null,
+        tel.last_error ? `err=${tel.last_error}` : null
+      ]
+        .filter(Boolean)
+        .join(" | ")
+    : "Chargement état téléphonie";
 
   return (
     <header className="vg-topbar">
@@ -104,6 +157,23 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
 
       <div className="vg-topbar-right">
         {error ? <span className="vg-topbar-mode-error">{error}</span> : null}
+        <div
+          className={`vg-modem-pill ${
+            !tel
+              ? "vg-modem-pill--pending"
+              : modemOk
+                ? "vg-modem-pill--ok"
+                : "vg-modem-pill--ko"
+          }`}
+          title={modemTitle}
+          aria-label={modemLabel}
+        >
+          <span
+            className={`vg-modem-pill-dot ${modemOk ? "vg-modem-pill-dot--ok" : "vg-modem-pill-dot--ko"}`}
+            aria-hidden
+          />
+          <span className="vg-modem-pill-text">{modemLabel}</span>
+        </div>
         <div className="vg-topbar-status" title={modeLabel}>
           <span className="material-icons vg-topbar-status-icon">
             {mode === "voicemail" ? "ring_volume" : "phone"}

@@ -172,23 +172,38 @@ def has_alsa_capture_devices() -> bool:
 
 
 def pcm_u8_8k_to_s16le_16k(data: bytes) -> bytes:
-    """PCM modem 8 kHz 8-bit unsigned -> PCM 16 kHz 16-bit LE (duplication d echantillon, 8k->16k)."""
+    """
+    PCM modem 8 kHz 8-bit unsigned -> PCM 16 kHz 16-bit LE.
+
+    Interpolation lineaire entre echantillons (moins d'aliasing qu'une duplication brute).
+    """
+    if not data:
+        return b""
     out = bytearray()
-    for b in data:
-        s = int(b) - 128
-        s16 = max(-32768, min(32767, s * 256))
-        packed = s16.to_bytes(2, "little", signed=True)
-        out.extend(packed)
-        out.extend(packed)
+    n = len(data)
+    for i in range(n):
+        s0 = (int(data[i]) - 128) * 256
+        s1 = (int(data[i + 1]) - 128) * 256 if i + 1 < n else s0
+        mid = (s0 + s1) // 2
+        s0 = max(-32768, min(32767, s0))
+        mid = max(-32768, min(32767, mid))
+        out.extend(s0.to_bytes(2, "little", signed=True))
+        out.extend(mid.to_bytes(2, "little", signed=True))
     return bytes(out)
 
 
 def pcm_s16le_16k_mono_to_u8_8k(data: bytes) -> bytes:
-    """Sous-echantillonne 16 kHz s16le mono vers 8 kHz 8-bit unsigned (1 echantillon sur 2)."""
+    """
+    Sous-echantillonne 16 kHz s16le mono vers 8 kHz 8-bit unsigned.
+
+    Moyenne de 2 echantillons consecutifs (anti-alias leger) au lieu de prendre 1 sur 2.
+    """
     out = bytearray()
-    for i in range(0, len(data) - 1, 4):
-        s16 = int.from_bytes(data[i : i + 2], "little", signed=True)
-        u8 = max(0, min(255, (s16 >> 8) + 128))
+    for i in range(0, len(data) - 3, 4):
+        s0 = int.from_bytes(data[i : i + 2], "little", signed=True)
+        s1 = int.from_bytes(data[i + 2 : i + 4], "little", signed=True)
+        avg = (s0 + s1) // 2
+        u8 = max(0, min(255, (avg >> 8) + 128))
         out.append(u8)
     return bytes(out)
 

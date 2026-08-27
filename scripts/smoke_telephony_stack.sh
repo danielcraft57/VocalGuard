@@ -19,12 +19,36 @@ echo "== GET $API/health =="
 curl -fsS "$API/health" | head -c 300
 echo ""
 
-if curl -fsS --connect-timeout 2 "$TEL/health" >/dev/null 2>&1; then
-  echo "== GET $TEL/health =="
-  curl -fsS "$TEL/health" | head -c 300
-  echo ""
-else
+TEL_HEALTH_CODE=000
+if curl -fsS --connect-timeout 2 -o /tmp/vg_tel_health.json -w "%{http_code}" "$TEL/health" >/tmp/vg_tel_health.code 2>/dev/null; then
+  :
+fi
+TEL_HEALTH_CODE=$(curl -sS -o /tmp/vg_tel_health.json -w "%{http_code}" --connect-timeout 2 "$TEL/health" || true)
+if [[ "$TEL_HEALTH_CODE" == "000" || -z "$TEL_HEALTH_CODE" ]]; then
   echo "!! Telephony daemon injoignable ($TEL) — normal si USE_TELEPHONY_DAEMON=0"
+else
+  echo "== GET $TEL/health (HTTP $TEL_HEALTH_CODE) =="
+  head -c 400 /tmp/vg_tel_health.json || true
+  echo ""
+  if command -v python3 >/dev/null 2>&1; then
+    python3 - <<'PY'
+import json, sys
+try:
+    data = json.load(open("/tmp/vg_tel_health.json"))
+except Exception as e:
+    print("ECHEC: JSON health daemon:", e)
+    sys.exit(1)
+ok = bool(data.get("modem_initialized"))
+print("modem_initialized=", ok, "status=", data.get("status"))
+if not ok:
+    print("ECHEC: modem non initialise (health daemon)")
+    sys.exit(1)
+PY
+  fi
+  if [[ "$TEL_HEALTH_CODE" != "200" ]]; then
+    echo "ECHEC: health daemon HTTP $TEL_HEALTH_CODE (attendu 200 si modem OK)"
+    exit 1
+  fi
 fi
 
 if [[ -n "$TOK" ]]; then

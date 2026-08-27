@@ -8,25 +8,27 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
+from typing import Any, AsyncIterator
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from loguru import logger
 
 from backend.api.routes import calls, outgoing_audio, settings as settings_routes
 from backend.core.call_manager import CallManager
 from backend.core.config import Config
-from backend.core.incoming_line_mode import load_incoming_line_mode
+from backend.core.incoming_line_mode import load_incoming_line_mode, resolve_incoming_line_mode
 from backend.database import database as db_module
-from backend.telephony_daemon.relay_wiring import wire_daemon_relay_once
+from backend.telephony_daemon.relay_wiring import get_wired_relay, wire_daemon_relay_once
 
 
 def create_telephony_app(config: Config) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         load_incoming_line_mode(config)
-        wire_daemon_relay_once(config)
+        relay = wire_daemon_relay_once(config)
+        app.state.event_relay = relay
         await db_module.init_database(config.database_url)
         db = db_module.SessionLocal()
         call_manager = CallManager(config, db)
@@ -46,6 +48,7 @@ def create_telephony_app(config: Config) -> FastAPI:
             cm = getattr(app.state, "call_manager", None)
             t = getattr(app.state, "call_manager_task", None)
             dbs = getattr(app.state, "call_manager_db", None)
+            rel = getattr(app.state, "event_relay", None)
             if cm:
                 cm.stop()
                 logger.info("Telephony daemon: CallManager arrete")
@@ -54,6 +57,11 @@ def create_telephony_app(config: Config) -> FastAPI:
                 try:
                     await t
                 except asyncio.CancelledError:
+                    pass
+            if rel is not None:
+                try:
+                    await rel.aclose()
+                except Exception:
                     pass
             if dbs:
                 try:
@@ -81,12 +89,28 @@ def create_telephony_app(config: Config) -> FastAPI:
     app.include_router(settings_routes.router, prefix="/api/v1", tags=["settings"])
 
     @app.get("/health")
-    async def health() -> dict:
+    async def health() -> JSONResponse:
+        """
+        Sante daemon : 200 si modem OK, 503 sinon (monitoring / smoke).
+
+        @returns Payload JSON (modem, firmware, relay, mode ligne).
+        """
         cm = getattr(app.state, "call_manager", None)
-        return {
-            "status": "ok",
+        modem_ok = bool(cm and cm.modem.is_initialized)
+        payload: dict[str, Any] = {
+            "status": "ok" if modem_ok else "degraded",
             "role": "telephony",
-            "modem_initialized": bool(cm and cm.modem.is_initialized),
+            "modem_initialized": modem_ok,
+            "incoming_line_mode": resolve_incoming_line_mode(config) if config else "voicemail",
+            "incoming_auto_answer": bool(getattr(config, "incoming_auto_answer", True)),
         }
+        if cm:
+            payload.update(cm.modem.health_snapshot())
+            payload["in_call"] = bool(cm.current_call_id)
+            payload["current_call_id"] = cm.current_call_id
+        relay = getattr(app.state, "event_relay", None) or get_wired_relay()
+        if relay is not None:
+            payload.update(relay.health_fields())
+        return JSONResponse(payload, status_code=200 if modem_ok else 503)
 
     return app

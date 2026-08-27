@@ -89,7 +89,7 @@ Group=$ServiceUser
 WorkingDirectory=$RemoteDirPath
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=$RemoteDirPath
-Environment=TELEPHONY_BIND_HOST=127.0.0.1
+Environment=TELEPHONY_BIND_HOST=0.0.0.0
 Environment=TELEPHONY_BIND_PORT=8090
 EnvironmentFile=-$RemoteDirPath/.env
 ExecStart=$VenvPython -m uvicorn backend.telephony_daemon.main:app --host $telephonyBindHost --port $telephonyBindPort --log-config $RemoteDirPath/config/uvicorn_telephony_logging.yaml
@@ -121,15 +121,14 @@ if ($LASTEXITCODE -ne 0) { throw "SSH inaccessible: $AppRemoteHost" }
 Ok "SSH OK"
 
 if (-not $RestartOnly) {
-    Step "[2] Archive (sans frontend build)"
+    Step "[2] Archive (sans frontend)"
     Push-Location $ProjectDir
     try {
         tar -czf $ArchivePath `
             --exclude=venv `
             --exclude=.git `
             --exclude=node_modules `
-            --exclude=frontend/.next `
-            --exclude=frontend/out `
+            --exclude=frontend `
             --exclude=logs `
             --exclude=audio_cache `
             --exclude=data `

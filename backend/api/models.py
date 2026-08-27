@@ -548,6 +548,22 @@ class SettingsResponse(BaseModel):
     incoming_line_mode: Literal["voicemail", "phone"] = "voicemail"
 
 
+class TelephonyStatusResponse(BaseModel):
+    """Etat telephonie pour pastille UI (modem / daemon)."""
+
+    status: str = "unknown"
+    modem_initialized: bool = False
+    modem_port: Optional[str] = None
+    firmware_ati3: Optional[str] = None
+    last_ring_at: Optional[float] = None
+    last_cid_raw: Optional[str] = None
+    last_error: Optional[str] = None
+    incoming_line_mode: Literal["voicemail", "phone"] = "voicemail"
+    in_call: bool = False
+    relay_failures: int = 0
+    daemon_reachable: Optional[bool] = None
+
+
 class IncomingLineModeUpdate(BaseModel):
     """Basculer entre repondeur modem et telephone parallele."""
 
