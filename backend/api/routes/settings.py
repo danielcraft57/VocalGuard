@@ -110,9 +110,10 @@ def _apply_live(request: Request, config: Config, mode: str) -> SettingsResponse
     applied = apply_incoming_line_mode(config, mode)  # type: ignore[arg-type]
     cm = getattr(request.app.state, "call_manager", None)
     if cm is not None and getattr(cm, "config", None) is not None:
-        apply_incoming_line_mode(cm.config, applied)
-        if hasattr(cm, "_refresh_instant_ring_seize"):
-            cm._refresh_instant_ring_seize()
+        if cm.config is not config:
+            apply_incoming_line_mode(cm.config, applied)  # type: ignore[arg-type]
+    if cm is not None and hasattr(cm, "_refresh_instant_ring_seize"):
+        cm._refresh_instant_ring_seize()
     save_incoming_line_mode(config)
     logger.info("Mode ligne entrante bascule: {}", applied)
     return _settings_payload(config)

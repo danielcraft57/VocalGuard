@@ -334,7 +334,7 @@ class CallManager:
         self._refresh_instant_ring_seize()
 
     def _refresh_instant_ring_seize(self) -> None:
-        """Active le seize sync au RING si repondeur + rings=0."""
+        """Active le seize sync au RING si repondeur + rings=0 (pas en mode telephone)."""
         auto = bool(getattr(self.config, "incoming_auto_answer", True))
         rings = int(getattr(self.config, "rings_before_answer", 0) or 0)
         self.modem.instant_ring_seize = bool(auto and rings <= 0)
@@ -344,6 +344,7 @@ class CallManager:
             auto,
             rings,
         )
+
     def _arm_call_deadline(self) -> None:
         """Pose une deadline wall-clock pour max_call_duration."""
         import time as _time
@@ -520,13 +521,17 @@ class CallManager:
 
             # PRIORITE: couper la sonnerie (souvent deja fait en sync au RING).
             seized = self.modem.consume_incoming_seize()
+            ata_cid, ata_cname = None, None
             if seized is not None:
                 ok = bool(seized)
-                ata_cid, ata_cname = None, None
                 logger.info("Repondeur: seize sync deja fait au RING (ok={})", ok)
+                if not ok:
+                    ok, ata_cid, ata_cname = await self.modem.answer_call(fast_voice_seize=True)
             else:
-                fast_seize = rings <= 0 and self.modem.supports_voice_serial
+                fast_seize = rings <= 0 and auto_answer and self.modem.supports_voice_serial
                 ok, ata_cid, ata_cname = await self.modem.answer_call(fast_voice_seize=fast_seize)
+            if ok and auto_answer and rings <= 0:
+                await self.modem.prepare_voice_line_after_seize()
             self._line_already_answered = ok
             if not caller_id and ata_cid:
                 caller_id = normalize_cid_value(ata_cid)
@@ -568,7 +573,7 @@ class CallManager:
                 await self._handle_blocked_call(skip_answer=True)
             else:
                 await self.call_service.answer_call(call.id)
-                await self._handle_permitted_call(skip_modem_answer=True)
+                await self._handle_permitted_call(skip_modem_answer=True, line_answered=ok)
 
         except Exception as e:
             logger.exception("Erreur lors du traitement de l'appel: {}", e)
@@ -610,14 +615,19 @@ class CallManager:
                 await self.call_service.complete_call(self.current_call_id, duration=0)
                 self.current_call_id = None
     
-    async def _handle_permitted_call(self, skip_modem_answer: bool = False):
+    async def _handle_permitted_call(
+        self,
+        skip_modem_answer: bool = False,
+        *,
+        line_answered: bool = True,
+    ):
         """Traite un appel autorisé"""
         logger.info("Traitement d'un appel autorisé")
         recorder = _IncomingLineRecorder(self)
         self._incoming_recorder = recorder
 
         try:
-            ok = skip_modem_answer
+            ok = bool(line_answered) if skip_modem_answer else False
             caller_id, caller_name = None, None
             if not skip_modem_answer:
                 ok, caller_id, caller_name = await self.modem.answer_call()
@@ -635,6 +645,10 @@ class CallManager:
 
             greeting = self._greeting_text()
             played = await self._play_on_line(greeting, already_in_voice_mode=True, recorder=None)
+            if not played and skip_modem_answer:
+                logger.warning("Accueil echoue apres seize — reprise ligne voix puis nouvel essai")
+                await self.modem.prepare_voice_line_after_seize()
+                played = await self._play_on_line(greeting, already_in_voice_mode=True, recorder=None)
             # Call screening : si le fixe a pris pendant l'accueil, on coupe et on laisse la ligne.
             if getattr(self.modem, "_playback_interrupted", False) or played is False:
                 logger.info("Accueil interrompu (tel parallele / hangup) — fin sans repondeur")

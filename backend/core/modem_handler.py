@@ -467,6 +467,63 @@ class ModemHandler:
             "outgoing_owns_serial": bool(self._outgoing_owns_serial),
         }
 
+    def _flush_serial_rx_sync(self) -> None:
+        """
+        Vide le buffer RX serie (restes RING/CID apres seize).
+
+        Evite les faux positifs hangup pendant le premier VTX (accueil repondeur).
+        """
+        if not self.serial_connection or not self.serial_connection.is_open:
+            return
+        try:
+            deadline = time.monotonic() + 0.12
+            while time.monotonic() < deadline:
+                try:
+                    pending = self.serial_connection.in_waiting
+                except (OSError, serial.SerialException):
+                    break
+                if pending <= 0:
+                    time.sleep(0.01)
+                    continue
+                self.serial_connection.read(min(pending, 4096))
+        except (OSError, serial.SerialException):
+            pass
+
+    def _configure_voice_after_seize_sync(self) -> None:
+        """
+        Prepare le modem pour VTX/VRX apres VLS=1 (VSD, VSM, gains).
+
+        Sans VSM, le premier accueil peut etre muet ou echouer sur USR5637.
+        """
+        if not self.serial_connection or not self.serial_connection.is_open:
+            return
+        try:
+            vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
+            self._send_command_sync(vsd)
+            self._apply_voice_gains_sync()
+            if self._is_conexant:
+                if not self._send_command_sync(_VOICE_COMPRESSION_USR):
+                    self._send_command_sync(_VOICE_COMPRESSION_CONEXANT)
+            else:
+                self._send_command_sync(_VOICE_COMPRESSION_USR)
+        except Exception as exc:
+            logger.debug("configure_voice_after_seize: {}", exc)
+
+    async def prepare_voice_line_after_seize(self) -> None:
+        """
+        Apres seize sync au RING : purge RX + config voix avant l'accueil TTS.
+
+        @returns None.
+        """
+        loop = asyncio.get_event_loop()
+        async with self._serial_io_lock:
+            await loop.run_in_executor(None, self._prepare_voice_line_after_seize_sync)
+
+    def _prepare_voice_line_after_seize_sync(self) -> None:
+        """Version synchrone de ``prepare_voice_line_after_seize`` (sous lock)."""
+        self._flush_serial_rx_sync()
+        self._configure_voice_after_seize_sync()
+
     def _apply_voice_gains_sync(self) -> None:
         """Envoie +VGR / +VGT si configures (apres FCLASS=8)."""
         if self.voice_vgr is not None:
@@ -554,45 +611,28 @@ class ModemHandler:
 
     async def _answer_call_voice_seize(self) -> Tuple[bool, Optional[str], Optional[str]]:
         """
-        Decrochage rapide entrant : FCLASS=8 + VLS=1 au plus vite (coupe sonnerie fixe).
+        Decrochage rapide entrant : ATA operateur + mode voix (meme logique que seize sync).
 
-        Pas de VSD ici : chaque AT compte. Fallback ATA seulement si VLS refuse.
+        @returns Tuple (succes, caller_id, caller_name).
         """
         caller_id, caller_name = None, None
-        # Evite un 2e VLS=1 concurrent (seize differe CID vs answer_call).
         if self._incoming_line_seized:
             return (bool(self._incoming_seize_ok), caller_id, caller_name)
         self._incoming_line_seized = True
         try:
-            logger.info("Decrochage rapide entrant (mode voix direct)")
-            # Timeouts courts : on est deja en RING, chaque 100ms compte pour le fixe.
-            r_mode = await self.send_command_full(_VOICE_MODE, timeout=1.2)
-            if b"OK" not in r_mode:
-                logger.warning("Decrochage rapide: AT+FCLASS=8 echoue, fallback ATA")
+            logger.info("Decrochage rapide entrant (ATA + mode voix)")
+            loop = asyncio.get_event_loop()
+            async with self._serial_io_lock:
+                ok = await loop.run_in_executor(
+                    None, lambda: self._voice_seize_sync_unlocked(fast=True)
+                )
+            self._incoming_seize_ok = bool(ok)
+            if not ok:
+                logger.warning("Decrochage rapide echoue, fallback ATA classique")
                 self._incoming_line_seized = False
+                self._incoming_seize_ok = False
                 return await self.answer_call(fast_voice_seize=False)
-            r_hook = await self.send_command_full(_TAD_OFF_HOOK, timeout=1.2)
-            logger.info(
-                "Modem AT+VLS=1 (rapide) -> {}",
-                r_hook.decode("utf-8", errors="ignore").strip().replace("\r\n", " | ") or "(vide)",
-            )
-            if b"OK" in r_hook:
-                self._incoming_seize_ok = True
-                # Params voix apres off-hook (ne retarde plus la prise de ligne).
-                vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
-                try:
-                    await self.send_command_full(vsd, timeout=0.8)
-                    if self.voice_vgr is not None:
-                        await self.send_command_full(f"AT+VGR={int(self.voice_vgr)}", timeout=0.5)
-                    if self.voice_vgt is not None:
-                        await self.send_command_full(f"AT+VGT={int(self.voice_vgt)}", timeout=0.5)
-                except Exception:
-                    pass
-                return (True, caller_id, caller_name)
-            logger.warning("Decrochage rapide: VLS=1 refuse, fallback ATA")
-            self._incoming_line_seized = False
-            self._incoming_seize_ok = False
-            return await self.answer_call(fast_voice_seize=False)
+            return (True, caller_id, caller_name)
         except Exception as e:
             self._incoming_line_seized = False
             self._incoming_seize_ok = False
@@ -1489,6 +1529,16 @@ class ModemHandler:
                         line, buffer = buffer.split(b"\r\n", 1)
                         line = line.strip()
                         if line:
+                            # Seize synchrone au RING avant tout callback asyncio
+                            # (sinon answer_call arrive ~1s trop tard et le fixe sonne).
+                            if self._is_incoming_ring_line(line):
+                                async with self._serial_io_lock:
+                                    if (
+                                        self.instant_ring_seize
+                                        and not self._incoming_line_seized
+                                        and not self._outgoing_owns_serial
+                                    ):
+                                        self._try_voice_seize_now("ring")
                             await self._process_modem_line(line)
                 else:
                     await asyncio.sleep(0.05)
@@ -1533,38 +1583,74 @@ class ModemHandler:
                 logger.error("Erreur lors de la surveillance: {}", e)
                 await asyncio.sleep(1)
     
-    def _voice_seize_sync_unlocked(self) -> bool:
+    @staticmethod
+    def _is_incoming_ring_line(line: bytes) -> bool:
         """
-        Off-hook voix le plus vite possible (FCLASS=8 puis VLS=1), sans await.
+        True si la ligne serie est un RING entrant (pas NMBR= melange).
 
-        A appeler sous ``_serial_io_lock``. Coupe la sonnerie du telephone parallele.
+        @param line Ligne brute modem.
+        @returns True pour ``RING`` ou ``RING ...``.
+        """
+        s = line.decode("utf-8", errors="ignore").strip().upper()
+        if not s or s.startswith("NMBR"):
+            return False
+        return s == "RING" or s.startswith("RING")
 
-        @returns True si VLS=1 a repondu OK.
+    def _voice_seize_sync_unlocked(self, *, fast: bool = False) -> bool:
+        """
+        Decroche l'appel entrant le plus vite possible (ATA operateur + mode voix).
+
+        ATA est indispensable sur lignes FR (SFR, etc.) : VLS=1 seul coupe le fixe
+        parallele mais l'operateur peut encore basculer sur sa messagerie reseau.
+
+        A appeler sous ``_serial_io_lock``.
+
+        @returns True si decrochage operateur ou VLS=1 OK.
         """
         if not self.serial_connection or not self.serial_connection.is_open:
             return False
         try:
-            # Timeouts tres courts : on est deja sur un RING.
             old_t = self.serial_connection.timeout
-            self.serial_connection.timeout = 0.35
+            read_timeout = 0.10 if fast else 0.35
+            at_deadline = 0.35 if fast else 0.65
+            ata_extra = 0.35 if fast else 0.5
+            self.serial_connection.timeout = read_timeout
 
-            def _at(cmd: str) -> bytes:
+            def _at(cmd: str, *, extra: float = 0.0) -> bytes:
                 self.serial_connection.write(f"{cmd}\r\n".encode())
                 self.serial_connection.flush()
-                deadline = time.monotonic() + 0.55
+                deadline = time.monotonic() + at_deadline + extra
                 buf = b""
                 while time.monotonic() < deadline:
-                    chunk = self.serial_connection.read(64) or b""
+                    chunk = self.serial_connection.read(128) or b""
                     if chunk:
                         buf += chunk
-                        if b"OK" in buf or b"ERROR" in buf:
+                        upper = buf.upper()
+                        if (
+                            b"OK" in buf
+                            or b"ERROR" in buf
+                            or b"CONNECT" in upper
+                            or b"NO CARRIER" in upper
+                        ):
                             break
                     else:
                         time.sleep(0.01)
                 return buf
 
+            # 1) ATA : le reseau (SFR) voit un vrai decrochage, pas seulement un off-hook local.
+            r_ata = _at("ATA", extra=ata_extra)
+            ata_ok = b"OK" in r_ata or b"CONNECT" in r_ata.upper()
+            if ata_ok:
+                logger.info("Seize sync ATA -> decrochage operateur OK")
+            else:
+                logger.warning(
+                    "Seize sync ATA sans OK/CONNECT ({}) — essai mode voix direct",
+                    r_ata.decode("utf-8", errors="ignore").strip().replace("\r\n", " | ") or "(vide)",
+                )
+
+            # 2) Mode voix pour TTS / enregistrement
             r1 = _at(_VOICE_MODE)
-            if b"OK" not in r1:
+            if b"OK" not in r1 and not ata_ok:
                 logger.warning(
                     "Seize sync: FCLASS=8 echoue ({})",
                     r1.decode("utf-8", errors="ignore").strip().replace("\r\n", " | ") or "(vide)",
@@ -1575,20 +1661,11 @@ class ModemHandler:
             self.serial_connection.timeout = old_t
             raw = r2.decode("utf-8", errors="ignore").strip().replace("\r\n", " | ")
             logger.info("Seize sync AT+VLS=1 -> {}", raw or "(vide)")
-            ok = b"OK" in r2
+            vls_ok = b"OK" in r2
+            ok = ata_ok or vls_ok
             if ok:
-                # Soft config apres (ne bloque plus la sonnerie).
-                try:
-                    vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
-                    self.serial_connection.timeout = 0.25
-                    _at(vsd)
-                except Exception:
-                    pass
-                finally:
-                    try:
-                        self.serial_connection.timeout = old_t
-                    except Exception:
-                        pass
+                self._flush_serial_rx_sync()
+                self._configure_voice_after_seize_sync()
             return ok
         except Exception as e:
             logger.warning("Seize sync echec: {}", e)
@@ -1627,7 +1704,7 @@ class ModemHandler:
         if not self.serial_connection or not self.serial_connection.is_open:
             return
         logger.info("Seize sync ({}) - coupe sonnerie", reason)
-        ok = self._voice_seize_sync_unlocked()
+        ok = self._voice_seize_sync_unlocked(fast=(reason == "ring"))
         self._incoming_line_seized = True
         self._incoming_seize_ok = ok
 
@@ -1682,13 +1759,6 @@ class ModemHandler:
             if line_str.strip().upper() == "RING" or line_str.strip().upper().startswith("RING"):
                 self.last_ring_at = time.time()
                 logger.info("Appel entrant détecté!")
-                # Coupe-sonnerie : fenetre CID puis seize (pas VLS immediat = NMBR perdu).
-                if self.instant_ring_seize and not self._incoming_line_seized and not self._outgoing_owns_serial:
-                    if self._deferred_seize_task is None or self._deferred_seize_task.done():
-                        self._deferred_seize_task = asyncio.create_task(
-                            self._deferred_instant_seize_after_cid_grace(),
-                            name="vg_deferred_seize",
-                        )
                 asyncio.create_task(_notify(), name="vg_incoming_ring")
 
         # Caller ID : NMBR= / NAME= (parfois prefixe espaces, parfois dans une ligne mixte)

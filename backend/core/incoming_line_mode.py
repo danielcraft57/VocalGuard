@@ -51,6 +51,9 @@ def apply_incoming_line_mode(config: Config, mode: IncomingLineMode) -> Incoming
     """
     if mode == "phone":
         config.incoming_auto_answer = False
+        # Laisser sonner le fixe parallele : pas de seize immediat (rings>0 desactive instant_ring_seize).
+        rings = int(getattr(config, "phone_mode_rings", 4) or 4)
+        config.rings_before_answer = max(2, rings)
     else:
         config.incoming_auto_answer = True
         # rings=0 + saisie voix rapide = coupe la sonnerie du fixe parallèle.

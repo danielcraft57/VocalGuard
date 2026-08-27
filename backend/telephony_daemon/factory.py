@@ -33,6 +33,7 @@ def create_telephony_app(config: Config) -> FastAPI:
         db = db_module.SessionLocal()
         call_manager = CallManager(config, db)
         await call_manager.initialize()
+        call_manager._refresh_instant_ring_seize()
         task = asyncio.create_task(call_manager.run())
         app.state.call_manager = call_manager
         app.state.call_manager_task = task

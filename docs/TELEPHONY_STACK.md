@@ -50,6 +50,16 @@ Sur une meme machine (ex. Raspberry Pi), les deux peuvent coexister avec `TELEPH
 
 Switch UI : topbar -> `PUT /api/v1/settings/incoming-line-mode` (persiste dans `data/incoming_line_mode.yaml`).
 
+## Reference Call Attendant (projet amont)
+
+VocalGuard s'inspire du meme materiel (USR5637, ligne en parallele) que [emxsys/callattendant](https://github.com/emxsys/callattendant). Call Attendant **ne decroche pas au RING** tant que l'action est `ignore` (numeros autorises) : le fixe sonne normalement. VocalGuard reproduit ce comportement en mode **Telephone** et coupe le fixe en mode **Repondeur** (seize immediat + `ATA` pour les operateurs FR).
+
+| Document | Contenu |
+|----------|---------|
+| [CALLATTENDANT_ETUDE.md](CALLATTENDANT_ETUDE.md) | Etude complete : flux, config rings/actions, modem, screening |
+| [CALLATTENDANT_ARCHITECTURE.md](CALLATTENDANT_ARCHITECTURE.md) | Threads, etats modem, sequences AT, diagrammes |
+| [CALLATTENDANT_VS_VOCALGUARD.md](CALLATTENDANT_VS_VOCALGUARD.md) | Comparatif : pourquoi le fixe sonne ou non, equivalences de config |
+
 ## Sante et diagnostic
 
 | Endpoint | Role |
@@ -121,3 +131,4 @@ Voir aussi `backend/telephony_daemon/README.md`.
 - **Telephone parallele** : si le fixe decroche pendant l'accueil, le playback VTX s'interrompt (DLE hook / marqueurs) et le repondeur s'arrete.
 - **Pastille UI** : `GET /api/v1/telephony/status` (modem OK/KO, firmware, dernier CID).
 - Reference AT complete : [MODEM_USR5637.md](MODEM_USR5637.md).
+- Ligne parallele / fixe qui sonne : [CALLATTENDANT_VS_VOCALGUARD.md](CALLATTENDANT_VS_VOCALGUARD.md).
