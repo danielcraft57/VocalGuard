@@ -59,6 +59,7 @@ VocalGuard s'inspire du meme materiel (USR5637, ligne en parallele) que [emxsys/
 | [CALLATTENDANT_ETUDE.md](CALLATTENDANT_ETUDE.md) | Etude complete : flux, config rings/actions, modem, screening |
 | [CALLATTENDANT_ARCHITECTURE.md](CALLATTENDANT_ARCHITECTURE.md) | Threads, etats modem, sequences AT, diagrammes |
 | [CALLATTENDANT_VS_VOCALGUARD.md](CALLATTENDANT_VS_VOCALGUARD.md) | Comparatif : pourquoi le fixe sonne ou non, equivalences de config |
+| [plans/README.md](plans/README.md) | **Roadmap** : policy, config parametrable, UI Material, sprints |
 
 ## Sante et diagnostic
 
