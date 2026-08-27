@@ -46,6 +46,9 @@ export function getWsBaseUrl(): string {
 /**
  * WebSocket audio appel sortant : avec USE_TELEPHONY_DAEMON la session vit sur le daemon
  * (ex. node14:8090), pas sur l API locale — definir NEXT_PUBLIC_TELEPHONY_WS_BASE (ex. ws://node14.lan:8090).
+ *
+ * En HTTPS public (vocalguard.danielcraft.fr), nginx proxifie deja /ws/outgoing-call/ vers :8090 :
+ * on ignore donc un ws://*.lan (mixed content + DNS LAN) et on reste same-origin (wss://host).
  */
 export function getOutgoingAudioWsBaseUrl(): string {
   const tel = (process.env.NEXT_PUBLIC_TELEPHONY_WS_BASE ?? "").trim();
@@ -53,6 +56,16 @@ export function getOutgoingAudioWsBaseUrl(): string {
     let u = tel.replace(/\/$/, "");
     if (u.startsWith("http://")) u = "ws://" + u.slice("http://".length);
     else if (u.startsWith("https://")) u = "wss://" + u.slice("https://".length);
+
+    if (typeof window !== "undefined") {
+      const pageHttps = window.location.protocol === "https:";
+      const telInsecure = u.startsWith("ws://");
+      const telLan = /\.lan(?::\d+)?$/i.test(u.replace(/^wss?:\/\//, "").split("/")[0] || "");
+      // Page HTTPS + cible WS non securisee / LAN : fallback same-origin (proxy nginx).
+      if (pageHttps && (telInsecure || telLan)) {
+        return getWsBaseUrl();
+      }
+    }
     return u;
   }
   return getWsBaseUrl();

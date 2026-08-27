@@ -290,9 +290,9 @@ class CallManager:
         """
         Traite un appel entrant.
 
-        Attend le Caller ID (NMBR=/NAME=) pendant ``rings_before_answer`` sonneries
-        avant de decrocher, pour eviter les appels "inconnu". Avec rings=0,
-        decroche immediatement (priorite coupe-sonnerie).
+        Attend le Caller ID (NMBR=/NAME=) pendant une fenetre courte avant de
+        decrocher. La surveillance modem continue en parallele (callbacks en
+        tache) pour ne pas rater NMBR= entre deux RING.
 
         Args:
             caller_id: Numéro de téléphone de l'appelant
@@ -316,6 +316,7 @@ class CallManager:
                 )
             return
 
+        # Flag avant tout await : evite deux handlers RING en parallele.
         self._incoming_handling = True
         self._line_already_answered = False
         self._cid_event = asyncio.Event()
@@ -328,35 +329,68 @@ class CallManager:
 
         try:
             rings = int(getattr(self.config, "rings_before_answer", 0) or 0)
-            if rings > 0 and not self._pending_cid:
-                # Cycle sonnerie FR ~5-6 s : laisser le modem recevoir NMBR= entre RING.
-                timeout_sec = max(4.0, float(rings) * 6.0)
+            auto_answer = bool(getattr(self.config, "incoming_auto_answer", True))
+            cid_wait = float(getattr(self.config, "cid_wait_sec", 2.5) or 2.5)
+            # rings>0 : ancienne logique (plusieurs cycles). rings=0 : fenetre courte CID.
+            if rings > 0:
+                timeout_sec = max(cid_wait, float(rings) * 6.0)
+            else:
+                timeout_sec = max(1.2, cid_wait)
+
+            if not self._pending_cid:
                 logger.info(
-                    "Attente Caller ID jusqu a {:.0f}s ({} sonnerie(s)) avant ATA",
+                    "Attente Caller ID jusqu a {:.1f}s avant {} (rings={})",
                     timeout_sec,
+                    "ATA" if auto_answer else "journalisation",
                     rings,
                 )
                 try:
                     await asyncio.wait_for(self._cid_event.wait(), timeout=timeout_sec)
                 except asyncio.TimeoutError:
-                    logger.info("Pas de Caller ID apres {:.0f}s — decrochage quand meme", timeout_sec)
-            elif rings > 0 and self._pending_cid:
-                # CID deja la : petite pause pour laisser le 2e RING / NAME= eventuel
-                await asyncio.sleep(min(2.0, rings * 1.0))
+                    logger.info("Pas de Caller ID apres {:.1f}s", timeout_sec)
+            else:
+                # CID deja la : laisse arriver NAME= eventuel (~0.4s)
+                await asyncio.sleep(0.4)
 
             caller_id = self._pending_cid or caller_id
             caller_name = self._pending_cname or caller_name
 
-            # Decrocher : rings=0 => saisie rapide ; sinon ATA classique apres attente CID
-            fast_seize = rings <= 0 and self.modem.supports_voice_serial
+            # Mode "fixe seul" : on journalise l'appel, pas de repondeur modem.
+            if not auto_answer:
+                call = await self.call_service.create_incoming_call(
+                    phone_number=caller_id,
+                    caller_name=caller_name,
+                )
+                self.current_call_id = call.id
+                logger.info(
+                    "incoming_auto_answer=false — pas de ATA (appel #{}), le telephone parallele gere la ligne",
+                    call.id,
+                )
+                # Attendre la fin des sonneries pour marquer manque / termine sans audio modem.
+                await asyncio.sleep(max(8.0, float(max(rings, 1)) * 6.0))
+                # Derniere chance CID pendant que le fixe sonne.
+                caller_id = self._pending_cid or caller_id
+                caller_name = self._pending_cname or caller_name
+                if caller_id or caller_name:
+                    await self.call_service.set_call_caller_info(
+                        call.id, phone_number=caller_id, caller_name=caller_name
+                    )
+                await self.call_service.miss_call(call.id)
+                self.current_call_id = None
+                return
+
+            # Si on a le numero : saisie rapide OK. Sinon ATA classique (souvent renvoie NMBR=).
+            have_cid = bool(caller_id and str(caller_id).strip())
+            fast_seize = have_cid and rings <= 0 and self.modem.supports_voice_serial
             ok, ata_cid, ata_cname = await self.modem.answer_call(fast_voice_seize=fast_seize)
             self._line_already_answered = ok
             if not caller_id and ata_cid:
                 caller_id = ata_cid
             if not caller_name and ata_cname:
                 caller_name = ata_cname
-            if not ok:
-                logger.error("Impossible de decrocher au RING — le fixe peut continuer a sonner")
+            # CID parfois encore en pending pendant ATA
+            caller_id = self._pending_cid or caller_id
+            caller_name = self._pending_cname or caller_name
 
             call = await self.call_service.create_incoming_call(
                 phone_number=caller_id,
@@ -364,15 +398,28 @@ class CallManager:
             )
             self.current_call_id = call.id
 
+            if not ok:
+                # Fixe deja decroche / appel parti : ne pas reessayer ATA ni jouer l'accueil.
+                logger.error(
+                    "Impossible de decrocher au RING — on laisse le fixe, pas de message d'accueil"
+                )
+                try:
+                    await self.modem.hangup()
+                except Exception:
+                    pass
+                await self.call_service.miss_call(call.id)
+                self.current_call_id = None
+                return
+
             is_blocked = await self.block_service.is_blocked(caller_id, caller_name)
 
             if is_blocked:
                 logger.info(f"Appel bloqué: {caller_id}")
                 await self.call_service.block_call(call.id)
-                await self._handle_blocked_call(skip_answer=self._line_already_answered)
+                await self._handle_blocked_call(skip_answer=True)
             else:
                 await self.call_service.answer_call(call.id)
-                await self._handle_permitted_call(skip_modem_answer=self._line_already_answered)
+                await self._handle_permitted_call(skip_modem_answer=True)
 
         except Exception as e:
             logger.exception(f"Erreur lors du traitement de l'appel: {e}")

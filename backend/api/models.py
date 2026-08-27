@@ -535,7 +535,7 @@ class PublicAgendaBookingCreate(BaseModel):
 
 class SettingsResponse(BaseModel):
     """Configuration metier exposee au frontend."""
-    
+
     database_url: str
     api_host: str
     api_port: int
@@ -543,6 +543,70 @@ class SettingsResponse(BaseModel):
     voice_language: str
     rings_before_answer: int
     voicemail_enabled: bool
+    incoming_auto_answer: bool = True
+    # voicemail = repondeur coupe-sonnerie ; phone = telephone parallele seul
+    incoming_line_mode: Literal["voicemail", "phone"] = "voicemail"
+
+
+class IncomingLineModeUpdate(BaseModel):
+    """Basculer entre repondeur modem et telephone parallele."""
+
+    mode: Literal["voicemail", "phone"] = Field(
+        ...,
+        description="voicemail: modem decroche (coupe sonnerie). phone: fixe seul.",
+    )
+
+
+class MobileClaimRequest(BaseModel):
+    """Echange d'un code QR d'appairage mobile contre un token API."""
+
+    code: str = Field(..., min_length=1, max_length=64)
+    device_hint: Optional[str] = Field(None, max_length=255)
+
+
+class MobileClaimResponse(BaseModel):
+    """Reponse claim mobile : token Bearer + URL + permissions."""
+
+    token: str
+    base_url: str
+    permissions: Dict[str, bool] = Field(default_factory=dict)
+
+
+class TrustedContactItem(BaseModel):
+    """Contact a importer en personne de confiance."""
+
+    phone_number: str = Field(..., min_length=3, max_length=64)
+    name: Optional[str] = Field(None, max_length=255)
+
+
+class TrustedContactImportRequest(BaseModel):
+    """Import batch de contacts de confiance depuis l'app mobile."""
+
+    contacts: List[TrustedContactItem] = Field(default_factory=list)
+
+
+class MobilePairingSessionCreate(BaseModel):
+    """Creation d'une session QR d'appairage mobile."""
+
+    base_url: str = Field(..., min_length=1, max_length=512)
+    api_token_id: Optional[int] = None
+    create_token_if_missing: bool = False
+    token_name: Optional[str] = Field(None, max_length=255)
+
+
+class MobilePairingSessionResponse(BaseModel):
+    """Session d'appairage ephemere (code + URI QR)."""
+
+    pairing_id: int
+    code: str
+    expires_at: datetime
+    qr_uri: str
+
+
+class UiLoginRequest(BaseModel):
+    """Connexion UI web (mot de passe partage)."""
+
+    password: str = Field(..., min_length=1, max_length=256)
 
 
 class DailyStatsItem(BaseModel):

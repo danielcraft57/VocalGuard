@@ -5,11 +5,12 @@
 | Document | Contenu |
 |----------|---------|
 | [INSTALLATION.md](INSTALLATION.md) | Prérequis, paquets système, Python |
-| [TELEPHONY_STACK.md](TELEPHONY_STACK.md) | API vs daemon modem, variables `.env`, dev PC + Pi, tests |
+| [TELEPHONY_STACK.md](TELEPHONY_STACK.md) | Câblage ligne / filtre ADSL / téléphone, API vs daemon modem, variables `.env`, dev PC + Pi, tests |
 | [DEPLOYMENT_PROD.md](DEPLOYMENT_PROD.md) | systemd, déploiement Pi |
 | [OSINT.md](OSINT.md) / [APPELS_OSINT_UI.md](APPELS_OSINT_UI.md) | Enrichissement numéros, UI liste appels |
 | [AGENDA_API.md](AGENDA_API.md) | Endpoints agenda |
 | [AUDIO_SETUP_RPI.md](AUDIO_SETUP_RPI.md) / [TROUBLESHOOTING_AUDIO.md](TROUBLESHOOTING_AUDIO.md) | Audio modem / ALSA |
+| [MODEM_USR5637.md](MODEM_USR5637.md) | Modem USR5637 (Amazon B0013FDLM0) : specs, capacites, commandes AT |
 | [CI_CD.md](CI_CD.md) | CI, déploiement |
 
 ## Architecture (plusieurs versions — la plus récente en premier)

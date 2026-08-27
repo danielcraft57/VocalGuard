@@ -20,6 +20,7 @@ from backend.database.models import Call, Voicemail
 from backend.core.config import Config
 
 from backend.osint.services import PhoneOsintService
+from backend.services.phone_identity import is_unidentified_phone, normalize_phone_label
 
 
 class CallService:
@@ -56,50 +57,51 @@ class CallService:
         Returns:
             Appel cree
         """
-        # Chercher ou créer l'appelant
+        # Chercher ou creer l'appelant uniquement si numero identifiable.
         caller = None
-        if phone_number:
-            caller = self.caller_repo.get_by_phone_number(phone_number)
+        phone = normalize_phone_label(phone_number)
+        if phone and not is_unidentified_phone(phone):
+            caller = self.caller_repo.get_by_phone_number(phone)
             if not caller:
-                # Créer l'appelant s'il n'existe pas
                 caller = self.caller_repo.create(
-                    phone_number=phone_number,
+                    phone_number=phone,
                     name=caller_name,
                     is_blocked=False,
-                    is_whitelisted=False
+                    is_whitelisted=False,
                 )
-        
-        # Créer l'appel
+        else:
+            phone = None
+
         call = self.call_repo.create_call(
-            phone_number=phone_number,
+            phone_number=phone,
             caller_name=caller_name,
             caller_id=caller.id if caller else None,
-            status="ringing"
+            status="ringing",
         )
-        
-        # Declencher l'enrichissement OSINT du numero en arriere-plan
-        if phone_number:
+
+        if phone:
             try:
                 self.phone_osint_service.ensure_profile_for_number(
-                    phone_number=phone_number,
+                    phone_number=phone,
                     caller_id=caller.id if caller else None,
                 )
             except Exception as exc:
-                logger.warning(f"Impossible de planifier l'OSINT pour {phone_number}: {exc}")
-        
-        # Publier l'événement
-        await event_bus.publish(Event(
-            event_type=EventType.CALL_INCOMING,
-            timestamp=datetime.utcnow(),
-            data={
-                "call_id": call.id,
-                "phone_number": phone_number,
-                "caller_name": caller_name
-            },
-            source="CallService"
-        ))
-        
-        logger.info(f"Appel entrant créé: {call.id} ({phone_number})")
+                logger.warning(f"Impossible de planifier l'OSINT pour {phone}: {exc}")
+
+        await event_bus.publish(
+            Event(
+                event_type=EventType.CALL_INCOMING,
+                timestamp=datetime.utcnow(),
+                data={
+                    "call_id": call.id,
+                    "phone_number": phone,
+                    "caller_name": caller_name,
+                },
+                source="CallService",
+            )
+        )
+
+        logger.info(f"Appel entrant cree: {call.id} ({phone})")
         return call
 
     async def create_outgoing_call(self, phone_number: str) -> Call:
@@ -109,22 +111,50 @@ class CallService:
         @param phone_number Numero compose.
         @returns Appel cree.
         """
+        phone = normalize_phone_label(phone_number)
+        if not phone or is_unidentified_phone(phone):
+            raise ValueError("Numero sortant invalide ou non identifiable.")
+
+        caller = self.caller_repo.get_by_phone_number(phone)
+        if not caller:
+            caller = self.caller_repo.create(
+                phone_number=phone,
+                name="Sortant",
+                is_blocked=False,
+                is_whitelisted=False,
+            )
+
         call = self.call_repo.create_call(
-            phone_number=phone_number,
+            phone_number=phone,
             caller_name="Sortant",
-            caller_id=None,
+            caller_id=caller.id,
             status="dialing",
         )
         await event_bus.publish(
             Event(
                 event_type=EventType.CALL_OUTGOING_DIALING,
                 timestamp=datetime.utcnow(),
-                data={"call_id": call.id, "phone_number": phone_number},
+                data={"call_id": call.id, "phone_number": phone},
                 source="CallService",
             )
         )
-        logger.info("Appel sortant cree: {} ({})", call.id, phone_number)
+        logger.info("Appel sortant cree: {} ({})", call.id, phone)
         return call
+
+    def _discard_unidentified_call(self, call: Call) -> bool:
+        """
+        Anciennement: supprimait les appels sans CID.
+        Desactive: on garde l'historique (affiche "Inconnu" dans l'UI).
+
+        @param call Appel a evaluer.
+        @returns Toujours False (jamais supprime).
+        """
+        if is_unidentified_phone(call.phone_number):
+            logger.info(
+                "Appel sans numero conserve (id={}) — plus de suppression auto",
+                call.id,
+            )
+        return False
     
     async def answer_call(self, call_id: int) -> Optional[Call]:
         """
@@ -176,15 +206,16 @@ class CallService:
             update_data["duration"] = duration
         
         call = self.call_repo.update(call_id, **update_data)
-        
-        # Publier l'événement
+
         await event_bus.publish(Event(
             event_type=EventType.CALL_COMPLETED,
             timestamp=datetime.utcnow(),
             data={"call_id": call_id, "duration": duration},
             source="CallService"
         ))
-        
+
+        if call and self._discard_unidentified_call(call):
+            return None
         return call
     
     async def block_call(self, call_id: int) -> Optional[Call]:
@@ -232,15 +263,16 @@ class CallService:
             return None
         
         call = self.call_repo.update(call_id, status="missed", end_time=datetime.utcnow())
-        
-        # Publier l'événement
+
         await event_bus.publish(Event(
             event_type=EventType.CALL_MISSED,
             timestamp=datetime.utcnow(),
             data={"call_id": call_id},
             source="CallService"
         ))
-        
+
+        if call and self._discard_unidentified_call(call):
+            return None
         return call
 
     async def set_audio_file(self, call_id: int, audio_file: Optional[str]) -> Optional[Call]:
@@ -260,7 +292,7 @@ class CallService:
         Met a jour la transcription et/ou l'intent IVR associe a un appel.
 
         - transcription est stockee dans Call.transcription
-        - intent_name est stocke dans Call.extra_data["ivr_intent"]
+        - intent_name est stocke dans Call.ivr_intent (colonne, plus JSON)
         """
         call = self.call_repo.get_by_id(call_id)
         if not call:
@@ -271,9 +303,7 @@ class CallService:
             update_data["transcription"] = transcription
 
         if intent_name:
-            meta = dict(call.extra_data or {})
-            meta["ivr_intent"] = intent_name
-            update_data["extra_data"] = meta
+            update_data["ivr_intent"] = str(intent_name)[:100]
 
         if not update_data:
             return call
@@ -287,13 +317,27 @@ class CallService:
         phone_number: Optional[str] = None,
         caller_name: Optional[str] = None,
     ) -> Optional[Call]:
-        """Met a jour le numero et/ou le nom de l'appelant pour un appel (ex. Caller ID recu apres ATA)."""
+        """Met a jour le numero / nom et rattache le Caller via FK."""
         call = self.call_repo.get_by_id(call_id)
         if not call:
             return None
-        update_data = {}
+        update_data: dict = {}
         if phone_number is not None:
-            update_data["phone_number"] = phone_number
+            phone = normalize_phone_label(phone_number)
+            if phone and not is_unidentified_phone(phone):
+                update_data["phone_number"] = phone
+                caller = self.caller_repo.get_by_phone_number(phone)
+                if not caller:
+                    caller = self.caller_repo.create(
+                        phone_number=phone,
+                        name=caller_name,
+                        is_blocked=False,
+                        is_whitelisted=False,
+                    )
+                update_data["caller_id"] = caller.id
+            else:
+                update_data["phone_number"] = None
+                update_data["caller_id"] = None
         if caller_name is not None:
             update_data["caller_name"] = caller_name
         if not update_data:

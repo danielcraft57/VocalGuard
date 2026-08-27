@@ -31,9 +31,13 @@ edge_tts_voice: "fr-FR-DeniseNeural"
 edge_tts_rate: "+12%"
 
 # Appels
-# 1+ = attendre le Caller ID (NMBR=) avant de decrocher ; 0 = ATA immediat
-rings_before_answer: 1
+# rings=0 = coupe-sonnerie apres fenetre CID courte (cid_wait_sec)
+rings_before_answer: 0
+cid_wait_sec: 2.5
 max_call_duration: 300  # secondes
+# true = repondeur modem. false = journalise l'appel, le telephone parallele repond seul
+# Bascule aussi via UI (topbar) -> PUT /api/v1/settings/incoming-line-mode
+incoming_auto_answer: true
 
 # Blocage (inspire de callattendant: NOMOROBO USA, SHOULDIANSWER hors USA, ou vide)
 block_enabled: true

@@ -14,9 +14,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from backend.api.routes import calls, outgoing_audio
+from backend.api.routes import calls, outgoing_audio, settings as settings_routes
 from backend.core.call_manager import CallManager
 from backend.core.config import Config
+from backend.core.incoming_line_mode import load_incoming_line_mode
 from backend.database import database as db_module
 from backend.telephony_daemon.relay_wiring import wire_daemon_relay_once
 
@@ -24,6 +25,7 @@ from backend.telephony_daemon.relay_wiring import wire_daemon_relay_once
 def create_telephony_app(config: Config) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        load_incoming_line_mode(config)
         wire_daemon_relay_once(config)
         await db_module.init_database(config.database_url)
         db = db_module.SessionLocal()
@@ -76,6 +78,7 @@ def create_telephony_app(config: Config) -> FastAPI:
 
     app.include_router(calls.router, prefix="/api/v1", tags=["calls"])
     app.include_router(outgoing_audio.router, tags=["outgoing-audio"])
+    app.include_router(settings_routes.router, prefix="/api/v1", tags=["settings"])
 
     @app.get("/health")
     async def health() -> dict:

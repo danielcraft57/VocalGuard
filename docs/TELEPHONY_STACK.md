@@ -1,5 +1,34 @@
 # Téléphonie : API principale + daemon (modem)
 
+## Câblage physique (site actuel)
+
+Branchement analogique constaté sur l'installation :
+
+**Ligne téléphone extérieure → prise murale → filtre ADSL (fiche gigogne) → téléphone**  
+**et modem USB VocalGuard branché sur le filtre** (sortie voix / pass-through téléphone).
+
+```
+Arrivée ligne
+      |
+Prise femelle murale (broches 1 et 3)
+      |
+Fiche gigogne filtre ADSL
+      |-- Fiche RJ45 / câble modem → modem ADSL (données / box)
+      |-- Sortie voix (fiche téléphone) → modem USB VocalGuard
+      |                              → téléphone (si présent en parallèle)
+```
+
+Référence visuelle (filtre gigogne + 1 téléphone) :
+
+![Installation filtre gigogne avec 1 téléphone](images/filtre-adsl-gigogne.png)
+
+Notes :
+
+- Le filtre sépare la voix (pass-through) et les données ADSL (sortie RJ vers la box).
+- Le **modem USB VocalGuard** (USR / Conexant, port série `/dev/ttyACM*`) est branché **sur le filtre**, côté voix. C'est par là que le daemon voit les RING, le Caller ID et l'audio ligne.
+
+## Logiciel : API + daemon
+
 Deux rôles possibles :
 
 | Processus | Rôle |

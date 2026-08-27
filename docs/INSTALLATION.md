@@ -5,6 +5,7 @@
 ### Matériel
 
 - Raspberry Pi 3B+ ou mieux (ou système Linux compatible)
+- Ligne analogique : **arrivée ligne → filtre ADSL (fiche gigogne) → téléphone**, avec le **modem USB VocalGuard branché sur le filtre** (sortie voix) — voir [TELEPHONY_STACK.md](TELEPHONY_STACK.md#câblage-physique-site-actuel) et `docs/images/filtre-adsl-gigogne.png`
 - Modem USB compatible :
   - US Robotics 5637 (recommandé)
   - Zoom 3095

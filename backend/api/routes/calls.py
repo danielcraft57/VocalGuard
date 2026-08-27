@@ -15,7 +15,9 @@ from fastapi.responses import FileResponse
 from typing import Literal, Optional
 
 import httpx
+from loguru import logger
 
+from backend.core.modem_handler import _vrx_buffer_has_hangup_marker
 from backend.voice.audio_utils import (
     has_alsa_capture_devices,
     pcm_s16le_16k_mono_to_u8_8k,
@@ -234,7 +236,12 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
             while len(stt_buffer) >= STT_FEED_BYTES:
                 pcm = bytes(stt_buffer[:STT_FEED_BYTES])
                 del stt_buffer[:STT_FEED_BYTES]
-                partial, segments = call_manager.voice_recognition.outgoing_stream_feed(stream_key, pcm)
+                # Vosk est CPU-bound : thread pour ne pas geler la boucle (VRX / WebSocket).
+                partial, segments = await asyncio.to_thread(
+                    call_manager.voice_recognition.outgoing_stream_feed,
+                    stream_key,
+                    pcm,
+                )
                 if partial and partial != last_partial_sent[0]:
                     last_partial_sent[0] = partial
                     await _publish_state(
@@ -383,70 +390,208 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
                 "Pas de capture ALSA: flux VRX (modem) -> WebSocket; micro -> VTX par rafales",
             )
             modem._outgoing_owns_serial = True
+            # Apres ATD...; le modem a compose, mais il faut encore FCLASS=8 + VLS=1
+            # pour ouvrir AT+VRX (deja_in_voice=True faisait ERROR sur VSD/VSM/VRX).
             ok = await modem.start_outgoing_vrx_stream(already_in_voice_mode=False)
             if not ok:
                 await _publish_log(session.call_id, session.phone_number, "Echec ouverture VRX", "error")
                 modem._outgoing_owns_serial = False
             else:
                 serial_vrx_active = True
+                modem._voice_abort = False
                 mic_acc = bytearray()
-                # ~400 ms a 16 kHz s16le — moins de bascules VRX<->VTX = moins de saccades
-                MIC_BURST_BYTES = 12800
-                MAX_MIC_BACKLOG = MIC_BURST_BYTES * 3
-                # Seuil VAD : sous ce RMS, on jette le silence sans toucher au modem
-                MIC_VAD_RMS = 450.0
-                uplink_bursts = 0
+                # Talkspurt : une seule bascule VRX->VTX pour toute la phrase (pas de
+                # coupe toutes les 400 ms qui saccadait le message vocal).
+                MIC_SLICE_BYTES = 3200  # ~100 ms a 16 kHz s16le
+                START_SPEECH_BYTES = 4800  # ~150 ms pour demarrer
+                KEEP_ON_START_BYTES = 9600  # ~300 ms de pre-roll
+                MAX_MIC_BACKLOG = 48000  # ~1.5 s
+                HANGOVER_SILENCE_MS = 500.0
+                MIC_VAD_RMS = 500.0
+                uplink_open = False
+                silence_ms = 0.0
+                talkspurts = 0
                 silence_drops = 0
-                while not session.stop_event.is_set():
-                    chunk = await modem.read_outgoing_vrx_chunk(1024)
-                    if chunk:
-                        _append_line_chunk(chunk)
-                        pcm16 = pcm_u8_8k_to_s16le_16k(chunk)
-                        await session_broadcast_pcm(session, pcm16)
-                        stt_buffer.extend(pcm16)
-                        await _feed_stt_stream(stt_buffer)
+                line_bytes = 0
+                hangup_tail = bytearray()
+                empty_reads = 0
+                last_bytes_log = time.monotonic()
+                stt_task: Optional[asyncio.Task] = None
+
+                async def _stt_drain_copy(pcm: bytes) -> None:
+                    """STT hors de la boucle VRX pour ne pas bloquer la lecture serie."""
+                    buf = bytearray(pcm)
+                    try:
+                        await _feed_stt_stream(buf)
+                    except Exception as stt_exc:
+                        logger.warning("STT stream sortant: {}", stt_exc)
+
+                async def _drain_mic_queue() -> None:
                     try:
                         while True:
                             mic_acc.extend(session.mic_modem_queue.get_nowait())
                     except asyncio.QueueEmpty:
                         pass
                     if len(mic_acc) > MAX_MIC_BACKLOG:
-                        # Garde la fin (parole recente), jette le trop-plein
-                        del mic_acc[:-MIC_BURST_BYTES]
-                    if len(mic_acc) >= MIC_BURST_BYTES:
-                        burst = bytes(mic_acc[:MIC_BURST_BYTES])
-                        del mic_acc[:MIC_BURST_BYTES]
-                        rms = pcm_s16le_rms(burst)
-                        if rms < MIC_VAD_RMS:
-                            silence_drops += 1
-                            # Silence : pas de VTX, on continue d'ecouter la ligne
-                            continue
-                        u8 = pcm_s16le_16k_mono_to_u8_8k(burst)
-                        if u8:
-                            _append_mic_uplink(u8)
-                            ok_up = await modem.half_duplex_send_uplink_u8(u8)
-                            uplink_bursts += 1
-                            if uplink_bursts == 1 or uplink_bursts % 10 == 0:
+                        del mic_acc[:-MAX_MIC_BACKLOG]
+
+                while not session.stop_event.is_set() and not modem._voice_abort:
+                    if not uplink_open:
+                        chunk = await modem.read_outgoing_vrx_chunk(2048)
+                        if chunk:
+                            empty_reads = 0
+                            hangup_tail.extend(chunk)
+                            if len(hangup_tail) > 4096:
+                                del hangup_tail[:-4096]
+                            if _vrx_buffer_has_hangup_marker(bytes(hangup_tail)):
+                                end_reason = "remote_hangup"
                                 await _publish_log(
                                     session.call_id,
                                     session.phone_number,
-                                    f"Uplink VTX #{uplink_bursts} ({len(u8)} o, rms={rms:.0f}, ok={ok_up})",
+                                    "Raccrochage distant detecte (marqueurs modem)",
                                 )
-                    if not chunk:
+                                break
+                            _append_line_chunk(chunk)
+                            line_bytes += len(chunk)
+                            pcm16 = pcm_u8_8k_to_s16le_16k(chunk)
+                            await session_broadcast_pcm(session, pcm16)
+                            stt_buffer.extend(pcm16)
+                            # Ne jamais await Vosk ici : ca gelait la lecture VRX.
+                            if len(stt_buffer) >= STT_FEED_BYTES and (stt_task is None or stt_task.done()):
+                                to_feed = bytes(stt_buffer)
+                                stt_buffer.clear()
+                                stt_task = asyncio.create_task(_stt_drain_copy(to_feed))
+                        else:
+                            empty_reads += 1
+                            # Apres audio, silence modem prolonge = ligne souvent morte.
+                            if line_bytes > 16000 and empty_reads >= 40:
+                                end_reason = "remote_hangup"
+                                await _publish_log(
+                                    session.call_id,
+                                    session.phone_number,
+                                    "Raccrochage distant probable (plus de flux VRX)",
+                                )
+                                break
+                    else:
+                        chunk = b""
+
+                    if session.stop_event.is_set() or modem._voice_abort:
+                        break
+
+                    await _drain_mic_queue()
+
+                    if not uplink_open:
+                        if len(mic_acc) >= START_SPEECH_BYTES:
+                            probe = bytes(mic_acc[-START_SPEECH_BYTES:])
+                            rms = pcm_s16le_rms(probe)
+                            if rms < MIC_VAD_RMS:
+                                silence_drops += 1
+                                # Evite d'accumuler du silence pour rien.
+                                if len(mic_acc) > KEEP_ON_START_BYTES:
+                                    del mic_acc[:-KEEP_ON_START_BYTES]
+                            else:
+                                if len(mic_acc) > KEEP_ON_START_BYTES:
+                                    del mic_acc[:-KEEP_ON_START_BYTES]
+                                ok_vtx = await modem.begin_outgoing_vtx()
+                                if not ok_vtx:
+                                    await _publish_log(
+                                        session.call_id,
+                                        session.phone_number,
+                                        "Echec ouverture VTX (talkspurt)",
+                                        "error",
+                                    )
+                                    mic_acc.clear()
+                                else:
+                                    uplink_open = True
+                                    silence_ms = 0.0
+                                    talkspurts += 1
+                                    await _publish_log(
+                                        session.call_id,
+                                        session.phone_number,
+                                        f"Talkspurt micro #{talkspurts} demarre (rms={rms:.0f})",
+                                    )
+                                    # Envoi par tranches pour pouvoir abort au raccrochage.
+                                    while mic_acc and not session.stop_event.is_set() and not modem._voice_abort:
+                                        take = bytes(mic_acc[:MIC_SLICE_BYTES])
+                                        del mic_acc[: min(len(mic_acc), MIC_SLICE_BYTES)]
+                                        u8 = pcm_s16le_16k_mono_to_u8_8k(take)
+                                        if u8:
+                                            _append_mic_uplink(u8)
+                                            if not await modem.write_outgoing_vtx_u8(u8):
+                                                break
+                    else:
+                        # Pendant VTX : envoyer au fil de l'eau, fermer apres silence.
+                        while (
+                            len(mic_acc) >= MIC_SLICE_BYTES
+                            and not session.stop_event.is_set()
+                            and not modem._voice_abort
+                        ):
+                            piece = bytes(mic_acc[:MIC_SLICE_BYTES])
+                            del mic_acc[:MIC_SLICE_BYTES]
+                            rms = pcm_s16le_rms(piece)
+                            slice_ms = (len(piece) // 2) / 16.0
+                            if rms < MIC_VAD_RMS:
+                                silence_ms += slice_ms
+                            else:
+                                silence_ms = 0.0
+                            u8 = pcm_s16le_16k_mono_to_u8_8k(piece)
+                            if u8:
+                                _append_mic_uplink(u8)
+                                if not await modem.write_outgoing_vtx_u8(u8):
+                                    silence_ms = HANGOVER_SILENCE_MS
+                                    break
+                            if silence_ms >= HANGOVER_SILENCE_MS:
+                                break
+                        if silence_ms >= HANGOVER_SILENCE_MS or session.stop_event.is_set() or modem._voice_abort:
+                            ok_back = await modem.end_outgoing_vtx_reopen_vrx()
+                            uplink_open = False
+                            silence_ms = 0.0
+                            await _publish_log(
+                                session.call_id,
+                                session.phone_number,
+                                f"Fin talkspurt #{talkspurts} (reprise VRX ok={ok_back})",
+                            )
+                            if session.stop_event.is_set() or modem._voice_abort:
+                                break
+
+                    now_m = time.monotonic()
+                    if now_m - last_bytes_log >= 5.0:
+                        last_bytes_log = now_m
+                        await _publish_log(
+                            session.call_id,
+                            session.phone_number,
+                            f"VRX capture {line_bytes} octets (~{line_bytes / 8000.0:.1f}s), "
+                            f"talkspurts={talkspurts}",
+                        )
+                    if not chunk and not uplink_open:
                         await asyncio.sleep(0.02)
-                if mic_acc:
-                    rms_tail = pcm_s16le_rms(bytes(mic_acc))
-                    if rms_tail >= MIC_VAD_RMS:
-                        u8_tail = pcm_s16le_16k_mono_to_u8_8k(bytes(mic_acc))
-                        if u8_tail:
-                            _append_mic_uplink(u8_tail)
-                            await modem.half_duplex_send_uplink_u8(u8_tail)
-                            uplink_bursts += 1
-                    mic_acc.clear()
+                    elif uplink_open and len(mic_acc) < MIC_SLICE_BYTES:
+                        await asyncio.sleep(0.02)
+
+                if stt_task is not None and not stt_task.done():
+                    try:
+                        await asyncio.wait_for(stt_task, timeout=5.0)
+                    except Exception:
+                        stt_task.cancel()
+                if uplink_open:
+                    # Ne pas vider le micro restant si on raccroche : coupe net.
+                    if not session.stop_event.is_set() and not modem._voice_abort:
+                        await _drain_mic_queue()
+                        if mic_acc:
+                            u8_tail = pcm_s16le_16k_mono_to_u8_8k(bytes(mic_acc))
+                            mic_acc.clear()
+                            if u8_tail:
+                                _append_mic_uplink(u8_tail)
+                                await modem.write_outgoing_vtx_u8(u8_tail)
+                    else:
+                        mic_acc.clear()
+                    await modem.end_outgoing_vtx_reopen_vrx()
+                    uplink_open = False
                 await _publish_log(
                     session.call_id,
                     session.phone_number,
-                    f"Fin session VRX: {uplink_bursts} rafales micro, {silence_drops} silences ignores",
+                    f"Fin session VRX: {line_bytes} o ligne, {talkspurts} talkspurts, "
+                    f"{silence_drops} silences ignores, reason={end_reason}",
                 )
                 await _save_serial_stereo_wav()
         else:
@@ -507,6 +652,12 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
                 wf.setframerate(16000)
                 wf.writeframes(bytes(alsa_raw))
             await call_service.set_audio_file(session.call_id, wav_rel)
+
+        # Toujours tenter de sauver la piste serie (meme si exception au milieu).
+        try:
+            await _save_serial_stereo_wav()
+        except Exception:
+            pass
 
         if serial_vrx_active:
             try:
@@ -791,7 +942,10 @@ async def start_outgoing_call(
     if not phone:
         raise HTTPException(status_code=400, detail="Numero invalide")
 
-    call = await call_manager.call_service.create_outgoing_call(phone)
+    try:
+        call = await call_manager.call_service.create_outgoing_call(phone)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     session = OutgoingCallSession(call_id=call.id, phone_number=phone)
     outgoing_sessions[call.id] = session
     asyncio.create_task(_publish_log(call.id, phone, "Session sortante creee (tache modem)"))
@@ -846,9 +1000,16 @@ async def outgoing_hangup(
         )
     session = outgoing_sessions.get(call_id)
     if session is None:
-        raise HTTPException(status_code=404, detail="Session d'appel sortant introuvable")
+        # Session deja terminee (echec VRX, dial_failed, etc.) : idempotent pour l'UI.
+        return OutgoingCallActionResponse(
+            ok=True, call_id=call_id, message="Session deja terminee"
+        )
     asyncio.create_task(_publish_log(call_id, session.phone_number, "Raccrochage demande depuis l'UI"))
     session.stop_event.set()
+    # Coupe immediatement les ecritures VTX pacees (sans attendre le lock serie).
+    call_manager = getattr(request.app.state, "call_manager", None)
+    if call_manager is not None and getattr(call_manager, "modem", None) is not None:
+        call_manager.modem._voice_abort = True
     return OutgoingCallActionResponse(ok=True, call_id=call_id, message="Raccrochage demande")
 
 

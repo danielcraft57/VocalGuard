@@ -77,7 +77,11 @@ class Config(BaseSettings):
     
     # Appels
     rings_before_answer: int = Field(default=2)
+    # Fenetre courte pour capter NMBR= avant ATA (meme si rings=0 coupe-sonnerie).
+    cid_wait_sec: float = Field(default=2.5)
     max_call_duration: int = Field(default=300)  # secondes
+    # True = le modem decroche (repondeur). False = CID/historique seulement, le fixe gere l'appel.
+    incoming_auto_answer: bool = Field(default=True)
     
     # Blocage (inspire de callattendant: NOMOROBO USA, SHOULDIANSWER hors USA, ou vide pour desactiver)
     block_enabled: bool = Field(default=True)
@@ -145,7 +149,13 @@ class Config(BaseSettings):
 
         # Priorité .env / variables d'environnement sur le YAML pour la voix
         self._apply_env_overrides()
-    
+        # Mode UI (répondeur / téléphone) persisté dans data/incoming_line_mode.yaml
+        try:
+            from backend.core.incoming_line_mode import load_incoming_line_mode
+
+            load_incoming_line_mode(self)
+        except Exception:
+            pass
     def _apply_env_overrides(self) -> None:
         """Réapplique les variables d'environnement (.env) pour que .env prime sur le YAML."""
         # Runtime/prod-critical overrides (DB, queue, API) to avoid YAML forcing SQLite in production.
@@ -240,6 +250,7 @@ class Config(BaseSettings):
             "edge_tts_voice": getattr(self, "edge_tts_voice", None),
             "whisper_model": self.whisper_model,
             "rings_before_answer": self.rings_before_answer,
+            "incoming_auto_answer": self.incoming_auto_answer,
             "block_enabled": self.block_enabled,
             "voicemail_enabled": self.voicemail_enabled,
         }

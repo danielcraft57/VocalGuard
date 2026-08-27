@@ -10,15 +10,13 @@ import {
   startOutgoingCall,
   sendOutgoingDtmf,
   hangupOutgoingCall,
-  patchCallTag,
   queueCallOsint,
   bulkDeleteCalls,
   deleteCall,
-  getCallRecordingUrl,
-  type CallUiTag
+  getCallRecordingUrl
 } from "../../services/callsApi";
 import { getWsBaseUrl } from "../../services/httpClient";
-import { useOutgoingCallAudio } from "../../hooks/useOutgoingCallAudio";
+import { useOutgoingCallAudio, unlockOutgoingAudioContext } from "../../hooks/useOutgoingCallAudio";
 
 function formatStatus(status: string): { label: string; className: string } {
   const normalized = status.toLowerCase();
@@ -31,7 +29,48 @@ function formatStatus(status: string): { label: string; className: string } {
   if (normalized === "blocked") {
     return { label: "Bloqué", className: "vg-badge vg-badge-danger" };
   }
+  if (normalized === "dialing") {
+    return { label: "Composition", className: "vg-badge vg-badge-info" };
+  }
   return { label: status, className: "vg-badge" };
+}
+
+/**
+ * Detecte si l'appel est entrant ou sortant (heuristique sur les champs existants).
+ */
+function getCallDirection(call: CallWithOsint): "in" | "out" {
+  const name = (call.caller_name || "").trim().toLowerCase();
+  if (name === "sortant") return "out";
+  const audio = (call.audio_file || "").toLowerCase();
+  if (audio.includes("call_out_") || audio.includes("/call_out")) return "out";
+  const ex = call.extra_data;
+  if (ex && typeof ex === "object") {
+    const dir = String((ex as { direction?: string }).direction || "").toLowerCase();
+    if (dir === "out" || dir === "outgoing" || dir === "sortant") return "out";
+    if (dir === "in" || dir === "incoming" || dir === "entrant") return "in";
+  }
+  return "in";
+}
+
+function formatDirection(dir: "in" | "out"): React.ReactNode {
+  if (dir === "out") {
+    return (
+      <span className="vg-badge vg-badge-info" title="Appel sortant">
+        <span className="material-icons" style={{ fontSize: "14px", marginRight: "0.15rem" }}>
+          call_made
+        </span>
+        Sortant
+      </span>
+    );
+  }
+  return (
+    <span className="vg-badge vg-badge-success" title="Appel entrant">
+      <span className="material-icons" style={{ fontSize: "14px", marginRight: "0.15rem" }}>
+        call_received
+      </span>
+      Entrant
+    </span>
+  );
 }
 
 /** Categorie de reputation pour affichage et filtres */
@@ -79,16 +118,6 @@ function formatReputation(osint?: CallWithOsint["osint"]): React.ReactNode {
       <span>Inconnue</span>
     </span>
   );
-}
-
-function readUiTagFromCall(call: CallWithOsint): CallUiTag {
-  const ex = call.extra_data;
-  if (ex && typeof ex === "object" && "ui_tag" in ex) {
-    const v = String((ex as { ui_tag?: string }).ui_tag || "").toLowerCase();
-    const allowed: CallUiTag[] = ["permitted", "restricted", "unknown", "blocked", "commercial", "none"];
-    if (allowed.includes(v as CallUiTag)) return v as CallUiTag;
-  }
-  return "none";
 }
 
 /** Valeur normalisee du statut pour les filtres */
@@ -221,8 +250,9 @@ export default function CallsPage() {
   const audioActive = dialerCallId !== null && (dialerStatus === "dialing" || dialerStatus === "connected");
   useOutgoingCallAudio(
     dialerCallId,
-    audioActive && liveListen,
-    audioActive && liveMic,
+    audioActive,
+    liveListen,
+    liveMic,
     dialerStatus,
     () => {
       // Filet de securite: si les events "connected" tardent/perdent, l'arrivee audio confirme la connexion.
@@ -317,6 +347,7 @@ export default function CallsPage() {
       setDialerError("Saisissez un numero");
       return;
     }
+    unlockOutgoingAudioContext();
     setDialerLoading(true);
     try {
       const result = await startOutgoingCall(num);
@@ -341,13 +372,12 @@ export default function CallsPage() {
     setDialerLoading(true);
     try {
       await hangupOutgoingCall(dialerCallId);
-      setDialerStatus("ended");
-      fetchCallsWithOsint().then(setCalls).catch(() => undefined);
     } catch {
-      setDialerError("Echec du raccrochage");
-    } finally {
-      setDialerLoading(false);
+      // 404 / session deja morte cote daemon : on ferme l'UI quand meme
     }
+    setDialerStatus("ended");
+    fetchCallsWithOsint().then(setCalls).catch(() => undefined);
+    setDialerLoading(false);
   };
 
   /** Fermeture modale : raccroche tout appel actif puis reinitialise l'etat local. */
@@ -387,16 +417,6 @@ export default function CallsPage() {
     }
     if (dialerStatus === "idle" || dialerStatus === "ended" || dialerStatus === "error") {
       setDialerNumber((prev) => (prev + digit).slice(0, 28));
-    }
-  };
-
-  const handleRowTag = async (callId: number, tag: CallUiTag) => {
-    try {
-      await patchCallTag(callId, tag);
-      const data = await fetchCallsWithOsint();
-      setCalls(data);
-    } catch {
-      setError("Impossible de mettre a jour le tag");
     }
   };
 
@@ -488,6 +508,7 @@ export default function CallsPage() {
     });
     const phone = call.phone_number ?? "Inconnu";
     const { label: statusLabel, className: statusClass } = formatStatus(call.status);
+    const direction = getCallDirection(call);
     const intent =
       (call.extra_data && typeof call.extra_data === "object" && "ivr_intent" in call.extra_data
         ? (call.extra_data as { ivr_intent?: string | null }).ivr_intent
@@ -496,12 +517,6 @@ export default function CallsPage() {
       (call.transcription && call.transcription.length > 80
         ? `${call.transcription.slice(0, 77)}...`
         : call.transcription) || null;
-
-    const lieu = call.osint
-      ? [call.osint.city, call.osint.region].filter(Boolean).join(", ") || "-"
-      : "-";
-    const operateur = call.osint?.operator ?? "-";
-    const uiTag = readUiTagFromCall(call);
 
     return (
       <tr
@@ -524,40 +539,34 @@ export default function CallsPage() {
             aria-label={`Selectionner appel ${call.id}`}
           />
         </td>
-        <td style={{ padding: "0.5rem 0.75rem" }}>{date}</td>
-        <td style={{ padding: "0.5rem 0.75rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
-          <span className="material-icons" style={{ fontSize: "16px", color: "#22c55e" }}>
-            phone_in_talk
+        <td>{date}</td>
+        <td>{formatDirection(direction)}</td>
+        <td>
+          <span className="vg-phone-cell">
+            <span className="material-icons" aria-hidden>
+              {direction === "out" ? "call_made" : "call_received"}
+            </span>
+            <span>{phone}</span>
           </span>
-          <span>{phone}</span>
         </td>
-        <td style={{ padding: "0.5rem 0.75rem" }}>
+        <td>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
             <span className={statusClass}>{statusLabel}</span>
             {intent && (
-              <span
-                style={{
-                  fontSize: "0.7rem",
-                  padding: "0.1rem 0.4rem",
-                  borderRadius: "999px",
-                  border: "1px solid #4b5563",
-                  color: "#e5e7eb",
-                  alignSelf: "flex-start"
-                }}
-              >
+              <span className="vg-badge vg-badge-info" style={{ alignSelf: "flex-start" }}>
                 Intent: {intent}
               </span>
             )}
           </div>
         </td>
-        <td style={{ padding: "0.5rem 0.75rem" }}>
+        <td>
           {formatReputation(call.osint)}
           {shortTranscript && (
             <div
               style={{
                 marginTop: "0.25rem",
                 fontSize: "0.7rem",
-                color: "#9ca3af",
+                color: "var(--vg-color-text-muted)",
                 maxWidth: "12rem",
                 whiteSpace: "nowrap",
                 overflow: "hidden",
@@ -569,80 +578,36 @@ export default function CallsPage() {
             </div>
           )}
         </td>
-        <td style={{ padding: "0.5rem 0.75rem" }}>{lieu}</td>
-        <td style={{ padding: "0.5rem 0.75rem" }}>{operateur}</td>
-        <td style={{ padding: "0.5rem 0.75rem", minWidth: "7rem" }}>
-          <select
-            value={uiTag}
-            onChange={(e) => void handleRowTag(call.id, e.target.value as CallUiTag)}
-            className="vg-input"
-            style={{ fontSize: "0.75rem", padding: "0.25rem", maxWidth: "100%" }}
-            aria-label="Tag appel"
-          >
-            <option value="none">Tag...</option>
-            <option value="permitted">Permis</option>
-            <option value="restricted">Restreint</option>
-            <option value="unknown">Inconnu</option>
-            <option value="blocked">Bloque</option>
-            <option value="commercial">Commercial</option>
-          </select>
-        </td>
-        <td style={{ padding: "0.5rem 0.75rem" }}>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+        <td>
+          <div className="vg-icon-btn-group">
             {call.phone_number && (
               <button
                 type="button"
+                className="vg-icon-btn vg-icon-btn--primary"
                 title="Rappeler"
+                aria-label="Rappeler"
                 onClick={() => openDialerWith(call.phone_number!)}
-                style={{
-                  border: "1px solid #4b5563",
-                  background: "#1f2937",
-                  color: "#e5e7eb",
-                  borderRadius: "8px",
-                  padding: "0.25rem 0.45rem",
-                  cursor: "pointer",
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: "0.2rem",
-                  fontSize: "0.7rem"
-                }}
               >
-                <span className="material-icons" style={{ fontSize: "14px" }}>
-                  phone_callback
-                </span>
+                <span className="material-icons">phone_callback</span>
               </button>
             )}
             <button
               type="button"
+              className="vg-icon-btn vg-icon-btn--accent"
               title="File OSINT"
+              aria-label="Lancer OSINT"
               onClick={() => void handleRowOsint(call.id)}
-              style={{
-                border: "1px solid #6366f1",
-                background: "transparent",
-                color: "#a5b4fc",
-                borderRadius: "8px",
-                padding: "0.25rem 0.45rem",
-                cursor: "pointer",
-                fontSize: "0.7rem"
-              }}
             >
-              OSINT
+              <span className="material-icons">travel_explore</span>
             </button>
             <button
               type="button"
+              className="vg-icon-btn vg-icon-btn--primary"
               title="Detail"
+              aria-label="Detail de l appel"
               onClick={() => void openCallDetail(call.id)}
-              style={{
-                border: "1px solid #22c55e",
-                background: "transparent",
-                color: "#86efac",
-                borderRadius: "8px",
-                padding: "0.25rem 0.45rem",
-                cursor: "pointer",
-                fontSize: "0.7rem"
-              }}
             >
-              Detail
+              <span className="material-icons">info</span>
             </button>
           </div>
         </td>
@@ -651,7 +616,7 @@ export default function CallsPage() {
   };
 
   const filterBar = (
-    <div className="vg-calls-filters" style={{ marginBottom: "1.25rem" }}>
+    <div className="vg-calls-filters" style={{ marginBottom: "0.85rem" }}>
       <div
         style={{
           display: "flex",
@@ -660,42 +625,15 @@ export default function CallsPage() {
           gap: "0.5rem"
         }}
       >
-        <div
-          style={{
-            flex: "1 1 200px",
-            minWidth: 0,
-            position: "relative",
-            display: "flex",
-            alignItems: "center"
-          }}
-        >
-          <span
-            className="material-icons"
-            style={{
-              position: "absolute",
-              left: "0.65rem",
-              fontSize: "20px",
-              color: "#9ca3af",
-              pointerEvents: "none"
-            }}
-          >
+        <div className="vg-search-field">
+          <span className="material-icons" aria-hidden>
             search
           </span>
           <input
             type="text"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
-            placeholder="Rechercher par numero, operateur, lieu ou mot-cle..."
-            className="vg-input"
-            style={{
-              width: "100%",
-              padding: "0.5rem 0.75rem 0.5rem 2.25rem",
-              borderRadius: "8px",
-              border: "1px solid #374151",
-              background: "var(--vg-bg-secondary, #1f2937)",
-              color: "var(--vg-text, #f9fafb)",
-              fontSize: "0.875rem"
-            }}
+            placeholder="Rechercher par numero ou mot-cle..."
             aria-label="Recherche intelligente"
           />
           {searchInput.length > 0 && (
@@ -704,15 +642,14 @@ export default function CallsPage() {
               onClick={() => setSearchInput("")}
               style={{
                 position: "absolute",
-                right: "0.5rem",
+                right: "0.55rem",
                 background: "none",
                 border: "none",
-                color: "#9ca3af",
+                color: "var(--vg-color-text-muted)",
                 cursor: "pointer",
                 padding: "0.25rem",
                 display: "flex",
-                alignItems: "center",
-                justifyContent: "center"
+                alignItems: "center"
               }}
               aria-label="Effacer la recherche"
             >
@@ -725,37 +662,25 @@ export default function CallsPage() {
         <button
           type="button"
           onClick={() => setFiltersOpen(!filtersOpen)}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "0.4rem",
-            padding: "0.5rem 0.75rem",
-            fontSize: "0.875rem",
-            borderRadius: "8px",
-            border: "1px solid #4b5563",
-            background: filtersOpen ? "#374151" : "transparent",
-            color: "#d1d5db",
-            cursor: "pointer",
-            position: "relative"
-          }}
+          className="vg-btn-tonal"
           aria-expanded={filtersOpen}
           aria-label={filtersOpen ? "Fermer les filtres" : "Ouvrir les filtres avances"}
         >
-          <span className="material-icons" style={{ fontSize: "20px" }}>
+          <span className="material-icons" style={{ fontSize: "18px" }}>
             filter_list
           </span>
-          Filtres avances
+          Filtres
           {activeFilterCount > 0 && (
             <span
               style={{
-                marginLeft: "0.2rem",
-                minWidth: "1.25rem",
-                height: "1.25rem",
-                padding: "0 0.35rem",
+                marginLeft: "0.15rem",
+                minWidth: "1.15rem",
+                height: "1.15rem",
+                padding: "0 0.3rem",
                 borderRadius: "999px",
-                background: "#6366f1",
+                background: "var(--vg-color-accent)",
                 color: "#fff",
-                fontSize: "0.75rem",
+                fontSize: "0.7rem",
                 display: "inline-flex",
                 alignItems: "center",
                 justifyContent: "center"
@@ -766,22 +691,7 @@ export default function CallsPage() {
           )}
         </button>
         {hasActiveFilters && (
-          <button
-            type="button"
-            onClick={clearAllFilters}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: "0.35rem",
-              padding: "0.5rem 0.65rem",
-              fontSize: "0.8125rem",
-              borderRadius: "8px",
-              border: "1px solid #4b5563",
-              background: "transparent",
-              color: "#9ca3af",
-              cursor: "pointer"
-            }}
-          >
+          <button type="button" onClick={clearAllFilters} className="vg-btn-tonal">
             <span className="material-icons" style={{ fontSize: "16px" }}>
               filter_alt_off
             </span>
@@ -1078,9 +988,13 @@ export default function CallsPage() {
       title="Appels"
       subtitle="Historique des appels traites par VocalGuard, enrichis avec un premier score OSINT."
     >
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "1rem" }}>
+      <div className="vg-calls-toolbar">
+        <div style={{ fontSize: "0.85rem", color: "var(--vg-color-text-muted)" }}>
+          Historique enrichi OSINT
+        </div>
         <button
           type="button"
+          className="vg-btn-filled"
           onClick={() => {
             setDialerOpen(true);
             if (dialerStatus !== "dialing" && dialerStatus !== "connected") {
@@ -1092,18 +1006,6 @@ export default function CallsPage() {
               setDialerLogs([]);
               setDialerError(null);
             }
-          }}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "0.45rem",
-            border: "none",
-            borderRadius: "10px",
-            padding: "0.6rem 0.95rem",
-            cursor: "pointer",
-            background: "#2563eb",
-            color: "#fff",
-            fontWeight: 600
           }}
         >
           <span className="material-icons" style={{ fontSize: "18px" }}>
@@ -1172,64 +1074,46 @@ export default function CallsPage() {
           </div>
         </div>
       ) : (
-        <div className="vg-card">
+        <div className="vg-card vg-card--static vg-calls-panel">
+          <div className="vg-calls-panel-body">
           {filterBar}
-          <div
-            style={{
-              display: "flex",
-              flexWrap: "wrap",
-              alignItems: "center",
-              gap: "0.5rem",
-              marginBottom: "0.65rem"
-            }}
-          >
+          <div className="vg-calls-bulk">
             <button
               type="button"
               onClick={toggleSelectAllFiltered}
-              className="vg-input"
-              style={{ fontSize: "0.8rem", padding: "0.35rem 0.65rem", cursor: "pointer" }}
+              className="vg-btn-tonal"
             >
-              {allFilteredSelected ? "Tout deselectionner" : "Tout selectionner (filtre)"}
+              {allFilteredSelected ? "Tout deselectionner" : "Tout selectionner"}
             </button>
             <button
               type="button"
               disabled={selectedIds.size === 0}
               onClick={() => void handleBulkDelete()}
-              style={{
-                fontSize: "0.8rem",
-                padding: "0.35rem 0.65rem",
-                cursor: selectedIds.size === 0 ? "not-allowed" : "pointer",
-                borderRadius: "8px",
-                border: "1px solid #b91c1c",
-                background: selectedIds.size === 0 ? "#374151" : "#7f1d1d",
-                color: "#fecaca",
-                opacity: selectedIds.size === 0 ? 0.5 : 1
-              }}
+              className="vg-btn-tonal vg-btn-tonal--danger"
             >
-              Supprimer la selection ({selectedIds.size})
+              <span className="material-icons" style={{ fontSize: "16px" }}>
+                delete
+              </span>
+              Supprimer ({selectedIds.size})
             </button>
           </div>
-          <table className="vg-table">
+          <div className="vg-calls-table-wrap">
+          <table className="vg-table vg-table--material">
             <thead>
               <tr>
-                <th
-                  style={{ textAlign: "left", padding: "0.5rem 0.35rem", width: "2rem", fontSize: "0.65rem", color: "#6b7280" }}
-                >
-                  Sel.
-                </th>
-                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Date</th>
-                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Numero</th>
-                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Statut</th>
-                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Reputation OSINT</th>
-                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Lieu</th>
-                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Operateur</th>
-                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Tag</th>
-                <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Actions</th>
+                <th style={{ width: "2.5rem" }}>Sel.</th>
+                <th>Date</th>
+                <th>Sens</th>
+                <th>Numero</th>
+                <th>Statut</th>
+                <th>Reputation</th>
+                <th>Actions</th>
               </tr>
             </thead>
             <tbody>{filteredCalls.map(renderCallRow)}</tbody>
           </table>
-          <div style={{ fontSize: "0.8125rem", color: "#9ca3af", marginTop: "0.5rem" }}>
+          </div>
+          <div className="vg-calls-meta">
             {filteredCalls.length === calls.length ? (
               <span>{calls.length} appel{calls.length > 1 ? "s" : ""}</span>
             ) : (
@@ -1237,6 +1121,7 @@ export default function CallsPage() {
                 {filteredCalls.length} resultat{filteredCalls.length > 1 ? "s" : ""} sur {calls.length} appels
               </span>
             )}
+          </div>
           </div>
         </div>
       )}
