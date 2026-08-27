@@ -2,6 +2,20 @@
 
 import React, { useCallback, useEffect, useState } from "react";
 import {
+  Chip,
+  IconButton,
+  Stack,
+  ToggleButton,
+  ToggleButtonGroup,
+  Tooltip,
+  Typography
+} from "@mui/material";
+import MenuIcon from "@mui/icons-material/Menu";
+import PhoneIcon from "@mui/icons-material/Phone";
+import PhoneInTalkIcon from "@mui/icons-material/PhoneInTalk";
+import RingVolumeIcon from "@mui/icons-material/RingVolume";
+import VoicemailIcon from "@mui/icons-material/Voicemail";
+import {
   fetchSettings,
   fetchTelephonyStatus,
   setIncomingLineMode,
@@ -17,7 +31,7 @@ export interface TopbarProps {
 }
 
 /**
- * Bandeau superieur : menu, switch mode ligne (Material), titre, pastille modem.
+ * Bandeau superieur Material : menu, switch mode ligne, titre, pastille modem.
  */
 export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
   const [mode, setMode] = useState<IncomingLineMode>("voicemail");
@@ -32,7 +46,7 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
         if (!cancelled) setMode(s.incoming_line_mode || "voicemail");
       })
       .catch(() => {
-        /* ignore: UI garde le defaut */
+        /* ignore */
       });
     return () => {
       cancelled = true;
@@ -67,22 +81,25 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
     };
   }, [mode]);
 
-  const switchMode = useCallback(async (next: IncomingLineMode) => {
-    if (busy || next === mode) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const s = await setIncomingLineMode(next);
-      setMode(s.incoming_line_mode);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Impossible de changer le mode");
-    } finally {
-      setBusy(false);
-    }
-  }, [busy, mode]);
+  const switchMode = useCallback(
+    async (next: IncomingLineMode) => {
+      if (busy || next === mode) return;
+      setBusy(true);
+      setError(null);
+      try {
+        const s = await setIncomingLineMode(next);
+        setMode(s.incoming_line_mode);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Impossible de changer le mode");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [busy, mode]
+  );
 
   const modeLabel =
-    mode === "voicemail" ? "Répondeur (coupe sonnerie)" : "Téléphone (fixe seul)";
+    mode === "voicemail" ? "Repondeur (coupe sonnerie)" : "Telephone (fixe seul)";
 
   const modemOk = Boolean(tel?.modem_initialized);
   const modemLabel = !tel
@@ -104,84 +121,89 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
       ]
         .filter(Boolean)
         .join(" | ")
-    : "Chargement état téléphonie";
+    : "Chargement etat telephonie";
 
   return (
     <header className="vg-topbar">
       <div className="vg-topbar-left">
         {onMenuClick ? (
-          <button
-            type="button"
-            className="vg-topbar-menu-button"
+          <IconButton
             onClick={onMenuClick}
             aria-label="Ouvrir le menu"
+            size="small"
+            sx={{ color: "inherit", mr: 0.5 }}
           >
-            <span className="material-icons">menu</span>
-          </button>
+            <MenuIcon />
+          </IconButton>
         ) : null}
 
-        <div
-          className={`vg-line-mode ${busy ? "vg-line-mode--busy" : ""}`}
-          role="group"
+        <ToggleButtonGroup
+          exclusive
+          size="small"
+          value={mode}
+          disabled={busy}
+          onChange={(_, v: IncomingLineMode | null) => {
+            if (v) void switchMode(v);
+          }}
           aria-label="Mode prise d'appel"
-          title={modeLabel}
+          sx={{ mr: 1 }}
         >
-          <button
-            type="button"
-            className={`vg-line-mode-btn ${mode === "voicemail" ? "vg-line-mode-btn--active" : ""}`}
-            disabled={busy}
-            aria-pressed={mode === "voicemail"}
-            onClick={() => void switchMode("voicemail")}
-          >
-            <span className="material-icons" aria-hidden>
-              voicemail
-            </span>
-            <span className="vg-line-mode-text">Répondeur</span>
-          </button>
-          <button
-            type="button"
-            className={`vg-line-mode-btn ${mode === "phone" ? "vg-line-mode-btn--active" : ""}`}
-            disabled={busy}
-            aria-pressed={mode === "phone"}
-            onClick={() => void switchMode("phone")}
-          >
-            <span className="material-icons" aria-hidden>
-              phone_in_talk
-            </span>
-            <span className="vg-line-mode-text">Téléphone</span>
-          </button>
-        </div>
+          <ToggleButton value="voicemail" aria-label="Repondeur">
+            <VoicemailIcon fontSize="small" sx={{ mr: { xs: 0, sm: 0.5 } }} />
+            <Typography
+              component="span"
+              variant="button"
+              sx={{ display: { xs: "none", sm: "inline" }, fontSize: "0.75rem" }}
+            >
+              Repondeur
+            </Typography>
+          </ToggleButton>
+          <ToggleButton value="phone" aria-label="Telephone">
+            <PhoneInTalkIcon fontSize="small" sx={{ mr: { xs: 0, sm: 0.5 } }} />
+            <Typography
+              component="span"
+              variant="button"
+              sx={{ display: { xs: "none", sm: "inline" }, fontSize: "0.75rem" }}
+            >
+              Telephone
+            </Typography>
+          </ToggleButton>
+        </ToggleButtonGroup>
 
         <div className="vg-topbar-title">{title}</div>
       </div>
 
       <div className="vg-topbar-right">
         {error ? <span className="vg-topbar-mode-error">{error}</span> : null}
-        <div
-          className={`vg-modem-pill ${
-            !tel
-              ? "vg-modem-pill--pending"
-              : modemOk
-                ? "vg-modem-pill--ok"
-                : "vg-modem-pill--ko"
-          }`}
-          title={modemTitle}
-          aria-label={modemLabel}
-        >
-          <span
-            className={`vg-modem-pill-dot ${modemOk ? "vg-modem-pill-dot--ok" : "vg-modem-pill-dot--ko"}`}
-            aria-hidden
+        <Tooltip title={modemTitle}>
+          <Chip
+            size="small"
+            label={modemLabel}
+            color={modemOk ? "success" : "error"}
+            variant="outlined"
+            sx={{ mr: 1 }}
           />
-          <span className="vg-modem-pill-text">{modemLabel}</span>
-        </div>
-        <div className="vg-topbar-status" title={modeLabel}>
-          <span className="material-icons vg-topbar-status-icon">
-            {mode === "voicemail" ? "ring_volume" : "phone"}
-          </span>
-          <span className="vg-topbar-status-text">
-            {mode === "voicemail" ? "Répondeur actif" : "Fixe actif"}
-          </span>
-        </div>
+        </Tooltip>
+        <Stack
+          direction="row"
+          spacing={0.5}
+          className="vg-topbar-status"
+          title={modeLabel}
+          sx={{ alignItems: "center" }}
+        >
+          {mode === "voicemail" ? (
+            <RingVolumeIcon fontSize="small" color="primary" />
+          ) : (
+            <PhoneIcon fontSize="small" color="primary" />
+          )}
+          <Typography
+            variant="caption"
+            className="vg-topbar-status-text"
+            sx={{ display: { xs: "none", md: "inline" } }}
+          >
+            {mode === "voicemail" ? "Repondeur actif" : "Fixe actif"}
+          </Typography>
+        </Stack>
       </div>
     </header>
   );

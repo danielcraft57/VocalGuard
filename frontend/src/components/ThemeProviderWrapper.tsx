@@ -1,12 +1,34 @@
 "use client";
 
 import React from "react";
-import { ThemeProvider } from "../contexts/ThemeContext";
+import { CssBaseline, ThemeProvider as MuiThemeProvider } from "@mui/material";
+import { ThemeProvider, useTheme } from "../contexts/ThemeContext";
+import { createVocalGuardTheme } from "../theme/vocalguardTheme";
 
 /**
- * Wrapper client qui fournit le theme a toute l'app.
- * Utilise dans le layout racine pour que le choix Dark/Clair persiste a la navigation.
+ * Applique le theme MUI synchronise avec le mode dark/light VocalGuard.
+ */
+function MuiBridge({ children }: { children: React.ReactNode }) {
+  const { isDark } = useTheme();
+  const theme = React.useMemo(
+    () => createVocalGuardTheme(isDark ? "dark" : "light"),
+    [isDark]
+  );
+  return (
+    <MuiThemeProvider theme={theme}>
+      <CssBaseline enableColorScheme />
+      {children}
+    </MuiThemeProvider>
+  );
+}
+
+/**
+ * Wrapper client : theme CSS VocalGuard + Material UI.
  */
 export function ThemeProviderWrapper({ children }: { children: React.ReactNode }) {
-  return <ThemeProvider>{children}</ThemeProvider>;
+  return (
+    <ThemeProvider>
+      <MuiBridge>{children}</MuiBridge>
+    </ThemeProvider>
+  );
 }

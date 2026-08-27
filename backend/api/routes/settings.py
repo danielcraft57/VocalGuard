@@ -11,8 +11,19 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 
 from backend.api.dependencies import get_config
-from backend.api.models import IncomingLineModeUpdate, SettingsResponse, TelephonyStatusResponse
+from backend.api.models import (
+    IncomingCallConfigPatch,
+    IncomingCallConfigResponse,
+    IncomingLineModeUpdate,
+    SettingsResponse,
+    TelephonyStatusResponse,
+)
 from backend.core.config import Config
+from backend.core.incoming_call_settings import (
+    apply_incoming_call_settings,
+    load_incoming_call_settings,
+    patch_incoming_call_settings,
+)
 from backend.core.incoming_line_mode import (
     apply_incoming_line_mode,
     load_incoming_line_mode,
@@ -114,9 +125,114 @@ def _apply_live(request: Request, config: Config, mode: str) -> SettingsResponse
             apply_incoming_line_mode(cm.config, applied)  # type: ignore[arg-type]
     if cm is not None and hasattr(cm, "_refresh_instant_ring_seize"):
         cm._refresh_instant_ring_seize()
+    _reload_call_manager_policy(request, config)
     save_incoming_line_mode(config)
     logger.info("Mode ligne entrante bascule: {}", applied)
     return _settings_payload(config)
+
+
+def _incoming_call_payload(config: Config) -> IncomingCallConfigResponse:
+    """
+    Construit la config appels entrants effective pour le frontend.
+
+    @param config Configuration live.
+    @returns Payload API complet.
+    """
+    settings = load_incoming_call_settings(config)
+    return IncomingCallConfigResponse(
+        incoming_line_mode=resolve_incoming_line_mode(config),
+        cid_wait_sec=float(settings.cid_wait_sec),
+        instant_seize_cid_grace_sec=float(settings.instant_seize_cid_grace_sec),
+        ring_cycle_sec=float(settings.ring_cycle_sec),
+        ring_quiet_abort_sec=float(settings.ring_quiet_abort_sec),
+        max_incoming_wait_sec=float(settings.max_incoming_wait_sec),
+        phone_mode_rings=int(settings.phone_mode_rings),
+        whitelist_ring_only=bool(settings.whitelist_ring_only),
+        whitelist_match=settings.whitelist_match,
+        screened_when_unknown=bool(settings.screened_when_unknown),
+        active_preset=settings.active_preset,
+        presets={k: v.model_dump() for k, v in (settings.presets or {}).items()},
+        profiles={k: v.model_dump() for k, v in (settings.profiles or {}).items()},
+        profile_overrides={
+            k: v.model_dump() for k, v in (settings.profile_overrides or {}).items()
+        },
+        audio=settings.audio.model_dump(),
+        voicemail=settings.voicemail.model_dump(),
+        number_patterns=settings.number_patterns.model_dump(),
+        advanced=settings.advanced.model_dump(),
+        rings_before_answer=int(config.rings_before_answer),
+        incoming_auto_answer=bool(getattr(config, "incoming_auto_answer", True)),
+    )
+
+
+def _reload_call_manager_policy(request: Request, config: Config) -> None:
+    """
+    Recharge policy + instant_ring_seize sur le CallManager local.
+
+    @param request Requete FastAPI.
+    @param config Configuration.
+    """
+    cm = getattr(request.app.state, "call_manager", None)
+    if cm is None:
+        return
+    if hasattr(cm, "reload_incoming_policy"):
+        cm.reload_incoming_policy()
+    elif hasattr(cm, "_refresh_instant_ring_seize"):
+        cm._refresh_instant_ring_seize()
+    if getattr(cm, "config", None) is not None and cm.config is not config:
+        apply_incoming_call_settings(cm.config, load_incoming_call_settings(config))
+
+
+@router.get("/settings/incoming-call", response_model=IncomingCallConfigResponse)
+async def get_incoming_call_settings(
+    request: Request,
+    config: Config = Depends(get_config),
+) -> IncomingCallConfigResponse:
+    """
+    Retourne la configuration effective des appels entrants (presets, profils, audio).
+    """
+    if _should_proxy_settings_to_daemon(config, request):
+        data = await _proxy_settings_json(
+            request, config, "GET", "/api/v1/settings/incoming-call"
+        )
+        return IncomingCallConfigResponse(**data)
+    load_incoming_line_mode(config)
+    return _incoming_call_payload(config)
+
+
+@router.put("/settings/incoming-call", response_model=IncomingCallConfigResponse)
+async def put_incoming_call_settings(
+    body: IncomingCallConfigPatch,
+    request: Request,
+    config: Config = Depends(get_config),
+) -> IncomingCallConfigResponse:
+    """
+    Met a jour partiellement la configuration appels entrants (merge profond).
+    """
+    patch = body.model_dump(exclude_none=True)
+    if not patch:
+        if _should_proxy_settings_to_daemon(config, request):
+            data = await _proxy_settings_json(
+                request, config, "GET", "/api/v1/settings/incoming-call"
+            )
+            return IncomingCallConfigResponse(**data)
+        return _incoming_call_payload(config)
+
+    if _should_proxy_settings_to_daemon(config, request):
+        data = await _proxy_settings_json(
+            request,
+            config,
+            "PUT",
+            "/api/v1/settings/incoming-call",
+            patch,
+        )
+        patch_incoming_call_settings(config, patch)
+        return IncomingCallConfigResponse(**data)
+
+    patch_incoming_call_settings(config, patch)
+    _reload_call_manager_policy(request, config)
+    logger.info("incoming_call settings mis a jour: {}", list(patch.keys()))
+    return _incoming_call_payload(config)
 
 
 @router.get("/settings", response_model=SettingsResponse)

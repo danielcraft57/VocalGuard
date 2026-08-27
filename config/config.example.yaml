@@ -99,3 +99,17 @@ voicemail_greeting: >-
 voicemail_max_duration: 60  # secondes
 voicemail_silence_timeout_sec: 5
 
+# Configuration avancee appels entrants (voir aussi data/incoming_call_settings.yaml)
+# Editable via API PUT /api/v1/settings/incoming-call et UI /settings
+# incoming_call:
+#   ring_cycle_sec: 6.0
+#   ring_quiet_abort_sec: 6.0
+#   screened_when_unknown: true
+#   presets:
+#     voicemail:
+#       label: Repondeur
+#       screened_actions: [answer, greeting, record]
+#     phone:
+#       label: Telephone
+#       screened_actions: [ignore]
+

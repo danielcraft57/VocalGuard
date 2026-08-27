@@ -18,6 +18,8 @@ from backend.core.modem_handler import ModemHandler
 from backend.core.events import Event, EventType, event_bus
 from backend.core.phone_cid import classify_cid_outcome, normalize_cid_value
 from backend.core.incoming_line_schedule import apply_schedule_to_auto_answer
+from backend.core.incoming_call_policy import IncomingCallPolicy
+from backend.core.incoming_call_settings import load_incoming_call_settings, apply_incoming_call_settings
 from backend.voice.recognition import VoiceRecognition
 from backend.voice.synthesis import VoiceSynthesis
 from backend.voice.ivr_patterns import IvrPatternsEngine
@@ -182,6 +184,7 @@ class CallManager:
         self._alsa_record = os.environ.get("ALSA_MODEM_RECORD_DEVICE") or self._alsa_play
         self._ivr_wav_dir: Optional[Path] = None
         self._ivr_cache = IvrAudioCache(config, self.voice_synthesis)
+        self.incoming_policy = IncomingCallPolicy(config)
         
         # Enregistrer les handlers d'événements
         self._setup_event_handlers()
@@ -344,6 +347,18 @@ class CallManager:
             auto,
             rings,
         )
+
+    def reload_incoming_policy(self) -> None:
+        """
+        Recharge incoming_call_settings + policy apres PATCH API settings.
+
+        Reapplique aussi instant_ring_seize sur le modem.
+        """
+        settings = load_incoming_call_settings(self.config)
+        apply_incoming_call_settings(self.config, settings)
+        if hasattr(self, "incoming_policy"):
+            self.incoming_policy.reload()
+        self._refresh_instant_ring_seize()
 
     def _arm_call_deadline(self) -> None:
         """Pose une deadline wall-clock pour max_call_duration."""

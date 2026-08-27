@@ -592,6 +592,52 @@ class IncomingLineModeUpdate(BaseModel):
     )
 
 
+class IncomingCallConfigResponse(BaseModel):
+    """Configuration complete des appels entrants (effective + presets)."""
+
+    incoming_line_mode: Literal["voicemail", "phone"] = "voicemail"
+    cid_wait_sec: float = 2.5
+    instant_seize_cid_grace_sec: float = 0.35
+    ring_cycle_sec: float = 6.0
+    ring_quiet_abort_sec: float = 6.0
+    max_incoming_wait_sec: float = 45.0
+    phone_mode_rings: int = 4
+    whitelist_ring_only: bool = False
+    whitelist_match: Literal["exact", "prefix", "e164_normalize"] = "exact"
+    screened_when_unknown: bool = True
+    active_preset: Literal["voicemail", "phone"] = "voicemail"
+    presets: Dict[str, Any] = Field(default_factory=dict)
+    profiles: Dict[str, Any] = Field(default_factory=dict)
+    profile_overrides: Dict[str, Any] = Field(default_factory=dict)
+    audio: Dict[str, Any] = Field(default_factory=dict)
+    voicemail: Dict[str, Any] = Field(default_factory=dict)
+    number_patterns: Dict[str, Any] = Field(default_factory=dict)
+    advanced: Dict[str, Any] = Field(default_factory=dict)
+    rings_before_answer: int = 0
+    incoming_auto_answer: bool = True
+
+
+class IncomingCallConfigPatch(BaseModel):
+    """Patch partiel de la configuration appels entrants."""
+
+    cid_wait_sec: Optional[float] = Field(None, ge=0.0, le=30.0)
+    instant_seize_cid_grace_sec: Optional[float] = Field(None, ge=0.0, le=5.0)
+    ring_cycle_sec: Optional[float] = Field(None, ge=3.0, le=15.0)
+    ring_quiet_abort_sec: Optional[float] = Field(None, ge=2.0, le=20.0)
+    max_incoming_wait_sec: Optional[float] = Field(None, ge=10.0, le=120.0)
+    phone_mode_rings: Optional[int] = Field(None, ge=0, le=20)
+    whitelist_ring_only: Optional[bool] = None
+    whitelist_match: Optional[Literal["exact", "prefix", "e164_normalize"]] = None
+    screened_when_unknown: Optional[bool] = None
+    presets: Optional[Dict[str, Any]] = None
+    profiles: Optional[Dict[str, Any]] = None
+    profile_overrides: Optional[Dict[str, Any]] = None
+    audio: Optional[Dict[str, Any]] = None
+    voicemail: Optional[Dict[str, Any]] = None
+    number_patterns: Optional[Dict[str, Any]] = None
+    advanced: Optional[Dict[str, Any]] = None
+
+
 class MobileClaimRequest(BaseModel):
     """Echange d'un code QR d'appairage mobile contre un token API."""
 
