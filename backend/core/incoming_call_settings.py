@@ -127,6 +127,8 @@ def apply_incoming_call_settings(config: Config, settings: IncomingCallSettingsD
   config.instant_seize_cid_grace_sec = float(settings.instant_seize_cid_grace_sec)
   config.phone_mode_rings = int(settings.phone_mode_rings)
   config.whitelist_ring_only = bool(settings.whitelist_ring_only)
+  if settings.audio and settings.audio.edge_tts_rate:
+    config.edge_tts_rate = str(settings.audio.edge_tts_rate)
   if hasattr(config, "incoming_call_settings"):
     config.incoming_call_settings = settings  # type: ignore[attr-defined]
 

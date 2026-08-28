@@ -20,6 +20,14 @@ from backend.core.events import Event, EventType, event_bus
 from backend.core.phone_cid import classify_cid_outcome, normalize_cid_value
 from backend.core.incoming_line_schedule import apply_schedule_to_auto_answer
 from backend.core.incoming_call_policy import IncomingCallPolicy
+from backend.core.incoming_call_audio import (
+    blocked_message_text,
+    ensure_default_voice_assets,
+    greeting_text,
+    pick_wav_or_none,
+    resolve_resource_path,
+    beep_wav_path,
+)
 from backend.core.incoming_call_settings import (
     load_incoming_call_settings,
     apply_incoming_call_settings,
@@ -270,6 +278,7 @@ class CallManager:
             self._voice_available = False
 
         if self._voice_available:
+            ensure_default_voice_assets(self.config)
             await self._warmup_ivr_cache()
 
         logger.info(
@@ -279,8 +288,16 @@ class CallManager:
         )
 
     def _greeting_text(self) -> str:
+        if hasattr(self, "incoming_policy"):
+            return greeting_text(self.config, self.incoming_policy.settings)
         greeting = (self.config.voicemail_greeting or "").strip()
         return greeting or DEFAULT_VOICEMAIL_GREETING
+
+    def _audio_settings(self):
+        """Bloc audio incoming_call (ou defauts)."""
+        if hasattr(self, "incoming_policy"):
+            return self.incoming_policy.settings.audio
+        return load_incoming_call_settings(self.config).audio
 
     def _ivr_basename_for_text(self, text: str) -> Optional[str]:
         normalized = text.strip()
@@ -759,8 +776,17 @@ class CallManager:
                 ok, _cid, _cname = await self.modem.answer_call()
                 if not ok:
                     logger.warning("Impossible de decrocher pour message bloque")
-            await self._play_on_line(
-                "Désolé, cet appel a été bloqué.",
+            settings = (
+                self.incoming_policy.settings
+                if hasattr(self, "incoming_policy")
+                else load_incoming_call_settings(self.config)
+            )
+            audio = settings.audio
+            await self._play_configured_message(
+                source=audio.blocked_source,
+                wav_path=audio.blocked_wav_path,
+                tts_text=blocked_message_text(settings),
+                fallback_text="Desole, cet appel a ete bloque.",
                 already_in_voice_mode=self._use_modem_voice_serial() and skip_answer,
             )
             await self.modem.hangup()
@@ -801,11 +827,26 @@ class CallManager:
                 )
 
             greeting = self._greeting_text()
-            played = await self._play_on_line(greeting, already_in_voice_mode=True, recorder=None)
+            audio = self._audio_settings()
+            played = await self._play_configured_message(
+                source=audio.greeting_source,
+                wav_path=audio.greeting_wav_path,
+                tts_text=greeting,
+                fallback_text=greeting,
+                already_in_voice_mode=True,
+                recorder=None,
+            )
             if not played and skip_modem_answer:
                 logger.warning("Accueil echoue apres seize — reprise ligne voix puis nouvel essai")
                 await self.modem.prepare_voice_line_after_seize()
-                played = await self._play_on_line(greeting, already_in_voice_mode=True, recorder=None)
+                played = await self._play_configured_message(
+                    source=audio.greeting_source,
+                    wav_path=audio.greeting_wav_path,
+                    tts_text=greeting,
+                    fallback_text=greeting,
+                    already_in_voice_mode=True,
+                    recorder=None,
+                )
             # Call screening : si le fixe a pris pendant l'accueil, on coupe et on laisse la ligne.
             if getattr(self.modem, "_playback_interrupted", False) or played is False:
                 logger.info("Accueil interrompu (tel parallele / hangup) — fin sans repondeur")
@@ -952,31 +993,27 @@ class CallManager:
 
     async def _play_beep_on_line(self, recorder: Optional[_IncomingLineRecorder] = None) -> bool:
         """
-        Joue un bip court sur la ligne (WAV 8 kHz généré localement).
+        Joue un bip court sur la ligne (WAV configure ou genere).
 
-        @param recorder Enregistreur entrant à mettre en pause pendant le bip.
-        @returns True si la lecture a réussi.
+        @param recorder Enregistreur entrant a mettre en pause pendant le bip.
+        @returns True si la lecture a reussi.
         """
         if not self.modem.is_initialized:
             return False
-        ivr_dir = self._ensure_ivr_wav_dir()
-        beep_path = ivr_dir / "voicemail_beep.wav"
-        write_beep_wav_8k(beep_path)
-        rec = recorder or self._incoming_recorder
-        if rec:
-            await rec.pause()
-        try:
-            if self._use_modem_voice_serial():
-                return await self.modem.play_wav_via_serial(beep_path, already_in_voice_mode=True)
-            proc = await asyncio.create_subprocess_exec(
-                "aplay", "-D", self._alsa_play, "-q", str(beep_path),
-                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
-            )
-            await proc.communicate()
-            return proc.returncode == 0
-        finally:
-            if rec:
-                await rec.resume(already_in_voice_mode=True)
+        audio = self._audio_settings()
+        if audio.record_beep == "none":
+            return True
+        if audio.record_beep == "dtmf":
+            return await self.modem.send_dtmf("1")
+        configured = beep_wav_path(self.config, audio)
+        beep_path = configured or (self._ensure_ivr_wav_dir() / "voicemail_beep.wav")
+        if not beep_path.is_file():
+            write_beep_wav_8k(beep_path)
+        return await self._play_wav_file_on_line(
+            beep_path,
+            already_in_voice_mode=True,
+            recorder=recorder,
+        )
 
     async def _handle_voice_interaction(self, recorder: Optional[_IncomingLineRecorder] = None):
         """Gère l'interaction vocale avec l'appelant"""
@@ -1116,6 +1153,86 @@ class CallManager:
         # 3) Fallback: réponse par défaut
         return "Je n'ai pas bien compris. Voulez-vous laisser un message?"
     
+    async def _play_wav_file_on_line(
+        self,
+        wav_path: Path,
+        *,
+        already_in_voice_mode: bool = False,
+        recorder: Optional[_IncomingLineRecorder] = None,
+    ) -> bool:
+        """
+        Joue un fichier WAV 8 kHz sur la ligne.
+
+        @param wav_path Fichier WAV.
+        @param already_in_voice_mode Deja en mode voix modem.
+        @param recorder Enregistreur a pauser.
+        @returns True si lecture OK.
+        """
+        if not self.modem.is_initialized or not wav_path.is_file():
+            return False
+        rec = recorder or self._incoming_recorder
+        if rec:
+            await rec.pause()
+        try:
+            if self._use_modem_voice_serial():
+                return await self.modem.play_wav_via_serial(
+                    wav_path, already_in_voice_mode=already_in_voice_mode
+                )
+            proc = await asyncio.create_subprocess_exec(
+                "aplay",
+                "-D",
+                self._alsa_play,
+                "-q",
+                str(wav_path),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+            return proc.returncode == 0
+        finally:
+            if rec:
+                await rec.resume(already_in_voice_mode=True)
+
+    async def _play_configured_message(
+        self,
+        *,
+        source: str,
+        wav_path: Optional[str],
+        tts_text: Optional[str],
+        fallback_text: str,
+        already_in_voice_mode: bool = False,
+        recorder: Optional[_IncomingLineRecorder] = None,
+    ) -> bool:
+        """
+        Joue un message configure (WAV statique ou TTS).
+
+        @param source ``wav`` ou ``tts``.
+        @param wav_path Chemin WAV relatif.
+        @param tts_text Texte si TTS.
+        @param fallback_text Texte de secours.
+        @returns True si lecture OK.
+        """
+        audio = self._audio_settings()
+        if source == "wav":
+            resolved = pick_wav_or_none(self.config, audio, source="wav", wav_path=wav_path)
+            if resolved:
+                ok = await self._play_wav_file_on_line(
+                    resolved,
+                    already_in_voice_mode=already_in_voice_mode,
+                    recorder=recorder,
+                )
+                if ok:
+                    return True
+                logger.warning("Lecture WAV echouee: {} — fallback TTS", resolved)
+        text = (tts_text or fallback_text or "").strip()
+        if not text:
+            return False
+        return await self._play_on_line(
+            text,
+            already_in_voice_mode=already_in_voice_mode,
+            recorder=recorder,
+        )
+
     async def _play_on_line(
         self,
         text: str,

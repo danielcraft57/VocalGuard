@@ -52,7 +52,7 @@ const TILES: HubTile[] = [
     title: "Messages et audio",
     description: "Accueil TTS ou WAV, message bloque, bip",
     icon: <RecordVoiceOverIcon color="primary" />,
-    ready: false
+    ready: true
   },
   {
     href: "/settings/voicemail",
