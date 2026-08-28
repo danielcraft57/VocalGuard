@@ -201,7 +201,7 @@ class IncomingCallPolicy:
   def remember_decision(self, decision: CallDecision) -> None:
     """Memorise la derniere decision (health UI)."""
     self._last_summary = (
-        f"{decision.profile}:{decision.source}:"
-        f"rings={decision.rings_before_answer}:"
+        f"{decision.profile} | {decision.source} | "
+        f"rings={decision.rings_before_answer} | "
         f"ignore={decision.should_ignore}"
     )

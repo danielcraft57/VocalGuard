@@ -8,7 +8,8 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   Tooltip,
-  Typography
+  Typography,
+  Box
 } from "@mui/material";
 import MenuIcon from "@mui/icons-material/Menu";
 import PhoneIcon from "@mui/icons-material/Phone";
@@ -22,6 +23,8 @@ import {
   type IncomingLineMode,
   type TelephonyStatus
 } from "../services/settingsApi";
+import { VgProfileChip } from "./mui/VgProfileChip";
+import { parseIncomingDecision } from "../utils/incomingDecision";
 
 export interface TopbarProps {
   /** Titre de la page courante. */
@@ -117,11 +120,14 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
         tel.modem_port ? `port=${tel.modem_port}` : null,
         tel.firmware_ati3 ? `fw=${tel.firmware_ati3}` : null,
         tel.last_cid_raw ? `cid=${tel.last_cid_raw}` : null,
+        tel.last_incoming_decision ? `decision=${tel.last_incoming_decision}` : null,
         tel.last_error ? `err=${tel.last_error}` : null
       ]
         .filter(Boolean)
         .join(" | ")
     : "Chargement etat telephonie";
+
+  const lastDecision = parseIncomingDecision(tel?.last_incoming_decision);
 
   return (
     <header className="vg-topbar">
@@ -184,6 +190,13 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
             sx={{ mr: 1 }}
           />
         </Tooltip>
+        {lastDecision ? (
+          <Tooltip title={tel?.last_incoming_decision || lastDecision.label}>
+            <Box component="span" sx={{ mr: 1, display: "inline-flex" }}>
+              <VgProfileChip profile={lastDecision.profile} />
+            </Box>
+          </Tooltip>
+        ) : null}
         <Stack
           direction="row"
           spacing={0.5}

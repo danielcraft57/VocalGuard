@@ -336,6 +336,7 @@ async def get_telephony_status(
                 in_call=bool(data.get("in_call")),
                 relay_failures=int(data.get("relay_failures") or 0),
                 daemon_reachable=True,
+                last_incoming_decision=data.get("last_incoming_decision"),
             )
         except Exception as exc:
             logger.warning("telephony status: daemon injoignable: {}", exc)

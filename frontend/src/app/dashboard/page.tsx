@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { AppLayout } from "../../components/AppLayout";
 import { DashboardCharts } from "../../components/DashboardCharts";
+import { VgTelephonyStatusStrip } from "../../components/mui/VgTelephonyStatusStrip";
 import { fetchDashboardStats, DashboardStats } from "../../services/dashboardStatsApi";
 
 /**
@@ -70,6 +71,7 @@ export default function DashboardPage() {
       title="Dashboard"
       subtitle="Vue d'ensemble des appels, RDV et devis VocalGuard."
     >
+      <VgTelephonyStatusStrip />
       {error ? (
         <div className="vg-card">
           <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>

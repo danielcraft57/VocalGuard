@@ -109,6 +109,8 @@ def create_telephony_app(config: Config) -> FastAPI:
             payload.update(cm.modem.health_snapshot())
             payload["in_call"] = bool(cm.current_call_id)
             payload["current_call_id"] = cm.current_call_id
+            if hasattr(cm, "incoming_policy"):
+                payload["last_incoming_decision"] = cm.incoming_policy.last_decision_summary
         relay = getattr(app.state, "event_relay", None) or get_wired_relay()
         if relay is not None:
             payload.update(relay.health_fields())
