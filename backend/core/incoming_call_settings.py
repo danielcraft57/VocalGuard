@@ -16,6 +16,8 @@ from backend.core.incoming_call_types import (
     IncomingCallPresetConfig,
     IncomingCallSettingsData,
     IncomingLineMode,
+    IncomingNumberPatternRule,
+    IncomingNumberPatternsConfig,
     IncomingProfileConfig,
     IncomingProfileName,
     ResolvedProfileDecision,
@@ -58,13 +60,43 @@ def settings_path(config: Config) -> Path:
   return (base / "data" / "incoming_call_settings.yaml").resolve()
 
 
+def _default_number_patterns() -> IncomingNumberPatternsConfig:
+  """Regles patterns FR par defaut (desactivees jusqu'a activation UI)."""
+  return IncomingNumberPatternsConfig(
+      enabled=False,
+      rules=[
+          IncomingNumberPatternRule(
+              pattern="+338%",
+              action="blocked",
+              reason="Numero surtaxe",
+              enabled=True,
+          ),
+          IncomingNumberPatternRule(
+              pattern="P",
+              action="blocked",
+              reason="Appel masque",
+              enabled=True,
+          ),
+          IncomingNumberPatternRule(
+              pattern="O",
+              action="screened",
+              reason="CID operateur inconnu",
+              enabled=True,
+          ),
+      ],
+  )
+
+
 def default_settings_data() -> IncomingCallSettingsData:
   """
   Configuration par defaut (presets inclus).
 
   @returns Modele Pydantic initialise.
   """
-  return IncomingCallSettingsData(presets=_default_presets())
+  return IncomingCallSettingsData(
+      presets=_default_presets(),
+      number_patterns=_default_number_patterns(),
+  )
 
 
 def _deep_merge_dict(base: Dict[str, Any], patch: Dict[str, Any]) -> Dict[str, Any]:

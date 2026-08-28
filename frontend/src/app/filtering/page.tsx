@@ -1,7 +1,30 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import {
+  Alert,
+  Box,
+  Button,
+  CircularProgress,
+  IconButton,
+  Stack,
+  Tab,
+  Tabs,
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableRow,
+  TextField,
+  Typography
+} from "@mui/material";
+import DeleteIcon from "@mui/icons-material/Delete";
+import PatternIcon from "@mui/icons-material/Pattern";
 import { AppLayout } from "../../components/AppLayout";
+import { VgPageHeader } from "../../components/mui/VgPageHeader";
+import { VgProfileChip } from "../../components/mui/VgProfileChip";
+import { VgSettingsSection } from "../../components/mui/VgSettingsSection";
 import {
   fetchWhitelist,
   fetchBlocklist,
@@ -9,35 +32,41 @@ import {
   addToBlocklist,
   removeFromWhitelist,
   removeFromBlocklist,
-  Caller,
+  type Caller
 } from "../../services/callersFilterApi";
 import {
   fetchBlockRules,
   createBlockRule,
   deleteBlockRule,
-  BlockRule,
+  type BlockRule
 } from "../../services/blockRulesApi";
 
+type TabKey = "whitelist" | "blocklist" | "rules";
+
 /**
- * Page Filtrage d'appels : liste blanche, liste noire, regles de blocage.
- * Inspire de l'interface callattendant (Permitted / Blocked / patterns).
+ * Filtrage Material : listes blanche/noire et regles DB (motifs legacy).
  */
 export default function FilteringPage() {
+  const [tab, setTab] = useState<TabKey>("whitelist");
   const [whitelist, setWhitelist] = useState<Caller[]>([]);
   const [blocklist, setBlocklist] = useState<Caller[]>([]);
   const [rules, setRules] = useState<BlockRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState<string | null>(null);
+
+  const [whitelistPhone, setWhitelistPhone] = useState("");
+  const [whitelistName, setWhitelistName] = useState("");
+  const [blocklistPhone, setBlocklistPhone] = useState("");
+  const [blocklistNotes, setBlocklistNotes] = useState("");
+  const [ruleName, setRuleName] = useState("");
+  const [rulePattern, setRulePattern] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [w, b, r] = await Promise.all([
-        fetchWhitelist(),
-        fetchBlocklist(),
-        fetchBlockRules(),
-      ]);
+      const [w, b, r] = await Promise.all([fetchWhitelist(), fetchBlocklist(), fetchBlockRules()]);
       setWhitelist(w);
       setBlocklist(b);
       setRules(r);
@@ -49,17 +78,8 @@ export default function FilteringPage() {
   }, []);
 
   useEffect(() => {
-    load();
+    void load();
   }, [load]);
-
-  const [whitelistPhone, setWhitelistPhone] = useState("");
-  const [whitelistName, setWhitelistName] = useState("");
-  const [blocklistPhone, setBlocklistPhone] = useState("");
-  const [blocklistNotes, setBlocklistNotes] = useState("");
-  const [ruleName, setRuleName] = useState("");
-  const [rulePattern, setRulePattern] = useState("");
-  const [ruleType, setRuleType] = useState<"exact" | "prefix" | "regex">("prefix");
-  const [submitting, setSubmitting] = useState<string | null>(null);
 
   const handleAddWhitelist = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,18 +90,6 @@ export default function FilteringPage() {
       await addToWhitelist(phone, whitelistName.trim() || null, null);
       setWhitelistPhone("");
       setWhitelistName("");
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur");
-    } finally {
-      setSubmitting(null);
-    }
-  };
-
-  const handleRemoveWhitelist = async (id: number) => {
-    setSubmitting(`w-${id}`);
-    try {
-      await removeFromWhitelist(id);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur");
@@ -107,26 +115,12 @@ export default function FilteringPage() {
     }
   };
 
-  const handleRemoveBlocklist = async (id: number) => {
-    setSubmitting(`b-${id}`);
-    try {
-      await removeFromBlocklist(id);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur");
-    } finally {
-      setSubmitting(null);
-    }
-  };
-
   const handleAddRule = async (e: React.FormEvent) => {
     e.preventDefault();
-    const name = ruleName.trim();
-    const pattern = rulePattern.trim();
-    if (!name || !pattern) return;
+    if (!ruleName.trim() || !rulePattern.trim()) return;
     setSubmitting("rule");
     try {
-      await createBlockRule(name, pattern, ruleType);
+      await createBlockRule(ruleName.trim(), rulePattern.trim(), "prefix");
       setRuleName("");
       setRulePattern("");
       await load();
@@ -137,224 +131,194 @@ export default function FilteringPage() {
     }
   };
 
-  const handleDeleteRule = async (id: number) => {
-    setSubmitting(`r-${id}`);
-    try {
-      await deleteBlockRule(id);
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur");
-    } finally {
-      setSubmitting(null);
-    }
-  };
-
   return (
-    <AppLayout
-      title="Filtrage d'appels"
-      subtitle="Liste blanche (autorisés), liste noire (bloqués) et règles par motif. Inspiré de callattendant."
-    >
+    <AppLayout title="Filtrage d'appels" hidePageHeader>
+      <VgPageHeader
+        title="Filtrage d'appels"
+        subtitle="Listes par numero et regles DB. Patterns globaux : parametres."
+        action={
+          <Button
+            component={Link}
+            href="/settings/number-patterns"
+            size="small"
+            startIcon={<PatternIcon />}
+            variant="outlined"
+          >
+            Patterns policy
+          </Button>
+        }
+      />
+
       {error ? (
-        <div className="vg-card" style={{ marginBottom: "1rem" }}>
-          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem", color: "#ef4444" }}>
-            <span className="material-icons" style={{ fontSize: "18px" }}>error_outline</span>
-            {error}
-          </div>
-          <button type="button" onClick={() => setError(null)} style={{ marginTop: "0.5rem", fontSize: "0.85rem" }}>
-            Fermer
-          </button>
-        </div>
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
       ) : null}
 
+      <Tabs value={tab} onChange={(_, v: TabKey) => setTab(v)} sx={{ mb: 2 }}>
+        <Tab
+          value="whitelist"
+          label={
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+              <VgProfileChip profile="permitted" />
+              <span>Liste blanche</span>
+            </Stack>
+          }
+        />
+        <Tab
+          value="blocklist"
+          label={
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+              <VgProfileChip profile="blocked" />
+              <span>Liste noire</span>
+            </Stack>
+          }
+        />
+        <Tab value="rules" label="Regles DB (prefixe)" />
+      </Tabs>
+
       {loading ? (
-        <div className="vg-card">
-          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-            <span className="material-icons" style={{ color: "#22c55e", fontSize: "18px" }}>hourglass_empty</span>
-            Chargement des listes...
-          </div>
-        </div>
+        <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
+          <CircularProgress />
+        </Box>
       ) : (
         <>
-          {/* Liste blanche (Permitted) */}
-          <div className="vg-card" style={{ marginBottom: "1.5rem" }}>
-            <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}>
-              <span className="material-icons" style={{ color: "#22c55e", fontSize: "18px" }}>verified_user</span>
-              Liste blanche (numéros autorisés)
-            </div>
-            <p style={{ fontSize: "0.85rem", color: "var(--vg-color-text-muted)", marginBottom: "0.75rem" }}>
-              Ces numéros ne sont jamais bloqués (priorité sur liste noire et règles).
-            </p>
-            <form onSubmit={handleAddWhitelist} style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginBottom: "1rem" }}>
-              <input
-                type="text"
-                placeholder="Numéro (ex. 0612345678)"
-                value={whitelistPhone}
-                onChange={(e) => setWhitelistPhone(e.target.value)}
-                style={{ padding: "0.4rem 0.6rem", borderRadius: "var(--vg-radius-sm)", border: "1px solid var(--vg-color-border-subtle)", minWidth: "140px" }}
+          {tab === "whitelist" ? (
+            <VgSettingsSection
+              title="Numeros autorises"
+              description="Priorite sur patterns et liste noire. Avec whitelist ring-only, le fixe sonne."
+            >
+              <Stack component="form" onSubmit={handleAddWhitelist} direction="row" spacing={1} sx={{ mb: 2, flexWrap: "wrap" }}>
+                <TextField size="small" label="Numero" value={whitelistPhone} onChange={(e) => setWhitelistPhone(e.target.value)} />
+                <TextField size="small" label="Nom" value={whitelistName} onChange={(e) => setWhitelistName(e.target.value)} />
+                <Button type="submit" variant="contained" disabled={Boolean(submitting)}>
+                  Ajouter
+                </Button>
+              </Stack>
+              <CallerTable
+                rows={whitelist}
+                onRemove={(id) => {
+                  setSubmitting(`w-${id}`);
+                  removeFromWhitelist(id).then(load).catch((err) => setError(String(err))).finally(() => setSubmitting(null));
+                }}
+                submitting={submitting}
               />
-              <input
-                type="text"
-                placeholder="Nom (optionnel)"
-                value={whitelistName}
-                onChange={(e) => setWhitelistName(e.target.value)}
-                style={{ padding: "0.4rem 0.6rem", borderRadius: "var(--vg-radius-sm)", border: "1px solid var(--vg-color-border-subtle)", minWidth: "120px" }}
-              />
-              <button type="submit" disabled={!!submitting} className="vg-btn-primary">
-                {submitting === "whitelist" ? "..." : "Ajouter"}
-              </button>
-            </form>
-            <table className="vg-table">
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Numéro</th>
-                  <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Nom</th>
-                  <th style={{ textAlign: "right", padding: "0.5rem 0.75rem" }}>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {whitelist.length === 0 ? (
-                  <tr><td colSpan={3} style={{ padding: "0.75rem", color: "var(--vg-color-text-muted)" }}>Aucun numéro en liste blanche.</td></tr>
-                ) : (
-                  whitelist.map((c) => (
-                    <tr key={c.id} className="vg-table-row">
-                      <td style={{ padding: "0.5rem 0.75rem" }}>{c.phone_number}</td>
-                      <td style={{ padding: "0.5rem 0.75rem" }}>{c.name ?? "-"}</td>
-                      <td style={{ padding: "0.5rem 0.75rem", textAlign: "right" }}>
-                        <button type="button" onClick={() => handleRemoveWhitelist(c.id)} disabled={!!submitting} className="vg-btn-danger-sm">
-                          Retirer
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+            </VgSettingsSection>
+          ) : null}
 
-          {/* Liste noire (Blocked) */}
-          <div className="vg-card" style={{ marginBottom: "1.5rem" }}>
-            <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}>
-              <span className="material-icons" style={{ color: "#ef4444", fontSize: "18px" }}>block</span>
-              Liste noire (numéros bloqués)
-            </div>
-            <p style={{ fontSize: "0.85rem", color: "var(--vg-color-text-muted)", marginBottom: "0.75rem" }}>
-              Ces numéros sont bloqués à l'arrivée d'un appel (message court puis raccrochage).
-            </p>
-            <form onSubmit={handleAddBlocklist} style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginBottom: "1rem" }}>
-              <input
-                type="text"
-                placeholder="Numéro à bloquer"
-                value={blocklistPhone}
-                onChange={(e) => setBlocklistPhone(e.target.value)}
-                style={{ padding: "0.4rem 0.6rem", borderRadius: "var(--vg-radius-sm)", border: "1px solid var(--vg-color-border-subtle)", minWidth: "140px" }}
+          {tab === "blocklist" ? (
+            <VgSettingsSection title="Numeros bloques" description="Bloques via block_service a l'appel entrant.">
+              <Stack component="form" onSubmit={handleAddBlocklist} direction="row" spacing={1} sx={{ mb: 2, flexWrap: "wrap" }}>
+                <TextField size="small" label="Numero" value={blocklistPhone} onChange={(e) => setBlocklistPhone(e.target.value)} />
+                <TextField size="small" label="Notes" value={blocklistNotes} onChange={(e) => setBlocklistNotes(e.target.value)} />
+                <Button type="submit" variant="contained" color="error" disabled={Boolean(submitting)}>
+                  Bloquer
+                </Button>
+              </Stack>
+              <CallerTable
+                rows={blocklist}
+                onRemove={(id) => {
+                  setSubmitting(`b-${id}`);
+                  removeFromBlocklist(id).then(load).catch((err) => setError(String(err))).finally(() => setSubmitting(null));
+                }}
+                submitting={submitting}
               />
-              <input
-                type="text"
-                placeholder="Raison (optionnel)"
-                value={blocklistNotes}
-                onChange={(e) => setBlocklistNotes(e.target.value)}
-                style={{ padding: "0.4rem 0.6rem", borderRadius: "var(--vg-radius-sm)", border: "1px solid var(--vg-color-border-subtle)", minWidth: "120px" }}
-              />
-              <button type="submit" disabled={!!submitting} className="vg-btn-danger">
-                {submitting === "blocklist" ? "..." : "Bloquer"}
-              </button>
-            </form>
-            <table className="vg-table">
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Numéro</th>
-                  <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Nom / notes</th>
-                  <th style={{ textAlign: "right", padding: "0.5rem 0.75rem" }}>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {blocklist.length === 0 ? (
-                  <tr><td colSpan={3} style={{ padding: "0.75rem", color: "var(--vg-color-text-muted)" }}>Aucun numéro en liste noire.</td></tr>
-                ) : (
-                  blocklist.map((c) => (
-                    <tr key={c.id} className="vg-table-row">
-                      <td style={{ padding: "0.5rem 0.75rem" }}>{c.phone_number}</td>
-                      <td style={{ padding: "0.5rem 0.75rem" }}>{c.name || c.notes || "-"}</td>
-                      <td style={{ padding: "0.5rem 0.75rem", textAlign: "right" }}>
-                        <button type="button" onClick={() => handleRemoveBlocklist(c.id)} disabled={!!submitting} className="vg-btn-success-sm">
-                          Débloquer
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+            </VgSettingsSection>
+          ) : null}
 
-          {/* Règles de blocage (patterns) */}
-          <div className="vg-card">
-            <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem", marginBottom: "0.5rem" }}>
-              <span className="material-icons" style={{ color: "#0ea5e9", fontSize: "18px" }}>rule</span>
-              Règles de blocage (motif)
-            </div>
-            <p style={{ fontSize: "0.85rem", color: "var(--vg-color-text-muted)", marginBottom: "0.75rem" }}>
-              Bloquer par numéro exact, préfixe (ex. 089) ou expression régulière.
-            </p>
-            <form onSubmit={handleAddRule} style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", marginBottom: "1rem" }}>
-              <input
-                type="text"
-                placeholder="Nom de la règle"
-                value={ruleName}
-                onChange={(e) => setRuleName(e.target.value)}
-                style={{ padding: "0.4rem 0.6rem", borderRadius: "var(--vg-radius-sm)", border: "1px solid var(--vg-color-border-subtle)", minWidth: "120px" }}
-              />
-              <input
-                type="text"
-                placeholder="Pattern (ex. 089 ou ^089)"
-                value={rulePattern}
-                onChange={(e) => setRulePattern(e.target.value)}
-                style={{ padding: "0.4rem 0.6rem", borderRadius: "var(--vg-radius-sm)", border: "1px solid var(--vg-color-border-subtle)", minWidth: "120px" }}
-              />
-              <select
-                value={ruleType}
-                onChange={(e) => setRuleType(e.target.value as "exact" | "prefix" | "regex")}
-                style={{ padding: "0.4rem 0.6rem", borderRadius: "var(--vg-radius-sm)", border: "1px solid var(--vg-color-border-subtle)" }}
-              >
-                <option value="exact">Exact</option>
-                <option value="prefix">Préfixe</option>
-                <option value="regex">Regex</option>
-              </select>
-              <button type="submit" disabled={!!submitting} className="vg-btn-primary">
-                {submitting === "rule" ? "..." : "Ajouter la règle"}
-              </button>
-            </form>
-            <table className="vg-table">
-              <thead>
-                <tr>
-                  <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Nom</th>
-                  <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Pattern</th>
-                  <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Type</th>
-                  <th style={{ textAlign: "right", padding: "0.5rem 0.75rem" }}>Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rules.length === 0 ? (
-                  <tr><td colSpan={4} style={{ padding: "0.75rem", color: "var(--vg-color-text-muted)" }}>Aucune règle.</td></tr>
-                ) : (
-                  rules.map((r) => (
-                    <tr key={r.id} className="vg-table-row">
-                      <td style={{ padding: "0.5rem 0.75rem" }}>{r.name}</td>
-                      <td style={{ padding: "0.5rem 0.75rem", fontFamily: "monospace" }}>{r.pattern}</td>
-                      <td style={{ padding: "0.5rem 0.75rem" }}><span className="vg-badge vg-badge-warn">{r.pattern_type}</span></td>
-                      <td style={{ padding: "0.5rem 0.75rem", textAlign: "right" }}>
-                        <button type="button" onClick={() => handleDeleteRule(r.id)} disabled={!!submitting} className="vg-btn-danger-sm">
-                          Supprimer
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+          {tab === "rules" ? (
+            <VgSettingsSection
+              title="Regles de blocage (base de donnees)"
+              description="Ancien systeme prefixe/regex. Pour la policy runtime, utilise Patterns policy."
+            >
+              <Stack component="form" onSubmit={handleAddRule} direction="row" spacing={1} sx={{ mb: 2, flexWrap: "wrap" }}>
+                <TextField size="small" label="Nom" value={ruleName} onChange={(e) => setRuleName(e.target.value)} />
+                <TextField size="small" label="Prefixe" value={rulePattern} onChange={(e) => setRulePattern(e.target.value)} placeholder="089" />
+                <Button type="submit" variant="contained" disabled={Boolean(submitting)}>
+                  Ajouter
+                </Button>
+              </Stack>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Nom</TableCell>
+                    <TableCell>Pattern</TableCell>
+                    <TableCell>Type</TableCell>
+                    <TableCell align="right" />
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {rules.map((r) => (
+                    <TableRow key={r.id}>
+                      <TableCell>{r.name}</TableCell>
+                      <TableCell sx={{ fontFamily: "monospace" }}>{r.pattern}</TableCell>
+                      <TableCell>{r.pattern_type}</TableCell>
+                      <TableCell align="right">
+                        <IconButton
+                          size="small"
+                          color="error"
+                          disabled={Boolean(submitting)}
+                          onClick={() => {
+                            setSubmitting(`r-${r.id}`);
+                            deleteBlockRule(r.id).then(load).finally(() => setSubmitting(null));
+                          }}
+                        >
+                          <DeleteIcon fontSize="small" />
+                        </IconButton>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </VgSettingsSection>
+          ) : null}
         </>
       )}
     </AppLayout>
+  );
+}
+
+function CallerTable({
+  rows,
+  onRemove,
+  submitting
+}: {
+  rows: Caller[];
+  onRemove: (id: number) => void;
+  submitting: string | null;
+}) {
+  return (
+    <Table size="small">
+      <TableHead>
+        <TableRow>
+          <TableCell>Numero</TableCell>
+          <TableCell>Nom / notes</TableCell>
+          <TableCell align="right">Action</TableCell>
+        </TableRow>
+      </TableHead>
+      <TableBody>
+        {rows.length === 0 ? (
+          <TableRow>
+            <TableCell colSpan={3}>
+              <Typography variant="body2" color="text.secondary">
+                Aucune entree.
+              </Typography>
+            </TableCell>
+          </TableRow>
+        ) : (
+          rows.map((c) => (
+            <TableRow key={c.id}>
+              <TableCell>{c.phone_number}</TableCell>
+              <TableCell>{c.name || c.notes || "—"}</TableCell>
+              <TableCell align="right">
+                <Button size="small" color="inherit" disabled={Boolean(submitting)} onClick={() => onRemove(c.id)}>
+                  Retirer
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))
+        )}
+      </TableBody>
+    </Table>
   );
 }

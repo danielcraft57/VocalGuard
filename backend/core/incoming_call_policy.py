@@ -21,6 +21,9 @@ from backend.core.incoming_call_types import (
 )
 
 
+from backend.core.number_pattern_matcher import match_number_pattern_profile as match_rules_profile
+
+
 def match_number_pattern_profile(
     caller_id: Optional[str],
     settings: IncomingCallSettingsData,
@@ -33,25 +36,7 @@ def match_number_pattern_profile(
     @returns Profil force ou None.
     """
     np = settings.number_patterns
-    if not np.enabled or not caller_id:
-        return None
-    cid = caller_id.strip().upper()
-    for rule in np.rules:
-        if not rule.enabled:
-            continue
-        pat = (rule.pattern or "").strip()
-        if not pat:
-            continue
-        matched = False
-        if pat in ("P", "O"):
-            matched = cid in ("P", "O", "PRIVATE", "UNKNOWN", "ANONYMOUS")
-        elif pat.endswith("%"):
-            matched = cid.startswith(pat[:-1].upper())
-        else:
-            matched = cid == pat.upper() or cid.endswith(pat.lstrip("+"))
-        if matched:
-            return rule.action
-    return None
+    return match_rules_profile(caller_id, list(np.rules or []), enabled=bool(np.enabled))
 
 
 def classify_profile_sync(
@@ -141,12 +126,16 @@ class IncomingCallPolicy:
     @param is_blocked Liste noire.
     @returns CallDecision.
     """
-    pattern_profile = match_number_pattern_profile(caller_id, self.settings)
-    if pattern_profile is not None:
+    pattern_profile = None
+    if not is_whitelisted:
+        pattern_profile = match_number_pattern_profile(caller_id, self.settings)
+    if is_whitelisted:
+      profile = "permitted"
+    elif pattern_profile is not None:
       profile = pattern_profile
     else:
       profile = classify_profile_sync(
-          is_whitelisted=is_whitelisted,
+          is_whitelisted=False,
           is_blocked=is_blocked,
           screened_when_unknown=bool(self.settings.screened_when_unknown),
       )

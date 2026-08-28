@@ -66,7 +66,7 @@ const TILES: HubTile[] = [
     title: "Patterns numeros",
     description: "Regles par masque (+338%, masque P…)",
     icon: <PatternIcon color="primary" />,
-    ready: false
+    ready: true
   },
   {
     href: "/settings/incoming-advanced",
