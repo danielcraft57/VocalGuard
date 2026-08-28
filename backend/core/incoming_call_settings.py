@@ -161,6 +161,10 @@ def apply_incoming_call_settings(config: Config, settings: IncomingCallSettingsD
   config.whitelist_ring_only = bool(settings.whitelist_ring_only)
   if settings.audio and settings.audio.edge_tts_rate:
     config.edge_tts_rate = str(settings.audio.edge_tts_rate)
+  vm = settings.voicemail
+  if vm:
+    config.voicemail_max_duration = int(vm.max_record_sec)
+    config.voicemail_silence_timeout_sec = int(vm.silence_end_sec)
   if hasattr(config, "incoming_call_settings"):
     config.incoming_call_settings = settings  # type: ignore[attr-defined]
 

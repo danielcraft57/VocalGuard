@@ -42,6 +42,24 @@ _VRX_BYTES_PER_SEC = 8000  # 8 kHz, 8-bit mono
 _EXPECTED_FIRMWARE_HINT = "1.2.23"
 
 
+def extract_incoming_dtmf_digit(line_str: str) -> Optional[str]:
+    """
+    Extrait une touche DTMF d'une ligne modem (URC ou chiffre isole).
+
+    @param line_str Ligne decodee du port serie.
+    @returns Touche normalisee (0-9, *, #, A-D) ou None.
+    """
+    s = (line_str or "").strip()
+    if not s or s.upper() in ("OK", "ERROR", "CONNECT", "NO CARRIER"):
+        return None
+    if re.fullmatch(r"[\d*#A-Da-d]", s):
+        return s.upper()
+    m = re.search(r'(?:DTMF|VTD|\+VTD)[:\s=]+["\']?([\d*#A-D])', s, flags=re.IGNORECASE)
+    if m:
+        return m.group(1).upper()
+    return None
+
+
 def _escape_dle_pcm(data: bytes) -> bytes:
     """
     Double les octets DLE (0x10) dans le PCM pour le mode transparent V.253.
@@ -165,6 +183,10 @@ class ModemHandler:
         self.last_vrx_stop_reason: Optional[str] = None
         # Secondes max apres RING avant VLS=1 (laisse passer NMBR= ETSI).
         self.instant_seize_cid_grace_sec: float = 0.35
+        # Attente DTMF entrant (gate anti-robots).
+        self._dtmf_wait_expected: Optional[str] = None
+        self._dtmf_last_digit: Optional[str] = None
+        self._dtmf_event: Optional[asyncio.Event] = None
     
     async def detect_modem(self) -> Optional[str]:
         """
@@ -830,6 +852,46 @@ class ModemHandler:
                 if vrx_was_active:
                     if not self._send_command_sync(_VOICE_RX, expect="CONNECT", timeout=10.0):
                         logger.warning("send_dtmf: reprise VRX echouee apres AT+VTS")
+
+    async def wait_for_dtmf_digit(self, expected: str, timeout_sec: float = 8.0) -> bool:
+        """
+        Attend qu'une touche DTMF precise soit recue sur la ligne.
+
+        Active AT+VTD=1 (detection DTMF en mode voix) puis ecoute les URC modem
+        via ``_process_modem_line``.
+
+        @param expected Touche attendue (0-9, *, #, A-D).
+        @param timeout_sec Delai max d'attente.
+        @returns True si la bonne touche a ete recue avant timeout.
+        """
+        expected_norm = str(expected or "1").strip().upper()[:1]
+        allowed = set("0123456789*#ABCD")
+        if expected_norm not in allowed:
+            expected_norm = "1"
+
+        for cmd in ("AT+VTD=1", "AT+VTDD=1"):
+            try:
+                await self.send_command(cmd, timeout=2.0)
+            except Exception as exc:
+                logger.debug("Activation DTMF {}: {}", cmd, exc)
+
+        self._dtmf_wait_expected = expected_norm
+        self._dtmf_last_digit = None
+        self._dtmf_event = asyncio.Event()
+        try:
+            await asyncio.wait_for(self._dtmf_event.wait(), timeout=float(timeout_sec))
+            got = (self._dtmf_last_digit or "").upper()
+            ok = got == expected_norm
+            if not ok:
+                logger.info("DTMF recu {} != attendu {}", got, expected_norm)
+            return ok
+        except asyncio.TimeoutError:
+            logger.info("DTMF timeout apres {}s (attendu {})", timeout_sec, expected_norm)
+            return False
+        finally:
+            self._dtmf_wait_expected = None
+            self._dtmf_event = None
+            self._dtmf_last_digit = None
 
     def _send_command_sync(self, command: str, expect: str = "OK", timeout: float = 5.0) -> bool:
         """Envoie une commande AT et attend la réponse (synchrone, pour usage dans executor)."""
@@ -1744,6 +1806,12 @@ class ModemHandler:
         """
         line_str = line.decode("utf-8", errors="ignore").strip()
         logger.debug("Ligne modem: {}", line_str)
+
+        dtmf = extract_incoming_dtmf_digit(line_str)
+        if dtmf and self._dtmf_event is not None:
+            self._dtmf_last_digit = dtmf
+            self._dtmf_event.set()
+            logger.info("DTMF entrant detecte: {}", dtmf)
 
         async def _notify(**kwargs) -> None:
             cb = self.on_incoming_call

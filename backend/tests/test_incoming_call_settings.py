@@ -61,6 +61,21 @@ def test_whitelist_ring_only_ignore():
     assert decision.should_answer is False
 
 
+def test_patch_voicemail_sync_config(tmp_path, monkeypatch):
+    """max_record_sec et silence_end_sec synchronises sur Config."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    config = Config()
+    config.base_path = tmp_path
+    patched = patch_incoming_call_settings(
+        config,
+        {"voicemail": {"max_record_sec": 90, "silence_end_sec": 6}},
+    )
+    assert patched.voicemail.max_record_sec == 90
+    assert config.voicemail_max_duration == 90
+    assert config.voicemail_silence_timeout_sec == 6
+
+
 def test_number_pattern_masked():
     config = Config()
     settings = load_incoming_call_settings(config)

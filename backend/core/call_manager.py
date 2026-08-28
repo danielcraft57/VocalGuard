@@ -299,6 +299,46 @@ class CallManager:
             return self.incoming_policy.settings.audio
         return load_incoming_call_settings(self.config).audio
 
+    def _voicemail_settings(self):
+        """Bloc messagerie / DTMF incoming_call (ou defauts)."""
+        if hasattr(self, "incoming_policy"):
+            return self.incoming_policy.settings.voicemail
+        return load_incoming_call_settings(self.config).voicemail
+
+    def _needs_dtmf_gate(self, decision=None) -> bool:
+        """
+        True si le filtre DTMF anti-robots doit s'executer avant enregistrement.
+
+        @param decision Decision policy courante (optionnel).
+        @returns Active si require_dtmf ou action dtmf_gate.
+        """
+        vm = self._voicemail_settings()
+        if vm.require_dtmf:
+            return True
+        if decision and "dtmf_gate" in (decision.actions or []):
+            return True
+        return False
+
+    async def _run_dtmf_gate(self) -> bool:
+        """
+        Joue le prompt DTMF puis attend la touche configuree.
+
+        @returns True si la bonne touche a ete recue.
+        """
+        vm = self._voicemail_settings()
+        prompt = (vm.dtmf_prompt_text or "Tapez 1 pour laisser un message.").strip()
+        await self._play_configured_message(
+            source=vm.dtmf_prompt_source,
+            wav_path=None,
+            tts_text=prompt,
+            fallback_text=prompt,
+            already_in_voice_mode=True,
+            recorder=self._incoming_recorder,
+        )
+        digit = (vm.dtmf_digit or "1").strip()[:1]
+        timeout = float(vm.dtmf_timeout_sec or 8.0)
+        return await self.modem.wait_for_dtmf_digit(digit, timeout)
+
     def _ivr_basename_for_text(self, text: str) -> Optional[str]:
         normalized = text.strip()
         if normalized == self._greeting_text().strip():
@@ -655,6 +695,7 @@ class CallManager:
                 caller_id=caller_id,
                 caller_name=caller_name,
             )
+            self._current_incoming_decision = decision
             rings = int(decision.rings_before_answer)
             auto_answer = bool(auto_answer_cfg and decision.should_answer)
             logger.info(
@@ -762,6 +803,7 @@ class CallManager:
             self._cname_event = None
             self._phone_mode_ring_event = None
             self._call_deadline = None
+            self._current_incoming_decision = None
             try:
                 self.modem.clear_incoming_seize()
             except Exception:
@@ -863,6 +905,11 @@ class CallManager:
             vm_simple = self.config.voicemail_enabled and vm_mode != "ivr"
 
             if self.config.voicemail_enabled:
+                decision = getattr(self, "_current_incoming_decision", None)
+                if self._needs_dtmf_gate(decision):
+                    if not await self._run_dtmf_gate():
+                        logger.info("Filtre DTMF non valide — fin sans enregistrement")
+                        return
                 if vm_mode == "ivr" and self._recognition_available:
                     if self._use_modem_voice_serial():
                         await recorder.start(already_in_voice_mode=True)
@@ -910,6 +957,13 @@ class CallManager:
         """
         logger.info("Mode répondeur simple (bip + enregistrement)")
         rec = recorder or self._incoming_recorder
+        vm = self._voicemail_settings()
+        max_duration = int(vm.max_record_sec or self.config.voicemail_max_duration)
+        silence_sec = float(
+            vm.silence_end_sec
+            or getattr(self.config, "voicemail_silence_timeout_sec", 3)
+            or 3
+        )
         try:
             if not skip_beep:
                 await self._play_beep_on_line(recorder=rec)
@@ -923,11 +977,11 @@ class CallManager:
             persist_path = base / wav_rel
 
             audio_data = await self._record_audio(
-                duration=self.config.voicemail_max_duration,
+                duration=max_duration,
                 already_in_voice_mode=self._use_modem_voice_serial(),
                 recorder=rec,
                 stop_on_remote_hangup=True,
-                silence_timeout_sec=float(getattr(self.config, "voicemail_silence_timeout_sec", 3) or 3),
+                silence_timeout_sec=silence_sec,
                 persist_wav=persist_path,
             )
             if audio_data:

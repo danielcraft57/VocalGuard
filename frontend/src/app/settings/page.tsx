@@ -59,7 +59,7 @@ const TILES: HubTile[] = [
     title: "Messagerie et DTMF",
     description: "Filtre anti-robots, duree enregistrement",
     icon: <VoicemailIcon color="primary" />,
-    ready: false
+    ready: true
   },
   {
     href: "/settings/number-patterns",
@@ -73,7 +73,7 @@ const TILES: HubTile[] = [
     title: "Avance",
     description: "CID, cadence ring, config effective JSON",
     icon: <TuneIcon color="primary" />,
-    ready: false
+    ready: true
   }
 ];
 

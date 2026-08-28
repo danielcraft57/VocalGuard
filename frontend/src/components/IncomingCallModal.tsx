@@ -1,6 +1,17 @@
 "use client";
 
 import React, { useEffect, useMemo } from "react";
+import {
+  Box,
+  Button,
+  Dialog,
+  IconButton,
+  Typography,
+  useTheme
+} from "@mui/material";
+import BlockIcon from "@mui/icons-material/Block";
+import CallEndIcon from "@mui/icons-material/CallEnd";
+import RingVolumeIcon from "@mui/icons-material/RingVolume";
 import type { IncomingLiveCall } from "../hooks/useIncomingCallLive";
 import { playIncomingAlertSound } from "../utils/telephonySounds";
 
@@ -16,7 +27,7 @@ function phaseLabel(phase: IncomingLiveCall["phase"]): string {
     case "answered":
       return "En ligne";
     case "blocked":
-      return "Appel bloqué";
+      return "Appel bloque";
     case "ended":
       return "Fin d'appel";
     default:
@@ -25,10 +36,12 @@ function phaseLabel(phase: IncomingLiveCall["phase"]): string {
 }
 
 /**
- * Modale plein ecran pour un appel entrant (ouvre / ferme via evenements WS).
+ * Modale plein ecran Material pour un appel entrant (evenements WS).
  */
-export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElement | null {
+export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElement {
+  const theme = useTheme();
   const open = Boolean(live);
+
   const displayNumber = useMemo(() => {
     if (!live) return "Inconnu";
     return live.phoneNumber || live.callerName || "Inconnu";
@@ -41,62 +54,108 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
     return () => window.clearInterval(id);
   }, [live?.callId, live?.phase]);
 
-  if (!open || !live) return null;
-
-  const phase = live.phase;
+  const phase = live?.phase ?? "ringing";
   const isActive = phase === "ringing" || phase === "answered";
 
+  const phaseColor =
+    phase === "blocked"
+      ? theme.palette.error.main
+      : phase === "ended"
+        ? theme.palette.text.secondary
+        : theme.palette.primary.main;
+
+  const PhaseIcon =
+    phase === "blocked" ? BlockIcon : phase === "ended" ? CallEndIcon : RingVolumeIcon;
+
   return (
-    <div
-      className="vg-incoming-backdrop"
-      role="presentation"
-      onClick={() => {
+    <Dialog
+      fullScreen
+      open={open}
+      onClose={() => {
         if (!isActive) onDismiss();
       }}
+      aria-labelledby="vg-incoming-title"
     >
-      <div
-        className={`vg-incoming-modal vg-incoming-modal--${phase}`}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="vg-incoming-title"
-        onClick={(e) => e.stopPropagation()}
+      <Box
+        sx={{
+          minHeight: "100%",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          px: 3,
+          py: 6,
+          bgcolor: "background.default",
+          textAlign: "center"
+        }}
       >
-        <div className={`vg-incoming-pulse ${isActive ? "vg-incoming-pulse--on" : ""}`} aria-hidden>
-          <span className="material-icons vg-incoming-icon">
-            {phase === "blocked" ? "block" : phase === "ended" ? "call_end" : "ring_volume"}
-          </span>
-        </div>
+        <Box
+          sx={{
+            width: 120,
+            height: 120,
+            borderRadius: "50%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            mb: 3,
+            bgcolor: `${phaseColor}22`,
+            animation: isActive ? "vg-pulse 1.6s ease-in-out infinite" : "none",
+            "@keyframes vg-pulse": {
+              "0%, 100%": { transform: "scale(1)", opacity: 1 },
+              "50%": { transform: "scale(1.06)", opacity: 0.85 }
+            }
+          }}
+        >
+          <IconButton aria-hidden sx={{ color: phaseColor }} size="large">
+            <PhaseIcon sx={{ fontSize: 56 }} />
+          </IconButton>
+        </Box>
 
-        <p className="vg-incoming-eyebrow" id="vg-incoming-title">
+        <Typography
+          id="vg-incoming-title"
+          variant="overline"
+          color="text.secondary"
+          gutterBottom
+        >
           {phaseLabel(phase)}
-        </p>
-        <h2 className="vg-incoming-number">{displayNumber}</h2>
-        {live.callerName && live.phoneNumber ? (
-          <p className="vg-incoming-name">{live.callerName}</p>
+        </Typography>
+        <Typography variant="h3" component="h2" gutterBottom sx={{ fontWeight: 600 }}>
+          {displayNumber}
+        </Typography>
+        {live?.callerName && live.phoneNumber ? (
+          <Typography variant="h6" color="text.secondary" gutterBottom>
+            {live.callerName}
+          </Typography>
         ) : (
-          <p className="vg-incoming-name vg-incoming-name--muted">
+          <Typography variant="body1" color="text.secondary" gutterBottom>
             {phase === "answered"
-              ? "Répondeur VocalGuard"
+              ? "Repondeur VocalGuard"
               : phase === "ringing"
-                ? "Identification en cours…"
+                ? "Identification en cours..."
                 : "\u00a0"}
-          </p>
+          </Typography>
         )}
 
-        <p className="vg-incoming-meta">Appel #{live.callId}</p>
+        {live ? (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+            Appel #{live.callId}
+          </Typography>
+        ) : null}
 
-        {!isActive ? (
-          <button type="button" className="vg-incoming-dismiss" onClick={onDismiss}>
-            Fermer
-          </button>
-        ) : (
-          <p className="vg-incoming-hint">
-            {phase === "ringing"
-              ? "Décrochage automatique…"
-              : "Se ferme à la fin de l'appel"}
-          </p>
-        )}
-      </div>
-    </div>
+        <Box sx={{ mt: 4 }}>
+          {!isActive ? (
+            <Button variant="contained" size="large" onClick={onDismiss}>
+              Fermer
+            </Button>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              {phase === "ringing"
+                ? "Decrochage automatique..."
+                : "Se ferme a la fin de l'appel"}
+            </Typography>
+          )}
+        </Box>
+      </Box>
+    </Dialog>
   );
 }

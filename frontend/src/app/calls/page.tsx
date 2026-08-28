@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { AppLayout } from "../../components/AppLayout";
+import { VgProfileChip } from "../../components/mui/VgProfileChip";
 import { OutgoingCallDialerModal } from "../../components/OutgoingCallDialerModal";
 import {
   fetchCallsWithOsint,
@@ -993,13 +994,7 @@ export default function CallsPage() {
   }, [liveCall]);
 
   function renderLiveTag(tag: LiveTag): React.ReactNode {
-    if (tag === "blocked") {
-      return <span className="vg-badge vg-badge-danger">Blocked</span>;
-    }
-    if (tag === "permitted") {
-      return <span className="vg-badge vg-badge-success">Permitted</span>;
-    }
-    return <span className="vg-badge">Screened</span>;
+    return <VgProfileChip profile={tag} />;
   }
 
   return (
