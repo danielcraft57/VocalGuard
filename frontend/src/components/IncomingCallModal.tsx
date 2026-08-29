@@ -4,15 +4,18 @@ import React, { useEffect, useMemo } from "react";
 import {
   Box,
   Button,
+  Chip,
   Dialog,
   IconButton,
+  LinearProgress,
   Typography,
   useTheme
 } from "@mui/material";
 import BlockIcon from "@mui/icons-material/Block";
 import CallEndIcon from "@mui/icons-material/CallEnd";
 import RingVolumeIcon from "@mui/icons-material/RingVolume";
-import type { IncomingLiveCall } from "../hooks/useIncomingCallLive";
+import type { IncomingLiveCall, IncomingLivePhase } from "../hooks/useIncomingCallLive";
+import { VgProfileChip, type IncomingProfileKind } from "./mui/VgProfileChip";
 import { playIncomingAlertSound } from "../utils/telephonySounds";
 
 type Props = {
@@ -33,6 +36,13 @@ function phaseLabel(phase: IncomingLiveCall["phase"]): string {
     default:
       return "Appel";
   }
+}
+
+function phaseToProfile(phase: IncomingLivePhase): IncomingProfileKind | null {
+  if (phase === "blocked") return "blocked";
+  if (phase === "answered" || phase === "ended") return "permitted";
+  if (phase === "ringing") return "screened";
+  return null;
 }
 
 /**
@@ -66,6 +76,7 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
 
   const PhaseIcon =
     phase === "blocked" ? BlockIcon : phase === "ended" ? CallEndIcon : RingVolumeIcon;
+  const liveProfile = phaseToProfile(phase);
 
   return (
     <Dialog
@@ -119,6 +130,11 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
         >
           {phaseLabel(phase)}
         </Typography>
+        <Chip label={phaseLabel(phase)} size="small" color="primary" variant="outlined" sx={{ mb: 1 }} />
+        {liveProfile ? <VgProfileChip profile={liveProfile} /> : null}
+        {phase === "ringing" ? (
+          <LinearProgress sx={{ width: "100%", maxWidth: 280, my: 2 }} />
+        ) : null}
         <Typography variant="h3" component="h2" gutterBottom sx={{ fontWeight: 600 }}>
           {displayNumber}
         </Typography>
@@ -142,17 +158,22 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
           </Typography>
         ) : null}
 
-        <Box sx={{ mt: 4 }}>
-          {!isActive ? (
+        <Box sx={{ mt: 4, display: "flex", flexDirection: "column", gap: 1.5, alignItems: "center" }}>
+          {isActive ? (
+            <>
+              <Typography variant="body2" color="text.secondary">
+                {phase === "ringing"
+                  ? "Decrochage automatique..."
+                  : "Se ferme a la fin de l'appel"}
+              </Typography>
+              <Button variant="outlined" size="large" onClick={onDismiss}>
+                Masquer
+              </Button>
+            </>
+          ) : (
             <Button variant="contained" size="large" onClick={onDismiss}>
               Fermer
             </Button>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              {phase === "ringing"
-                ? "Decrochage automatique..."
-                : "Se ferme a la fin de l'appel"}
-            </Typography>
           )}
         </Box>
       </Box>

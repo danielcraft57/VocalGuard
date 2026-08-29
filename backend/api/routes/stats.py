@@ -56,6 +56,16 @@ async def get_dashboard_stats(db: Session = Depends(get_db)) -> DashboardStatsRe
     total_blocked = (
         db.query(func.count(Call.id)).filter(Call.status == "blocked").scalar() or 0
     )
+    blocked_today = (
+        db.query(func.count(Call.id))
+        .filter(
+            Call.call_time >= today_start,
+            Call.call_time < today_end,
+            Call.status == "blocked",
+        )
+        .scalar()
+        or 0
+    )
 
     voicemails_today = (
         db.query(func.count(Voicemail.id))
@@ -80,6 +90,7 @@ async def get_dashboard_stats(db: Session = Depends(get_db)) -> DashboardStatsRe
         suspects_count=suspects_count,
         total_calls=total_calls,
         total_blocked=total_blocked,
+        blocked_today=blocked_today,
         voicemails_today=voicemails_today,
         voicemails_unread=voicemails_unread,
         voicemails_total=voicemails_total,

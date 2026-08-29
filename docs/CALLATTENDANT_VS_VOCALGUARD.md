@@ -108,12 +108,14 @@ Comportement : seize sync au premier `RING` (`ATA` + voix), fixe parallele coupe
 
 | Fonctionnalite Call Attendant | Interet pour VocalGuard | Statut |
 |------------------------------|-------------------------|--------|
-| `wait_for_rings` avant answer | Utile si whitelist_ring_only etendu | Partiel (`_wait_phone_mode_rings_end`) |
-| Actions tuple (`ignore`, `answer`, `greeting`, `vm`) | Modele flexible par profil appelant | Simplifie (voicemail / phone) |
-| Menu DTMF voice mail | Anti-spam messages automatiques | Non |
+| `wait_for_rings` avant answer | Utile si whitelist_ring_only etendu | **OK** (`_wait_for_rings_before_answer`, UI profils) |
+| Actions tuple (`ignore`, `answer`, `greeting`, `vm`) | Modele flexible par profil appelant | **OK** (presets + `VgActionsBuilder`) |
+| Menu DTMF voice mail | Anti-spam messages automatiques | **OK** (`require_dtmf`, `/settings/voicemail`) |
 | GPIO LEDs ring/blocked | Debug physique | Non |
-| Profils BLOCKED/SCREENED/PERMITTED separes | Granularite fine | Partiel (block + whitelist) |
+| Profils BLOCKED/SCREENED/PERMITTED separes | Granularite fine | **OK** (policy + UI `/settings/incoming-profiles`) |
 | Pas de seize au RING | Cle pour fixe qui sonne | Oui en mode phone |
+| Patterns numeriques (+338%, masque P) | Blocage automatique | **OK** (`number_patterns`, `/filtering` MUI) |
+| Config Material UI | Parametrage sans YAML | **OK** (hub `/settings`, S1-S8) |
 
 ---
 

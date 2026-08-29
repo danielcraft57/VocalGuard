@@ -544,6 +544,7 @@ class CallManager:
         *,
         rings: int,
         reason: str,
+        decision=None,
     ) -> None:
         """
         Journalise un appel sans repondeur modem (fixe gere la ligne).
@@ -557,6 +558,14 @@ class CallManager:
             phone_number=caller_id,
             caller_name=caller_name,
         )
+        if decision is not None:
+            await self.call_service.annotate_incoming_policy(
+                call.id,
+                profile=decision.profile,
+                source=decision.source,
+                rings_before_answer=int(decision.rings_before_answer),
+                ignored=True,
+            )
         self.current_call_id = call.id
         logger.info("{} — pas de ATA (appel #{}), fixe parallele", reason, call.id)
         cycle = 8.0
@@ -719,6 +728,7 @@ class CallManager:
                         if decision.should_ignore
                         else "incoming_auto_answer=false"
                     ),
+                    decision=decision,
                 )
                 return
 
@@ -731,6 +741,7 @@ class CallManager:
                         caller_name,
                         rings=rings,
                         reason="parallel_pickup_before_rings",
+                        decision=decision,
                     )
                     return
 
@@ -763,6 +774,13 @@ class CallManager:
             )
             self.current_call_id = call.id
             self._arm_call_deadline()
+            await self.call_service.annotate_incoming_policy(
+                call.id,
+                profile=decision.profile,
+                source=decision.source,
+                rings_before_answer=int(decision.rings_before_answer),
+                ignored=False,
+            )
             if caller_id or caller_name:
                 await self.call_service.set_call_caller_info(
                     call.id, phone_number=caller_id, caller_name=caller_name

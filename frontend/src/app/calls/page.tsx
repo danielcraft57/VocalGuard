@@ -1,8 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
+import Link from "next/link";
+import { Tooltip } from "@mui/material";
 import { AppLayout } from "../../components/AppLayout";
-import { VgProfileChip } from "../../components/mui/VgProfileChip";
+import { VgProfileChip, type IncomingProfileKind } from "../../components/mui/VgProfileChip";
 import { OutgoingCallDialerModal } from "../../components/OutgoingCallDialerModal";
 import {
   fetchCallsWithOsint,
@@ -19,6 +21,7 @@ import {
 import { getWsBaseUrl } from "../../services/httpClient";
 import { useOutgoingCallAudio, unlockOutgoingAudioContext } from "../../hooks/useOutgoingCallAudio";
 import { formatApiDateTime } from "../../utils/dateTime";
+import { getCallIncomingProfile, getCallPolicySource } from "../../utils/callProfile";
 
 function formatStatus(status: string): { label: string; className: string } {
   const normalized = status.toLowerCase();
@@ -133,6 +136,7 @@ function getStatusFilterValue(status: string): string {
 
 const FILTER_STATUS_ALL = "all";
 const FILTER_REP_ALL = "all";
+const FILTER_PROFILE_ALL = "all";
 
 /** Mots-cles reconnus par la recherche pour statut / reputation */
 const STATUS_KEYWORDS: Record<string, string> = {
@@ -229,6 +233,7 @@ export default function CallsPage() {
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState<string>(FILTER_STATUS_ALL);
   const [filterReputation, setFilterReputation] = useState<string>(FILTER_REP_ALL);
+  const [filterProfile, setFilterProfile] = useState<string>(FILTER_PROFILE_ALL);
   const [searchInput, setSearchInput] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [dialerOpen, setDialerOpen] = useState(false);
@@ -304,20 +309,28 @@ export default function CallsPage() {
       if (effectiveStatus !== FILTER_STATUS_ALL && getStatusFilterValue(call.status) !== effectiveStatus)
         return false;
       if (effectiveRep !== FILTER_REP_ALL && getReputationCategory(call.osint) !== effectiveRep) return false;
+      if (
+        filterProfile !== FILTER_PROFILE_ALL &&
+        getCallIncomingProfile(call) !== filterProfile
+      ) {
+        return false;
+      }
       if (!callMatchesText(call, parsed.text)) return false;
       return true;
     });
-  }, [calls, effectiveStatus, effectiveRep, parsed.text]);
+  }, [calls, effectiveStatus, effectiveRep, filterProfile, parsed.text]);
 
   const hasActiveFilters =
     effectiveStatus !== FILTER_STATUS_ALL ||
     effectiveRep !== FILTER_REP_ALL ||
+    filterProfile !== FILTER_PROFILE_ALL ||
     parsed.text.length > 0;
 
   const clearAllFilters = () => {
     setSearchInput("");
     setFilterStatus(FILTER_STATUS_ALL);
     setFilterReputation(FILTER_REP_ALL);
+    setFilterProfile(FILTER_PROFILE_ALL);
   };
 
   const statusOptions = [
@@ -333,10 +346,17 @@ export default function CallsPage() {
     { value: "neutral", label: "Non evaluee" },
     { value: "unknown", label: "Inconnue" }
   ];
+  const profileOptions: { value: string; label: string; profile?: IncomingProfileKind }[] = [
+    { value: FILTER_PROFILE_ALL, label: "Tous" },
+    { value: "permitted", label: "Autorise", profile: "permitted" },
+    { value: "screened", label: "Inconnu", profile: "screened" },
+    { value: "blocked", label: "Bloque", profile: "blocked" }
+  ];
 
   const activeFilterCount = [
     effectiveStatus !== FILTER_STATUS_ALL,
     effectiveRep !== FILTER_REP_ALL,
+    filterProfile !== FILTER_PROFILE_ALL,
     parsed.text.length > 0
   ].filter(Boolean).length;
 
@@ -510,6 +530,8 @@ export default function CallsPage() {
     });
     const phone = call.phone_number ?? "Inconnu";
     const { label: statusLabel, className: statusClass } = formatStatus(call.status);
+    const incomingProfile = getCallIncomingProfile(call);
+    const policySource = getCallPolicySource(call);
     const direction = getCallDirection(call);
     const intent =
       (call.extra_data && typeof call.extra_data === "object" && "ivr_intent" in call.extra_data
@@ -553,6 +575,11 @@ export default function CallsPage() {
         </td>
         <td>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
+            <Tooltip title={policySource ? `Decision: ${policySource}` : "Profil policy"}>
+              <span style={{ alignSelf: "flex-start" }}>
+                <VgProfileChip profile={incomingProfile} />
+              </span>
+            </Tooltip>
             <span className={statusClass}>{statusLabel}</span>
             {intent && (
               <span className="vg-badge vg-badge-info" style={{ alignSelf: "flex-start" }}>
@@ -611,6 +638,17 @@ export default function CallsPage() {
             >
               <span className="material-icons">info</span>
             </button>
+            {incomingProfile === "blocked" ? (
+              <Link
+                href="/filtering"
+                className="vg-icon-btn vg-icon-btn--accent"
+                title="Modifier le filtrage"
+                aria-label="Modifier le filtrage"
+                style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+              >
+                <span className="material-icons">tune</span>
+              </Link>
+            ) : null}
           </div>
         </td>
       </tr>
@@ -764,6 +802,31 @@ export default function CallsPage() {
                 </button>
               ))}
             </div>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "0.5rem", marginTop: "0.5rem" }}>
+              <span style={{ fontSize: "0.8125rem", color: "#9ca3af", marginRight: "0.25rem" }}>Profil</span>
+              {profileOptions.map(({ value, label, profile }) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setFilterProfile(value)}
+                  style={{
+                    cursor: "pointer",
+                    border: "1px solid #4b5563",
+                    borderRadius: "999px",
+                    padding: "0.3rem 0.6rem",
+                    fontSize: "0.8125rem",
+                    background: filterProfile === value ? "#f59e0b" : "transparent",
+                    color: filterProfile === value ? "#fff" : "#d1d5db",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "0.35rem"
+                  }}
+                >
+                  {profile ? <VgProfileChip profile={profile} size="small" /> : null}
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}
@@ -801,6 +864,22 @@ export default function CallsPage() {
               }}
             >
               Reputation {repOptions.find((o) => o.value === effectiveRep)?.label}
+            </span>
+          )}
+          {filterProfile !== FILTER_PROFILE_ALL && (
+            <span
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: "0.25rem",
+                padding: "0.2rem 0.45rem",
+                borderRadius: "6px",
+                fontSize: "0.75rem",
+                background: "#374151",
+                color: "#d1d5db"
+              }}
+            >
+              Profil {profileOptions.find((o) => o.value === filterProfile)?.label}
             </span>
           )}
           {parsed.text.length > 0 && (

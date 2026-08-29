@@ -709,6 +709,7 @@ class DashboardStatsResponse(BaseModel):
     suspects_count: int = 0
     total_calls: int = 0
     total_blocked: int = 0
+    blocked_today: int = 0
     voicemails_today: int = 0
     voicemails_unread: int = 0
     voicemails_total: int = 0

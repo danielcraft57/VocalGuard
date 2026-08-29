@@ -117,6 +117,16 @@ export default function IncomingProfilesSettingsPage() {
     patchField("profile_overrides", current);
   }, [config, patchField, tab]);
 
+  const ringsPreview = useMemo(() => {
+    if (!config) return "";
+    const cycle = Number(config.ring_cycle_sec ?? 6);
+    const quiet = Number(config.ring_quiet_abort_sec ?? 6);
+    if (effectiveRings <= 0) {
+      return "Decrochage immediat (rings=0). En mode repondeur, le fixe parallele est coupe.";
+    }
+    return `Attente de ${effectiveRings} sonnerie(s) (~${Math.round(effectiveRings * cycle)}s max) avant decrochage. Abort si le fixe decroche (${quiet}s sans RING).`;
+  }, [config, effectiveRings]);
+
   return (
     <AppLayout title="Profils appelants" hidePageHeader>
       <VgPageHeader
@@ -169,6 +179,9 @@ export default function IncomingProfilesSettingsPage() {
               value={effectiveRings}
               onChange={(v) => patchOverride({ rings_before_answer: v })}
             />
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+              {ringsPreview}
+            </Typography>
             <Box sx={{ mt: 2 }}>
               <VgActionsBuilder
                 value={effectiveActions}

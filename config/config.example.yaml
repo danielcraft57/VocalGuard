@@ -100,16 +100,32 @@ voicemail_max_duration: 60  # secondes
 voicemail_silence_timeout_sec: 5
 
 # Configuration avancee appels entrants (voir aussi data/incoming_call_settings.yaml)
-# Editable via API PUT /api/v1/settings/incoming-call et UI /settings
+# Editable via API PUT /api/v1/settings/incoming-call et UI /settings/*
 # incoming_call:
+#   cid_wait_sec: 2.5
 #   ring_cycle_sec: 6.0
 #   ring_quiet_abort_sec: 6.0
+#   whitelist_ring_only: false
 #   screened_when_unknown: true
 #   presets:
 #     voicemail:
 #       label: Repondeur
 #       screened_actions: [answer, greeting, record]
+#       screened_rings: 0
 #     phone:
 #       label: Telephone
 #       screened_actions: [ignore]
+#       screened_rings: 4
+#   voicemail:
+#     require_dtmf: false
+#     dtmf_digit: "1"
+#     dtmf_prompt_text: "Tapez 1 pour laisser un message."
+#     max_record_sec: 120
+#     silence_end_sec: 4.0
+#   number_patterns:
+#     enabled: false
+#     rules:
+#       - pattern: "+338%"
+#         action: blocked
+#         reason: Numero surtaxe
 

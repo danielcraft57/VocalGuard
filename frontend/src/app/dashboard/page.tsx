@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
+import Link from "next/link";
 import { AppLayout } from "../../components/AppLayout";
 import { DashboardCharts } from "../../components/DashboardCharts";
 import { VgTelephonyStatusStrip } from "../../components/mui/VgTelephonyStatusStrip";
@@ -39,12 +40,25 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const cards = [
+  const cards: {
+    label: string;
+    value: string | number;
+    icon: string;
+    color: string;
+    href?: string;
+  }[] = [
     {
       label: "Appels aujourd'hui",
       value: stats?.calls_today ?? "-",
       icon: "call",
       color: "#22c55e",
+    },
+    {
+      label: "Bloques aujourd'hui",
+      value: stats?.blocked_today ?? "-",
+      icon: "block",
+      color: "#ef4444",
+      href: "/calls"
     },
     {
       label: "Messages non lus",
@@ -101,6 +115,11 @@ export default function DashboardPage() {
                   card.value
                 )}
               </div>
+              {"href" in card && card.href ? (
+                <Link href={card.href} style={{ fontSize: "0.8rem", marginTop: "0.35rem", display: "inline-block" }}>
+                  Voir les appels
+                </Link>
+              ) : null}
             </div>
           ))}
         </div>

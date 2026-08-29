@@ -116,6 +116,35 @@ class CallService:
         logger.info(f"Appel entrant cree: {call.id} ({phone})")
         return call
 
+    async def annotate_incoming_policy(
+        self,
+        call_id: int,
+        *,
+        profile: str,
+        source: str,
+        rings_before_answer: int = 0,
+        ignored: bool = False,
+    ) -> Optional[Call]:
+        """
+        Enregistre le profil policy sur l'appel (extra_data) pour l'UI /calls.
+
+        @param call_id ID appel.
+        @param profile permitted | screened | blocked.
+        @param source Source policy (ex. preset:voicemail).
+        @param rings_before_answer Sonneries configurees.
+        @param ignored True si policy ignore (fixe parallele).
+        @returns Appel mis a jour ou None.
+        """
+        call = self.call_repo.get_by_id(call_id)
+        if not call:
+            return None
+        meta = dict(call.extra_data or {})
+        meta["incoming_profile"] = str(profile)
+        meta["incoming_policy_source"] = str(source)
+        meta["incoming_rings"] = int(rings_before_answer)
+        meta["incoming_ignored"] = bool(ignored)
+        return self.call_repo.update(call_id, extra_data=meta)
+
     async def create_outgoing_call(self, phone_number: str) -> Call:
         """
         Cree un appel sortant initialise en statut dialing.

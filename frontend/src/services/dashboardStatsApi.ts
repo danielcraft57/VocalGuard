@@ -21,6 +21,7 @@ export interface DashboardStats {
   suspects_count: number;
   total_calls: number;
   total_blocked: number;
+  blocked_today: number;
   voicemails_today: number;
   voicemails_unread: number;
   voicemails_total: number;
