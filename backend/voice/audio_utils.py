@@ -46,6 +46,64 @@ def write_beep_wav_8k(out_path: Path, *, freq_hz: int = 1000, duration_ms: int =
         wf.writeframes(bytes(samples))
 
 
+def write_greeting_jingle_wav_8k(out_path: Path, *, duration_ms: int = 3800) -> None:
+    """
+    Genere une courte intro musicale (arpège doux, 8 kHz mono 8-bit).
+
+    Adapté à la bande téléphonique : fréquences médiums, enveloppe adoucie.
+
+    @param out_path Fichier WAV de sortie.
+    @param duration_ms Duree cible maximale en millisecondes.
+    """
+    rate = 8000
+    # Arpège Do majeur (Hz) + durée relative par note
+    notes: list[tuple[float, float]] = [
+        (523.25, 0.28),
+        (659.25, 0.28),
+        (783.99, 0.32),
+        (1046.50, 0.45),
+        (783.99, 0.22),
+        (659.25, 0.35),
+    ]
+    total_note_sec = sum(d for _, d in notes)
+    scale = min(1.0, (duration_ms / 1000.0) / max(total_note_sec, 0.1))
+    sample_count = max(1, int(rate * duration_ms / 1000))
+    samples = bytearray(sample_count)
+    amplitude = 72
+    fade_ms = 12
+    fade = max(1, int(rate * fade_ms / 1000))
+    pos = 0
+    for freq, note_sec in notes:
+        note_samples = max(1, int(rate * note_sec * scale))
+        for i in range(note_samples):
+            if pos >= sample_count:
+                break
+            t = i / rate
+            env = 1.0
+            if i < fade:
+                env = i / fade
+            elif i > note_samples - fade:
+                env = max(0.0, (note_samples - i) / fade)
+            wave_val = math.sin(2.0 * math.pi * freq * t) * env
+            # Harmonique légère pour un son moins « bip »
+            wave_val += 0.22 * math.sin(2.0 * math.pi * freq * 2.0 * t) * env
+            value = 128 + int(amplitude * wave_val)
+            samples[pos] = max(0, min(255, value))
+            pos += 1
+    # Fade out final sur le reste du buffer
+    tail_start = pos
+    for i in range(tail_start, sample_count):
+        remaining = sample_count - i
+        env = min(1.0, remaining / max(fade, 1))
+        samples[i] = 128 + int((samples[i - 1] - 128) * env) if i > 0 else 128
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(out_path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(1)
+        wf.setframerate(rate)
+        wf.writeframes(bytes(samples))
+
+
 def pcm_u8_chunk_peak(raw: bytes) -> int:
     """
     Pic d'amplitude d'un bloc PCM 8-bit centré sur 128 (0 = silence).

@@ -6,10 +6,12 @@ from backend.core.config import Config
 from backend.core.incoming_call_audio import (
     blocked_message_text,
     ensure_default_voice_assets,
+    greeting_intro_path,
     greeting_text,
     resolve_resource_path,
 )
 from backend.core.incoming_call_settings import load_incoming_call_settings
+from backend.voice.audio_utils import write_greeting_jingle_wav_8k
 
 
 def test_greeting_text_override():
@@ -32,4 +34,33 @@ def test_ensure_voice_assets(tmp_path, monkeypatch):
     ensure_default_voice_assets(config)
     beep = tmp_path / "resources" / "voice" / "beep.wav"
     assert beep.is_file()
+    intro = tmp_path / "resources" / "voice" / "greeting_intro.wav"
+    assert intro.is_file()
     assert resolve_resource_path(config, "resources/voice/beep.wav") == beep.resolve()
+
+
+def test_greeting_intro_jingle(tmp_path):
+    config = Config()
+    config.base_path = tmp_path
+    settings = load_incoming_call_settings(config)
+    settings.audio.greeting_intro_mode = "jingle"
+    path = greeting_intro_path(config, settings.audio)
+    assert path is not None
+    assert path.is_file()
+    assert path.stat().st_size > 1000
+
+
+def test_greeting_default_has_pauses():
+    config = Config()
+    settings = load_incoming_call_settings(config)
+    settings.audio.greeting_tts_text = None
+    config.voicemail_greeting = ""
+    text = greeting_text(config, settings)
+    assert "break time" in text
+
+
+def test_write_greeting_jingle(tmp_path):
+    out = tmp_path / "jingle.wav"
+    write_greeting_jingle_wav_8k(out, duration_ms=2000)
+    assert out.is_file()
+    assert out.stat().st_size > 500

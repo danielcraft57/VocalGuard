@@ -11,9 +11,15 @@ from loguru import logger
 
 from backend.core.config import Config
 from backend.core.incoming_call_types import IncomingCallAudioConfig, IncomingCallSettingsData
-from backend.voice.audio_utils import write_beep_wav_8k
+from backend.voice.audio_utils import write_beep_wav_8k, write_greeting_jingle_wav_8k
 
 DEFAULT_BLOCKED_TTS = "Desole, cet appel a ete bloque."
+DEFAULT_GREETING_TTS = (
+    "Bonjour. <break time=\"400ms\"/> "
+    "Vous etes bien chez DanielCraft, <break time=\"250ms\"/> "
+    "de Loic Daniel. <break time=\"500ms\"/> "
+    "Merci de laisser votre message apres le bip."
+)
 
 
 def project_base(config: Config) -> Path:
@@ -59,10 +65,54 @@ def greeting_text(config: Config, settings: IncomingCallSettingsData) -> str:
     legacy = (getattr(config, "voicemail_greeting", None) or "").strip()
     if legacy:
         return legacy
-    return (
-        "Bonjour, vous etes bien chez DanielCraft, de Loic Daniel, "
-        "merci de laisser un message."
-    )
+    return DEFAULT_GREETING_TTS
+
+
+def sync_edge_tts_from_audio(config: Config, audio: IncomingCallAudioConfig) -> None:
+    """
+    Copie voix / debit / hauteur TTS depuis le bloc audio vers Config runtime.
+
+    @param config Configuration a muter.
+    @param audio Bloc audio incoming_call.
+    """
+    if audio.edge_tts_rate:
+        config.edge_tts_rate = str(audio.edge_tts_rate)
+    if audio.edge_tts_voice:
+        config.edge_tts_voice = str(audio.edge_tts_voice)
+    if audio.edge_tts_pitch:
+        config.edge_tts_pitch = str(audio.edge_tts_pitch)
+
+
+def greeting_intro_path(config: Config, audio: IncomingCallAudioConfig) -> Optional[Path]:
+    """
+    Chemin WAV de l'intro musicale avant le message d'accueil.
+
+    @param config Configuration.
+    @param audio Bloc audio.
+    @returns Path si intro active, sinon None.
+    """
+    mode = getattr(audio, "greeting_intro_mode", "none") or "none"
+    if mode == "none":
+        return None
+    if mode == "wav":
+        return resolve_resource_path(
+            config,
+            audio.greeting_intro_wav_path or "resources/voice/greeting_intro.wav",
+        )
+    # jingle genere
+    rel = audio.greeting_intro_wav_path or "resources/voice/greeting_intro.wav"
+    path = resolve_resource_path(config, rel)
+    if path and path.is_file():
+        return path
+    voice_dir = project_base(config) / "resources" / "voice"
+    target = voice_dir / "greeting_intro.wav"
+    try:
+        duration_ms = int(float(getattr(audio, "greeting_intro_sec", 4.0) or 4.0) * 1000)
+        write_greeting_jingle_wav_8k(target, duration_ms=duration_ms)
+        return target if target.is_file() else None
+    except OSError as exc:
+        logger.warning("greeting_intro jingle: {}", exc)
+        return None
 
 
 def blocked_message_text(settings: IncomingCallSettingsData) -> str:
@@ -91,6 +141,9 @@ def ensure_default_voice_assets(config: Config) -> None:
         blocked = voice_dir / "blocked_short.wav"
         if not blocked.is_file():
             write_beep_wav_8k(blocked, freq_hz=620, duration_ms=350)
+        intro = voice_dir / "greeting_intro.wav"
+        if not intro.is_file():
+            write_greeting_jingle_wav_8k(intro)
     except OSError as exc:
         logger.warning("ensure_default_voice_assets: {}", exc)
 

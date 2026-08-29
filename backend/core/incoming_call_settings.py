@@ -23,6 +23,7 @@ from backend.core.incoming_call_types import (
     ResolvedProfileDecision,
 )
 from backend.core.incoming_line_mode import resolve_incoming_line_mode
+from backend.core.incoming_call_audio import sync_edge_tts_from_audio
 
 
 def _default_presets() -> Dict[str, IncomingCallPresetConfig]:
@@ -161,6 +162,8 @@ def apply_incoming_call_settings(config: Config, settings: IncomingCallSettingsD
   config.whitelist_ring_only = bool(settings.whitelist_ring_only)
   if settings.audio and settings.audio.edge_tts_rate:
     config.edge_tts_rate = str(settings.audio.edge_tts_rate)
+  if settings.audio:
+    sync_edge_tts_from_audio(config, settings.audio)
   vm = settings.voicemail
   if vm:
     config.voicemail_max_duration = int(vm.max_record_sec)

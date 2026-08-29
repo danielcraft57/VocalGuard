@@ -80,6 +80,7 @@ class VoiceSynthesis:
         save_to_file: Optional[Path] = None,
         *,
         rate: Optional[str] = None,
+        pitch: Optional[str] = None,
     ) -> Optional[Path]:
         """
         Génère la parole à partir du texte
@@ -88,6 +89,7 @@ class VoiceSynthesis:
             text: Texte à prononcer
             save_to_file: Chemin optionnel pour sauvegarder l'audio
             rate: Vitesse edge-tts (ex. "+12%"), ignoré pour les autres moteurs
+            pitch: Hauteur edge-tts (ex. "+2Hz"), ignoré pour les autres moteurs
             
         Returns:
             Chemin du fichier audio généré (si sauvegardé)
@@ -102,7 +104,7 @@ class VoiceSynthesis:
         elif self.engine == "gtts":
             return await self._speak_gtts(text, save_to_file)
         elif self.engine == "edgetts":
-            return await self._speak_edgetts(text, save_to_file)
+            return await self._speak_edgetts(text, save_to_file, rate=rate, pitch=pitch)
         else:
             raise ValueError(f"Moteur non supporté: {self.engine}")
     
@@ -155,15 +157,22 @@ class VoiceSynthesis:
         save_to_file: Optional[Path] = None,
         *,
         rate: Optional[str] = None,
+        pitch: Optional[str] = None,
     ) -> Optional[Path]:
         """Synthétise avec edge-tts (Microsoft, nombreuses voix)."""
         try:
             import edge_tts
-            voice = getattr(self.config, "edge_tts_voice", None) or "fr-FR-DeniseNeural"
+            voice = getattr(self.config, "edge_tts_voice", None) or "fr-FR-HenriNeural"
             speech_rate = rate or getattr(self.config, "edge_tts_rate", None) or "+0%"
+            speech_pitch = pitch or getattr(self.config, "edge_tts_pitch", None) or "+0Hz"
             if not save_to_file:
                 save_to_file = self.cache_dir / f"temp_{hash(text)}.mp3"
-            communicate = edge_tts.Communicate(text, voice, rate=speech_rate)
+            communicate = edge_tts.Communicate(
+                text,
+                voice,
+                rate=speech_rate,
+                pitch=speech_pitch,
+            )
             await communicate.save(str(save_to_file))
             logger.debug(f"Audio généré avec edge-tts: {save_to_file}")
             return save_to_file

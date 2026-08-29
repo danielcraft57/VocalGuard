@@ -65,8 +65,9 @@ class Config(BaseSettings):
     voice_recognition_engine: str = Field(default="whisper")  # whisper ou vosk
     voice_synthesis_engine: str = Field(default="pyttsx3")  # pyttsx3, gtts ou edgetts
     voice_language: str = Field(default="fr")
-    edge_tts_voice: Optional[str] = Field(default="fr-FR-DeniseNeural")  # pour edgetts (ex. fr-FR-HenriNeural)
-    edge_tts_rate: str = Field(default="+12%")  # vitesse IVR edge-tts (ex. +12%)
+    edge_tts_voice: Optional[str] = Field(default="fr-FR-HenriNeural")  # pour edgetts
+    edge_tts_rate: str = Field(default="+0%")  # vitesse IVR edge-tts
+    edge_tts_pitch: str = Field(default="+2Hz")  # hauteur edge-tts (ex. +2Hz)
     
     # Whisper
     whisper_model: str = Field(default="base")

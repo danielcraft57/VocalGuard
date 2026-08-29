@@ -23,6 +23,7 @@ from backend.core.incoming_call_policy import IncomingCallPolicy
 from backend.core.incoming_call_audio import (
     blocked_message_text,
     ensure_default_voice_assets,
+    greeting_intro_path,
     greeting_text,
     pick_wav_or_none,
     resolve_resource_path,
@@ -888,22 +889,18 @@ class CallManager:
 
             greeting = self._greeting_text()
             audio = self._audio_settings()
-            played = await self._play_configured_message(
-                source=audio.greeting_source,
-                wav_path=audio.greeting_wav_path,
-                tts_text=greeting,
-                fallback_text=greeting,
+            played = await self._play_greeting_sequence(
+                greeting=greeting,
+                audio=audio,
                 already_in_voice_mode=True,
                 recorder=None,
             )
             if not played and skip_modem_answer:
                 logger.warning("Accueil echoue apres seize — reprise ligne voix puis nouvel essai")
                 await self.modem.prepare_voice_line_after_seize()
-                played = await self._play_configured_message(
-                    source=audio.greeting_source,
-                    wav_path=audio.greeting_wav_path,
-                    tts_text=greeting,
-                    fallback_text=greeting,
+                played = await self._play_greeting_sequence(
+                    greeting=greeting,
+                    audio=audio,
                     already_in_voice_mode=True,
                     recorder=None,
                 )
@@ -1265,6 +1262,46 @@ class CallManager:
             if rec:
                 await rec.resume(already_in_voice_mode=True)
 
+    async def _play_greeting_sequence(
+        self,
+        *,
+        greeting: str,
+        audio,
+        already_in_voice_mode: bool = False,
+        recorder: Optional[_IncomingLineRecorder] = None,
+    ) -> bool:
+        """
+        Joue l'intro musicale (si configuree) puis le message d'accueil.
+
+        @param greeting Texte d'accueil effectif.
+        @param audio Bloc IncomingCallAudioConfig.
+        @param already_in_voice_mode Deja en mode voix modem.
+        @param recorder Enregistreur parallele.
+        @returns True si au moins la voix d'accueil a ete jouee.
+        """
+        intro = greeting_intro_path(self.config, audio)
+        if intro and intro.is_file():
+            logger.info("Intro accueil: {}", intro.name)
+            intro_ok = await self._play_wav_file_on_line(
+                intro,
+                already_in_voice_mode=already_in_voice_mode,
+                recorder=recorder,
+            )
+            if not intro_ok:
+                logger.warning("Intro musicale echouee — poursuite vers message vocal")
+            elif getattr(self.modem, "_playback_interrupted", False):
+                return False
+            already_in_voice_mode = True
+
+        return await self._play_configured_message(
+            source=audio.greeting_source,
+            wav_path=audio.greeting_wav_path,
+            tts_text=greeting,
+            fallback_text=greeting,
+            already_in_voice_mode=already_in_voice_mode,
+            recorder=recorder,
+        )
+
     async def _play_configured_message(
         self,
         *,
@@ -1369,7 +1406,8 @@ class CallManager:
         if not out_wav:
             temp_tts = await self.voice_synthesis.speak(
                 text,
-                rate=getattr(self.config, "edge_tts_rate", "+12%"),
+                rate=getattr(self.config, "edge_tts_rate", "+0%"),
+                pitch=getattr(self.config, "edge_tts_pitch", "+0Hz"),
             )
             if not temp_tts or not Path(temp_tts).exists():
                 return False

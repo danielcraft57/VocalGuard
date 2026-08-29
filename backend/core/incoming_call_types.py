@@ -25,6 +25,7 @@ IncomingLineMode = Literal["voicemail", "phone"]
 WhitelistMatchMode = Literal["exact", "prefix", "e164_normalize"]
 AudioSource = Literal["tts", "wav"]
 RecordBeepMode = Literal["wav", "dtmf", "none"]
+GreetingIntroMode = Literal["none", "jingle", "wav"]
 
 
 class IncomingProfileConfig(BaseModel):
@@ -73,7 +74,12 @@ class IncomingCallAudioConfig(BaseModel):
   blocked_tts_text: Optional[str] = None
   record_beep: RecordBeepMode = "wav"
   record_beep_wav_path: Optional[str] = "resources/voice/beep.wav"
-  edge_tts_rate: str = "+12%"
+  edge_tts_rate: str = "+0%"
+  edge_tts_voice: str = "fr-FR-HenriNeural"
+  edge_tts_pitch: str = "+2Hz"
+  greeting_intro_mode: GreetingIntroMode = "jingle"
+  greeting_intro_wav_path: Optional[str] = "resources/voice/greeting_intro.wav"
+  greeting_intro_sec: float = Field(default=4.0, ge=0.5, le=15.0)
 
 
 class IncomingVoicemailConfig(BaseModel):

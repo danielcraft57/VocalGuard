@@ -22,6 +22,7 @@ export type VgAudioSourcePickerProps = {
   ttsText: string;
   onTtsTextChange: (text: string) => void;
   ttsMultiline?: boolean;
+  ttsPlaceholder?: string;
   disabled?: boolean;
 };
 
@@ -37,6 +38,7 @@ export function VgAudioSourcePicker({
   ttsText,
   onTtsTextChange,
   ttsMultiline = true,
+  ttsPlaceholder,
   disabled = false
 }: VgAudioSourcePickerProps) {
   return (
@@ -75,6 +77,8 @@ export function VgAudioSourcePicker({
           disabled={disabled}
           multiline={ttsMultiline}
           minRows={ttsMultiline ? 3 : 1}
+          placeholder={ttsPlaceholder}
+          helperText={ttsPlaceholder ? "Balises <break time=\"400ms\"/> supportees (Edge TTS)" : undefined}
         />
       )}
     </Stack>

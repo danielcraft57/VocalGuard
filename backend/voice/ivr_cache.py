@@ -18,8 +18,8 @@ if TYPE_CHECKING:
     from backend.voice.synthesis import VoiceSynthesis
 
 
-def ivr_content_hash(text: str, engine: str, voice: str, speech_rate: str = "+0%") -> str:
-    raw = f"{engine}\0{voice}\0{speech_rate}\0{text.strip()}"
+def ivr_content_hash(text: str, engine: str, voice: str, speech_rate: str = "+0%", speech_pitch: str = "+0Hz") -> str:
+    raw = f"{engine}\0{voice}\0{speech_rate}\0{speech_pitch}\0{text.strip()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -40,12 +40,21 @@ class IvrAudioCache:
         return self.cache_dir / f"{basename}.wav"
 
     def _speech_rate(self) -> str:
-        return (getattr(self.config, "edge_tts_rate", None) or "+12%").strip()
+        return (getattr(self.config, "edge_tts_rate", None) or "+0%").strip()
+
+    def _speech_pitch(self) -> str:
+        return (getattr(self.config, "edge_tts_pitch", None) or "+0Hz").strip()
 
     def _current_hash(self, text: str) -> str:
         engine = self.synthesis.engine
         voice = getattr(self.config, "edge_tts_voice", "") or ""
-        return ivr_content_hash(text, engine, voice, self._speech_rate())
+        return ivr_content_hash(
+            text,
+            engine,
+            voice,
+            self._speech_rate(),
+            self._speech_pitch(),
+        )
 
     def is_fresh(self, basename: str, text: str) -> bool:
         wav = self._wav_path(basename)
@@ -77,7 +86,11 @@ class IvrAudioCache:
             logger.warning("pydub manquant pour le cache IVR")
             return None
 
-        temp = await self.synthesis.speak(text, rate=self._speech_rate())
+        temp = await self.synthesis.speak(
+            text,
+            rate=self._speech_rate(),
+            pitch=self._speech_pitch(),
+        )
         if not temp or not Path(temp).exists():
             logger.warning("TTS echoue pour cache IVR {}", basename)
             return None
