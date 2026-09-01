@@ -638,6 +638,28 @@ class IncomingCallConfigPatch(BaseModel):
     advanced: Optional[Dict[str, Any]] = None
 
 
+class GreetingPreviewRequest(BaseModel):
+    """Parametres optionnels pour generer un apercu audio accueil."""
+
+    audio: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Patch audio du formulaire (meme si non encore sauvegarde).",
+    )
+
+
+class GreetingAudioStatusResponse(BaseModel):
+    """Etat ou resultat de regeneration du cache accueil."""
+
+    track_wav: Optional[str] = None
+    voice_wav: Optional[str] = None
+    duration_sec: Optional[float] = None
+    voice: str = ""
+    pitch: str = ""
+    rate: str = ""
+    text: str = ""
+    regenerated_at: Optional[str] = None
+
+
 class MobileClaimRequest(BaseModel):
     """Echange d'un code QR d'appairage mobile contre un token API."""
 

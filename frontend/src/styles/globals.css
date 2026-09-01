@@ -1487,6 +1487,20 @@ html.vg-theme-dark .vg-card--static:hover {
   margin-bottom: 1rem;
 }
 
+.vg-btn-tonal--spin {
+  opacity: 0.85;
+  animation: vg-refresh-pulse 1.2s ease-in-out infinite;
+}
+
+.vg-btn-tonal--success {
+  background: var(--vg-primary-200) !important;
+  animation: vg-refresh-pop 0.45s ease-out;
+}
+
+.vg-icon-spin {
+  animation: vg-spin 0.85s linear infinite;
+}
+
 .vg-btn-filled {
   display: inline-flex;
   align-items: center;
@@ -1524,12 +1538,21 @@ html.vg-theme-dark .vg-card--static:hover {
   font-size: 0.8125rem;
   font-weight: 500;
   background: var(--vg-primary-100);
-  color: var(--vg-primary-800);
-  transition: background var(--vg-transition-fast), opacity var(--vg-transition-fast);
+  color: var(--vg-primary-700);
+  transition:
+    background var(--vg-transition-fast),
+    transform 0.18s ease,
+    box-shadow 0.18s ease;
 }
 
 .vg-btn-tonal:hover:not(:disabled) {
   background: var(--vg-primary-200);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(34, 197, 94, 0.18);
+}
+
+.vg-btn-tonal:active:not(:disabled) {
+  transform: scale(0.97);
 }
 
 .vg-btn-tonal:disabled {
@@ -1760,9 +1783,171 @@ html.vg-theme-dark .vg-search-field input {
   border-color: var(--vg-color-primary);
 }
 
+/* ---------- Table Appels (compacte) ---------- */
+
+.vg-calls-table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.vg-calls-row {
+  cursor: pointer;
+}
+
+.vg-calls-col-check {
+  width: 2.25rem;
+  padding-left: 0.55rem !important;
+  padding-right: 0.35rem !important;
+}
+
+.vg-calls-col-date {
+  width: 7.5rem;
+}
+
+.vg-calls-col-contact {
+  width: 11rem;
+}
+
+.vg-calls-col-statut {
+  width: 10.5rem;
+}
+
+.vg-calls-col-duration {
+  width: 6.75rem;
+}
+
+.vg-calls-col-reputation {
+  width: 8.5rem;
+}
+
+.vg-calls-col-actions {
+  width: 7.5rem;
+}
+
+.vg-table--material.vg-calls-table td {
+  padding: 0.62rem 0.75rem;
+}
+
+.vg-calls-date {
+  white-space: nowrap;
+  font-size: 0.8125rem;
+}
+
+.vg-call-contact {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-width: 0;
+}
+
+.vg-call-direction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 999px;
+  flex-shrink: 0;
+}
+
+.vg-call-direction--in {
+  background: rgba(34, 197, 94, 0.14);
+  color: var(--vg-color-primary);
+}
+
+.vg-call-direction--out {
+  background: rgba(14, 165, 233, 0.14);
+  color: var(--vg-color-accent);
+}
+
+.vg-call-direction .material-icons {
+  font-size: 16px;
+}
+
+.vg-call-contact-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  min-width: 0;
+}
+
+.vg-call-phone {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vg-call-direction-label {
+  font-size: 0.68rem;
+  color: var(--vg-color-text-muted);
+  letter-spacing: 0.02em;
+}
+
+.vg-call-statut {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.vg-call-profile-wrap .MuiChip-root {
+  height: 22px;
+  font-size: 0.68rem;
+}
+
+.vg-call-intent {
+  font-size: 0.68rem;
+}
+
+.vg-call-duration {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8125rem;
+  white-space: nowrap;
+  color: var(--vg-color-text);
+}
+
+.vg-call-reputation-empty {
+  color: var(--vg-color-text-muted);
+  font-size: 0.9rem;
+}
+
+.vg-call-transcript-snippet {
+  margin-top: 0.2rem;
+  font-size: 0.68rem;
+  color: var(--vg-color-text-muted);
+  max-width: 10rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vg-icon-btn-group--compact {
+  gap: 0.1rem;
+}
+
+.vg-icon-btn--sm {
+  width: 32px;
+  height: 32px;
+}
+
+.vg-icon-btn--sm .material-icons {
+  font-size: 18px;
+}
+
 @media (max-width: 900px) {
   .vg-calls-col-hide-sm {
     display: none;
+  }
+
+  .vg-calls-col-contact {
+    width: auto;
+  }
+
+  .vg-calls-col-statut {
+    width: 8.5rem;
   }
 }
 
@@ -1812,6 +1997,28 @@ html.vg-theme-dark .vg-search-field input {
 @keyframes vg-spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes vg-refresh-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(34, 197, 94, 0);
+  }
+}
+
+@keyframes vg-refresh-pop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.04);
+  }
+  100% {
+    transform: scale(1);
   }
 }
 

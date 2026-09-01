@@ -11,6 +11,7 @@ from typing import Optional
 
 from backend.core.config import Config
 from backend.core.incoming_call_settings import (
+    apply_incoming_call_settings,
     load_incoming_call_settings,
     resolve_profile_decision,
 )
@@ -104,12 +105,11 @@ class IncomingCallPolicy:
   def reload(self) -> None:
     """Recharge la configuration depuis disque + Config."""
     self.settings = load_incoming_call_settings(self._config)
-    apply_on_config = getattr(self._config, "incoming_call_settings", None)
-    if apply_on_config is None:
-      try:
-        self._config.incoming_call_settings = self.settings  # type: ignore[attr-defined]
-      except Exception:
-        pass
+    apply_incoming_call_settings(self._config, self.settings)
+    try:
+      self._config.incoming_call_settings = self.settings  # type: ignore[attr-defined]
+    except Exception:
+      pass
 
   def resolve_sync(
       self,

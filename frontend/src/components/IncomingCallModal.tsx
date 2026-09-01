@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   Box,
   Button,
@@ -17,6 +17,7 @@ import RingVolumeIcon from "@mui/icons-material/RingVolume";
 import type { IncomingLiveCall, IncomingLivePhase } from "../hooks/useIncomingCallLive";
 import { VgProfileChip, type IncomingProfileKind } from "./mui/VgProfileChip";
 import { playIncomingAlertSound } from "../utils/telephonySounds";
+import { hangupIncomingCall } from "../services/callsApi";
 
 type Props = {
   live: IncomingLiveCall | null;
@@ -45,12 +46,22 @@ function phaseToProfile(phase: IncomingLivePhase): IncomingProfileKind | null {
   return null;
 }
 
+function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 /**
  * Modale plein ecran Material pour un appel entrant (evenements WS).
  */
 export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElement {
   const theme = useTheme();
   const open = Boolean(live);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [hangingUp, setHangingUp] = useState(false);
+  const [hangupError, setHangupError] = useState<string | null>(null);
 
   const displayNumber = useMemo(() => {
     if (!live) return "Inconnu";
@@ -63,6 +74,24 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
     const id = window.setInterval(() => playIncomingAlertSound(), 2200);
     return () => window.clearInterval(id);
   }, [live?.callId, live?.phase]);
+
+  useEffect(() => {
+    if (!live || (live.phase !== "ringing" && live.phase !== "answered")) {
+      setElapsedMs(0);
+      return;
+    }
+    const tick = () => setElapsedMs(Date.now() - live.startedAt);
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [live?.callId, live?.phase, live?.startedAt]);
+
+  useEffect(() => {
+    if (!live) {
+      setHangingUp(false);
+      setHangupError(null);
+    }
+  }, [live?.callId]);
 
   const phase = live?.phase ?? "ringing";
   const isActive = phase === "ringing" || phase === "answered";
@@ -78,14 +107,38 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
     phase === "blocked" ? BlockIcon : phase === "ended" ? CallEndIcon : RingVolumeIcon;
   const liveProfile = phaseToProfile(phase);
 
+  const handleHangup = async () => {
+    if (!live || hangingUp) return;
+    setHangingUp(true);
+    setHangupError(null);
+    try {
+      await hangupIncomingCall(live.callId);
+      onDismiss();
+    } catch (err) {
+      setHangupError(err instanceof Error ? err.message : "Echec raccrochage");
+      setHangingUp(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!live || (live.phase !== "ringing" && live.phase !== "answered")) return;
+    const id = window.setTimeout(() => onDismiss(), 45_000);
+    return () => window.clearTimeout(id);
+  }, [live?.callId, live?.phase, onDismiss]);
+
   return (
     <Dialog
       fullScreen
       open={open}
-      onClose={() => {
-        if (!isActive) onDismiss();
-      }}
+      onClose={onDismiss}
       aria-labelledby="vg-incoming-title"
+      slotProps={{
+        paper: {
+          sx: {
+            animation: "vg-incoming-fade 0.25s ease-out"
+          }
+        }
+      }}
     >
       <Box
         sx={{
@@ -110,10 +163,10 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
             justifyContent: "center",
             mb: 3,
             bgcolor: `${phaseColor}22`,
-            animation: isActive ? "vg-pulse 1.6s ease-in-out infinite" : "none",
-            "@keyframes vg-pulse": {
+            animation: isActive ? "vg-incoming-ring 1.6s ease-in-out infinite" : "none",
+            "@keyframes vg-incoming-ring": {
               "0%, 100%": { transform: "scale(1)", opacity: 1 },
-              "50%": { transform: "scale(1.06)", opacity: 0.85 }
+              "50%": { transform: "scale(1.08)", opacity: 0.88 }
             }
           }}
         >
@@ -130,11 +183,31 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
         >
           {phaseLabel(phase)}
         </Typography>
-        <Chip label={phaseLabel(phase)} size="small" color="primary" variant="outlined" sx={{ mb: 1 }} />
-        {liveProfile ? <VgProfileChip profile={liveProfile} /> : null}
+        <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", justifyContent: "center", mb: 1 }}>
+          <Chip label={phaseLabel(phase)} size="small" color="primary" variant="outlined" />
+          {liveProfile ? <VgProfileChip profile={liveProfile} /> : null}
+        </Box>
+
+        {(phase === "ringing" || phase === "answered") && (
+          <Typography
+            variant="h4"
+            component="p"
+            sx={{
+              fontVariantNumeric: "tabular-nums",
+              fontWeight: 700,
+              letterSpacing: "0.06em",
+              mb: 1,
+              animation: "vg-incoming-pop 0.35s ease-out"
+            }}
+          >
+            {formatElapsed(elapsedMs)}
+          </Typography>
+        )}
+
         {phase === "ringing" ? (
-          <LinearProgress sx={{ width: "100%", maxWidth: 280, my: 2 }} />
+          <LinearProgress sx={{ width: "100%", maxWidth: 280, my: 2, borderRadius: 2 }} />
         ) : null}
+
         <Typography variant="h3" component="h2" gutterBottom sx={{ fontWeight: 600 }}>
           {displayNumber}
         </Typography>
@@ -147,7 +220,7 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
             {phase === "answered"
               ? "Repondeur VocalGuard"
               : phase === "ringing"
-                ? "Identification en cours..."
+                ? "Decrochage automatique..."
                 : "\u00a0"}
           </Typography>
         )}
@@ -158,20 +231,57 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
           </Typography>
         ) : null}
 
-        <Box sx={{ mt: 4, display: "flex", flexDirection: "column", gap: 1.5, alignItems: "center" }}>
+        <Box
+          sx={{
+            mt: 4,
+            display: "flex",
+            flexDirection: "column",
+            gap: 2,
+            alignItems: "center",
+            width: "100%",
+            maxWidth: 320
+          }}
+        >
           {isActive ? (
             <>
+              {phase === "answered" ? (
+                <Button
+                  variant="contained"
+                  color="error"
+                  size="large"
+                  fullWidth
+                  disabled={hangingUp}
+                  onClick={() => void handleHangup()}
+                  startIcon={<CallEndIcon />}
+                  sx={{
+                    py: 1.5,
+                    borderRadius: 999,
+                    fontWeight: 700,
+                    boxShadow: 4,
+                    transition: "transform 0.15s ease",
+                    "&:hover:not(:disabled)": { transform: "scale(1.02)" },
+                    "&:active:not(:disabled)": { transform: "scale(0.98)" }
+                  }}
+                >
+                  {hangingUp ? "Raccrochage..." : "Raccrocher"}
+                </Button>
+              ) : null}
+              {hangupError ? (
+                <Typography variant="body2" color="error.main">
+                  {hangupError}
+                </Typography>
+              ) : null}
               <Typography variant="body2" color="text.secondary">
                 {phase === "ringing"
-                  ? "Decrochage automatique..."
-                  : "Se ferme a la fin de l'appel"}
+                  ? "Sonnerie en cours — decrochage auto"
+                  : "Messagerie active — raccrochez pour couper l'appel"}
               </Typography>
-              <Button variant="outlined" size="large" onClick={onDismiss}>
+              <Button variant="outlined" size="large" fullWidth onClick={onDismiss}>
                 Masquer
               </Button>
             </>
           ) : (
-            <Button variant="contained" size="large" onClick={onDismiss}>
+            <Button variant="contained" size="large" fullWidth onClick={onDismiss}>
               Fermer
             </Button>
           )}

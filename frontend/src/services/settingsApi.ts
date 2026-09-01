@@ -47,6 +47,17 @@ export type IncomingCallConfigPatch = Partial<
   >
 >;
 
+export type GreetingAudioStatus = {
+  track_wav?: string | null;
+  voice_wav?: string | null;
+  duration_sec?: number | null;
+  voice: string;
+  pitch: string;
+  rate: string;
+  text: string;
+  regenerated_at?: string | null;
+};
+
 export type SettingsSnapshot = {
   database_url: string;
   api_host: string;
@@ -120,6 +131,66 @@ export async function patchIncomingCallConfig(
     throw new Error(detail);
   }
   return (await res.json()) as IncomingCallConfig;
+}
+
+/**
+ * Etat du cache accueil sur le modem.
+ */
+export async function fetchGreetingAudioStatus(): Promise<GreetingAudioStatus> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/greeting/status`);
+  if (!res.ok) {
+    throw new Error(`Erreur statut accueil: ${res.status}`);
+  }
+  return (await res.json()) as GreetingAudioStatus;
+}
+
+/**
+ * Genere un apercu WAV ecoute selon le bloc audio fourni.
+ */
+export async function previewGreetingAudio(
+  audio?: Record<string, unknown>
+): Promise<Blob> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/greeting/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(audio ? { audio } : {})
+  });
+  if (!res.ok) {
+    let detail = `Erreur apercu accueil: ${res.status}`;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      const text = await res.text();
+      if (text) detail = text.slice(0, 200);
+    }
+    throw new Error(detail);
+  }
+  return await res.blob();
+}
+
+/**
+ * Regenere le cache WAV accueil sur le modem (parametres audio fournis ou sauvegardes).
+ */
+export async function regenerateGreetingAudio(
+  audio?: Record<string, unknown>
+): Promise<GreetingAudioStatus> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/greeting/regenerate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(audio ? { audio } : {})
+  });
+  if (!res.ok) {
+    let detail = `Erreur regeneration accueil: ${res.status}`;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  return (await res.json()) as GreetingAudioStatus;
 }
 
 /**

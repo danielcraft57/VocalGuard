@@ -50,8 +50,8 @@ export function useIncomingCallConfig() {
 
   const dirty = Object.keys(draft).length > 0;
 
-  const save = useCallback(async () => {
-    if (!dirty) return;
+  const save = useCallback(async (): Promise<boolean> => {
+    if (!dirty) return true;
     setSaving(true);
     setError(null);
     setSuccess(null);
@@ -60,8 +60,10 @@ export function useIncomingCallConfig() {
       setConfig(updated);
       setDraft({});
       setSuccess("Parametres enregistres");
+      return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Echec enregistrement");
+      return false;
     } finally {
       setSaving(false);
     }

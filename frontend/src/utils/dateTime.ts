@@ -41,3 +41,39 @@ export function formatApiDateTime(
     }
   );
 }
+
+/**
+ * Affiche une date API en relatif (ex. « Il y a 5 min »).
+ *
+ * @param value ISO date string depuis l'API.
+ * @param nowMs Horloge de reference (ms), pour tests ou rafraichissement UI.
+ * @returns Libelle relatif en francais.
+ */
+export function formatApiRelativeTime(
+  value: string | null | undefined,
+  nowMs: number = Date.now()
+): string {
+  const d = parseApiUtcDate(value);
+  if (Number.isNaN(d.getTime())) return "-";
+  const diffSec = Math.max(0, Math.floor((nowMs - d.getTime()) / 1000));
+  if (diffSec < 45) return "Il y a quelques secondes";
+  if (diffSec < 90) return "Il y a 1 min";
+  if (diffSec < 3600) return `Il y a ${Math.floor(diffSec / 60)} min`;
+  if (diffSec < 7200) return "Il y a 1 h";
+  if (diffSec < 86400) return `Il y a ${Math.floor(diffSec / 3600)} h`;
+  if (diffSec < 172800) return "Il y a 1 jour";
+  return `Il y a ${Math.floor(diffSec / 86400)} jours`;
+}
+
+/**
+ * Formate une duree en minutes et secondes (ex. « 0 min 20 s », « 1 min 05 s »).
+ *
+ * @param totalSec Duree totale en secondes.
+ * @returns Libelle lisible en francais.
+ */
+export function formatDurationMinSec(totalSec: number): string {
+  if (!Number.isFinite(totalSec) || totalSec <= 0) return "0 min 00 s";
+  const minutes = Math.floor(totalSec / 60);
+  const seconds = Math.floor(totalSec % 60);
+  return `${minutes} min ${seconds.toString().padStart(2, "0")} s`;
+}

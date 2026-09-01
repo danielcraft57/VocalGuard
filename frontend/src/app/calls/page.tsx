@@ -20,7 +20,12 @@ import {
 } from "../../services/callsApi";
 import { getWsBaseUrl } from "../../services/httpClient";
 import { useOutgoingCallAudio, unlockOutgoingAudioContext } from "../../hooks/useOutgoingCallAudio";
-import { formatApiDateTime } from "../../utils/dateTime";
+import {
+  formatApiDateTime,
+  formatApiRelativeTime,
+  formatDurationMinSec,
+  parseApiUtcDate
+} from "../../utils/dateTime";
 import { getCallIncomingProfile, getCallPolicySource } from "../../utils/callProfile";
 
 function formatStatus(status: string): { label: string; className: string } {
@@ -57,25 +62,28 @@ function getCallDirection(call: CallWithOsint): "in" | "out" {
   return "in";
 }
 
-function formatDirection(dir: "in" | "out"): React.ReactNode {
-  if (dir === "out") {
-    return (
-      <span className="vg-badge vg-badge-info" title="Appel sortant">
-        <span className="material-icons" style={{ fontSize: "14px", marginRight: "0.15rem" }}>
-          call_made
-        </span>
-        Sortant
-      </span>
-    );
+/**
+ * Duree d'appel en secondes (champ API ou delta answer/end).
+ */
+function getCallDurationSec(call: CallWithOsint): number {
+  let totalSec = Number(call.duration ?? 0);
+  if (!Number.isFinite(totalSec) || totalSec <= 0) {
+    if (call.answer_time && call.end_time) {
+      const start = parseApiUtcDate(call.answer_time).getTime();
+      const end = parseApiUtcDate(call.end_time).getTime();
+      if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+        totalSec = Math.floor((end - start) / 1000);
+      }
+    }
   }
-  return (
-    <span className="vg-badge vg-badge-success" title="Appel entrant">
-      <span className="material-icons" style={{ fontSize: "14px", marginRight: "0.15rem" }}>
-        call_received
-      </span>
-      Entrant
-    </span>
-  );
+  return Number.isFinite(totalSec) && totalSec > 0 ? totalSec : 0;
+}
+
+/**
+ * Formate la duree d'appel en minutes et secondes.
+ */
+function formatCallDuration(call: CallWithOsint): string {
+  return formatDurationMinSec(getCallDurationSec(call));
 }
 
 /** Categorie de reputation pour affichage et filtres */
@@ -231,6 +239,8 @@ export default function CallsPage() {
   const [calls, setCalls] = useState<CallWithOsint[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshDone, setRefreshDone] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>(FILTER_STATUS_ALL);
   const [filterReputation, setFilterReputation] = useState<string>(FILTER_REP_ALL);
   const [filterProfile, setFilterProfile] = useState<string>(FILTER_PROFILE_ALL);
@@ -250,6 +260,7 @@ export default function CallsPage() {
   const [detailCall, setDetailCall] = useState<CallWithOsint | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [relativeNowMs, setRelativeNowMs] = useState(() => Date.now());
   const dialerLogsEndRef = useRef<HTMLDivElement | null>(null);
   const dialerCallIdRef = useRef<number | null>(null);
   dialerCallIdRef.current = dialerCallId;
@@ -275,29 +286,34 @@ export default function CallsPage() {
     return () => cancelAnimationFrame(id);
   }, [dialerLogs, dialerOpen]);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
+  const reloadCalls = React.useCallback(async (opts?: { silent?: boolean }) => {
+    const silent = Boolean(opts?.silent);
+    if (!silent) setRefreshing(true);
+    setRefreshDone(false);
     setError(null);
-    fetchCallsWithOsint()
-      .then((data) => {
-        if (!cancelled) {
-          setCalls(data);
-          setError(null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setError("Impossible de contacter l'API VocalGuard (assure-toi que le backend tourne).");
-          setCalls([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    try {
+      const data = await fetchCallsWithOsint();
+      setCalls(data);
+      if (!silent) {
+        setRefreshDone(true);
+        window.setTimeout(() => setRefreshDone(false), 1200);
+      }
+    } catch {
+      setError("Impossible de contacter l'API VocalGuard (assure-toi que le backend tourne).");
+    } finally {
+      setRefreshing(false);
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void reloadCalls();
+  }, [reloadCalls]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const id = window.setInterval(() => setRelativeNowMs(Date.now()), 30_000);
+    return () => window.clearInterval(id);
   }, []);
 
   const parsed = React.useMemo(() => parseSearchQuery(searchInput), [searchInput]);
@@ -522,17 +538,21 @@ export default function CallsPage() {
   };
 
   const renderCallRow = (call: CallWithOsint): React.ReactNode => {
-    const date = formatApiDateTime(call.call_time, {
+    const dateAbsolute = formatApiDateTime(call.call_time, {
       day: "2-digit",
       month: "2-digit",
+      year: "numeric",
       hour: "2-digit",
       minute: "2-digit"
     });
+    const dateRelative = formatApiRelativeTime(call.call_time, relativeNowMs);
     const phone = call.phone_number ?? "Inconnu";
     const { label: statusLabel, className: statusClass } = formatStatus(call.status);
     const incomingProfile = getCallIncomingProfile(call);
     const policySource = getCallPolicySource(call);
     const direction = getCallDirection(call);
+    const directionLabel = direction === "out" ? "Sortant" : "Entrant";
+    const reputationCat = getReputationCategory(call.osint);
     const intent =
       (call.extra_data && typeof call.extra_data === "object" && "ivr_intent" in call.extra_data
         ? (call.extra_data as { ivr_intent?: string | null }).ivr_intent
@@ -545,10 +565,10 @@ export default function CallsPage() {
     return (
       <tr
         key={call.id}
-        style={{ transition: "background-color 150ms ease-out" }}
-        className="vg-table-row"
+        className="vg-table-row vg-calls-row"
+        onClick={() => void openCallDetail(call.id)}
       >
-        <td style={{ padding: "0.5rem 0.35rem", width: "2rem" }}>
+        <td className="vg-calls-col-check" onClick={(e) => e.stopPropagation()}>
           <input
             type="checkbox"
             checked={selectedIds.has(call.id)}
@@ -563,66 +583,74 @@ export default function CallsPage() {
             aria-label={`Selectionner appel ${call.id}`}
           />
         </td>
-        <td>{date}</td>
-        <td>{formatDirection(direction)}</td>
-        <td>
-          <span className="vg-phone-cell">
-            <span className="material-icons" aria-hidden>
-              {direction === "out" ? "call_made" : "call_received"}
-            </span>
-            <span>{phone}</span>
-          </span>
+        <td className="vg-calls-col-date">
+          <Tooltip title={dateAbsolute}>
+            <span className="vg-calls-date">{dateRelative}</span>
+          </Tooltip>
         </td>
-        <td>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.15rem" }}>
-            <Tooltip title={policySource ? `Decision: ${policySource}` : "Profil policy"}>
-              <span style={{ alignSelf: "flex-start" }}>
-                <VgProfileChip profile={incomingProfile} />
+        <td className="vg-calls-col-contact">
+          <div className="vg-call-contact">
+            <span
+              className={`vg-call-direction vg-call-direction--${direction}`}
+              title={directionLabel}
+              aria-label={directionLabel}
+            >
+              <span className="material-icons" aria-hidden>
+                {direction === "out" ? "call_made" : "call_received"}
               </span>
-            </Tooltip>
-            <span className={statusClass}>{statusLabel}</span>
-            {intent && (
-              <span className="vg-badge vg-badge-info" style={{ alignSelf: "flex-start" }}>
-                Intent: {intent}
-              </span>
-            )}
+            </span>
+            <div className="vg-call-contact-text">
+              <span className="vg-call-phone">{phone}</span>
+              <span className="vg-call-direction-label">{directionLabel}</span>
+            </div>
           </div>
         </td>
-        <td>
-          {formatReputation(call.osint)}
-          {shortTranscript && (
-            <div
-              style={{
-                marginTop: "0.25rem",
-                fontSize: "0.7rem",
-                color: "var(--vg-color-text-muted)",
-                maxWidth: "12rem",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis"
-              }}
-              title={call.transcription ?? undefined}
-            >
+        <td className="vg-calls-col-statut">
+          <div className="vg-call-statut">
+            <span className={statusClass}>{statusLabel}</span>
+            <Tooltip title={policySource ? `Profil policy · ${policySource}` : "Profil appelant"}>
+              <span className="vg-call-profile-wrap">
+                <VgProfileChip profile={incomingProfile} size="small" />
+              </span>
+            </Tooltip>
+            {intent ? (
+              <span className="vg-badge vg-badge-info vg-call-intent">Intent: {intent}</span>
+            ) : null}
+          </div>
+        </td>
+        <td className="vg-calls-col-duration">
+          <span className="vg-call-duration">{formatCallDuration(call)}</span>
+        </td>
+        <td className="vg-calls-col-reputation vg-calls-col-hide-sm">
+          {reputationCat === "unknown" ? (
+            <span className="vg-call-reputation-empty" title="Reputation non evaluee">
+              —
+            </span>
+          ) : (
+            formatReputation(call.osint)
+          )}
+          {shortTranscript ? (
+            <div className="vg-call-transcript-snippet" title={call.transcription ?? undefined}>
               “{shortTranscript}”
             </div>
-          )}
+          ) : null}
         </td>
-        <td>
-          <div className="vg-icon-btn-group">
-            {call.phone_number && (
+        <td className="vg-calls-col-actions" onClick={(e) => e.stopPropagation()}>
+          <div className="vg-icon-btn-group vg-icon-btn-group--compact">
+            {call.phone_number ? (
               <button
                 type="button"
-                className="vg-icon-btn vg-icon-btn--primary"
+                className="vg-icon-btn vg-icon-btn--primary vg-icon-btn--sm"
                 title="Rappeler"
                 aria-label="Rappeler"
                 onClick={() => openDialerWith(call.phone_number!)}
               >
                 <span className="material-icons">phone_callback</span>
               </button>
-            )}
+            ) : null}
             <button
               type="button"
-              className="vg-icon-btn vg-icon-btn--accent"
+              className="vg-icon-btn vg-icon-btn--accent vg-icon-btn--sm"
               title="File OSINT"
               aria-label="Lancer OSINT"
               onClick={() => void handleRowOsint(call.id)}
@@ -631,7 +659,7 @@ export default function CallsPage() {
             </button>
             <button
               type="button"
-              className="vg-icon-btn vg-icon-btn--primary"
+              className="vg-icon-btn vg-icon-btn--primary vg-icon-btn--sm"
               title="Detail"
               aria-label="Detail de l appel"
               onClick={() => void openCallDetail(call.id)}
@@ -641,10 +669,9 @@ export default function CallsPage() {
             {incomingProfile === "blocked" ? (
               <Link
                 href="/filtering"
-                className="vg-icon-btn vg-icon-btn--accent"
+                className="vg-icon-btn vg-icon-btn--accent vg-icon-btn--sm"
                 title="Modifier le filtrage"
                 aria-label="Modifier le filtrage"
-                style={{ display: "inline-flex", alignItems: "center", justifyContent: "center" }}
               >
                 <span className="material-icons">tune</span>
               </Link>
@@ -1085,27 +1112,44 @@ export default function CallsPage() {
         <div style={{ fontSize: "0.85rem", color: "var(--vg-color-text-muted)" }}>
           Historique enrichi OSINT
         </div>
-        <button
-          type="button"
-          className="vg-btn-filled"
-          onClick={() => {
-            setDialerOpen(true);
-            if (dialerStatus !== "dialing" && dialerStatus !== "connected") {
-              dialerCallIdRef.current = null;
-              setDialerCallId(null);
-              setDialerStatus("idle");
-              setDialerTranscriptConfirmed("");
-              setDialerTranscriptLive("");
-              setDialerLogs([]);
-              setDialerError(null);
-            }
-          }}
-        >
-          <span className="material-icons" style={{ fontSize: "18px" }}>
-            dialpad
-          </span>
-          Composer
-        </button>
+        <div style={{ display: "flex", gap: "0.65rem", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            className={`vg-btn-tonal${refreshing ? " vg-btn-tonal--spin" : ""}${refreshDone ? " vg-btn-tonal--success" : ""}`}
+            disabled={refreshing}
+            onClick={() => void reloadCalls()}
+            title="Rafraichir la liste des appels"
+          >
+            <span
+              className={`material-icons${refreshing ? " vg-icon-spin" : ""}`}
+              style={{ fontSize: "18px" }}
+            >
+              {refreshDone ? "check_circle" : "refresh"}
+            </span>
+            {refreshing ? "Actualisation..." : refreshDone ? "A jour" : "Rafraichir"}
+          </button>
+          <button
+            type="button"
+            className="vg-btn-filled"
+            onClick={() => {
+              setDialerOpen(true);
+              if (dialerStatus !== "dialing" && dialerStatus !== "connected") {
+                dialerCallIdRef.current = null;
+                setDialerCallId(null);
+                setDialerStatus("idle");
+                setDialerTranscriptConfirmed("");
+                setDialerTranscriptLive("");
+                setDialerLogs([]);
+                setDialerError(null);
+              }
+            }}
+          >
+            <span className="material-icons" style={{ fontSize: "18px" }}>
+              dialpad
+            </span>
+            Composer
+          </button>
+        </div>
       </div>
       {liveCall && (
         <div
@@ -1191,16 +1235,16 @@ export default function CallsPage() {
             </button>
           </div>
           <div className="vg-calls-table-wrap">
-          <table className="vg-table vg-table--material">
+          <table className="vg-table vg-table--material vg-calls-table">
             <thead>
               <tr>
-                <th style={{ width: "2.5rem" }}>Sel.</th>
-                <th>Date</th>
-                <th>Sens</th>
-                <th>Numero</th>
-                <th>Statut</th>
-                <th>Reputation</th>
-                <th>Actions</th>
+                <th className="vg-calls-col-check" aria-label="Selection" />
+                <th className="vg-calls-col-date">Date</th>
+                <th className="vg-calls-col-contact">Contact</th>
+                <th className="vg-calls-col-statut">Statut</th>
+                <th className="vg-calls-col-duration">Duree</th>
+                <th className="vg-calls-col-reputation vg-calls-col-hide-sm">Reputation</th>
+                <th className="vg-calls-col-actions">Actions</th>
               </tr>
             </thead>
             <tbody>{filteredCalls.map(renderCallRow)}</tbody>
@@ -1286,7 +1330,9 @@ export default function CallsPage() {
                     </div>
                     <div style={{ fontSize: "0.78rem", color: "#6b7280", marginTop: "0.35rem" }}>
                       {formatApiDateTime(detailCall.call_time)} · statut {detailCall.status}
-                      {detailCall.duration != null ? ` · ${detailCall.duration}s` : ""}
+                      {getCallDurationSec(detailCall) > 0
+                        ? ` · ${formatCallDuration(detailCall)}`
+                        : ""}
                     </div>
                   </div>
                   <button

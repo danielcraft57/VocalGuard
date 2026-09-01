@@ -8,10 +8,13 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse
 from loguru import logger
 
 from backend.api.dependencies import get_config
 from backend.api.models import (
+    GreetingAudioStatusResponse,
+    GreetingPreviewRequest,
     IncomingCallConfigPatch,
     IncomingCallConfigResponse,
     IncomingLineModeUpdate,
@@ -23,6 +26,11 @@ from backend.core.incoming_call_settings import (
     apply_incoming_call_settings,
     load_incoming_call_settings,
     patch_incoming_call_settings,
+)
+from backend.services.greeting_audio_service import (
+    build_greeting_listen_preview,
+    get_greeting_cache_status,
+    regenerate_greeting_production_cache,
 )
 from backend.core.incoming_line_mode import (
     apply_incoming_line_mode,
@@ -74,15 +82,18 @@ async def _proxy_settings_json(
     method: str,
     path: str,
     json_body: Optional[dict[str, Any]] = None,
+    *,
+    timeout: float = 15.0,
 ) -> Any:
     """
     Relais HTTP vers le daemon telephonie.
 
     @param request Requete entrante.
     @param config Configuration (URL daemon).
-    @param method GET ou PUT.
+    @param method GET, PUT ou POST.
     @param path Chemin API (ex. /api/v1/settings).
     @param json_body Corps JSON optionnel.
+    @param timeout Delai HTTP secondes.
     @returns JSON parse.
     """
     base = (
@@ -91,10 +102,13 @@ async def _proxy_settings_json(
     url = f"{str(base).strip().rstrip('/')}{path}"
     try:
         async with httpx.AsyncClient() as client:
-            if method.upper() == "GET":
-                r = await client.get(url, timeout=15.0)
+            method_u = method.upper()
+            if method_u == "GET":
+                r = await client.get(url, timeout=timeout)
+            elif method_u == "POST":
+                r = await client.post(url, json=json_body or {}, timeout=timeout)
             else:
-                r = await client.put(url, json=json_body or {}, timeout=15.0)
+                r = await client.put(url, json=json_body or {}, timeout=timeout)
     except httpx.RequestError as exc:
         raise HTTPException(
             status_code=502,
@@ -233,6 +247,131 @@ async def put_incoming_call_settings(
     _reload_call_manager_policy(request, config)
     logger.info("incoming_call settings mis a jour: {}", list(patch.keys()))
     return _incoming_call_payload(config)
+
+
+def _local_call_manager(request: Request):
+    """
+    CallManager du process courant (daemon telephonie).
+
+    @param request Requete FastAPI.
+    @returns CallManager ou None.
+    """
+    return getattr(request.app.state, "call_manager", None)
+
+
+@router.get(
+    "/settings/incoming-call/greeting/status",
+    response_model=GreetingAudioStatusResponse,
+)
+async def get_greeting_audio_status(
+    request: Request,
+    config: Config = Depends(get_config),
+) -> GreetingAudioStatusResponse:
+    """
+    Etat du cache accueil actif sur le modem (fichier, duree, voix TTS).
+    """
+    if _should_proxy_settings_to_daemon(config, request):
+        data = await _proxy_settings_json(
+            request,
+            config,
+            "GET",
+            "/api/v1/settings/incoming-call/greeting/status",
+        )
+        return GreetingAudioStatusResponse(**data)
+    cm = _local_call_manager(request)
+    data = await get_greeting_cache_status(config, cm)
+    return GreetingAudioStatusResponse(**data)
+
+
+@router.post("/settings/incoming-call/greeting/preview")
+async def post_greeting_audio_preview(
+    body: GreetingPreviewRequest,
+    request: Request,
+    config: Config = Depends(get_config),
+) -> FileResponse:
+    """
+    Genere un apercu ecoute (44.1 kHz) selon les parametres audio fournis.
+    """
+    if _should_proxy_settings_to_daemon(config, request):
+        base = (
+            getattr(request.app.state, "telephony_daemon_url", None)
+            or config.telephony_daemon_url
+        )
+        url = f"{str(base).strip().rstrip('/')}/api/v1/settings/incoming-call/greeting/preview"
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.post(
+                    url,
+                    json=body.model_dump(exclude_none=True),
+                    timeout=120.0,
+                )
+        except httpx.RequestError as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Daemon telephonie injoignable pour apercu: {exc}",
+            ) from exc
+        if r.status_code >= 400:
+            raise HTTPException(status_code=r.status_code, detail=r.text[:400])
+        from fastapi.responses import Response
+
+        return Response(
+            content=r.content,
+            media_type=r.headers.get("content-type", "audio/wav"),
+            headers={"Content-Disposition": 'inline; filename="greeting_preview.wav"'},
+        )
+
+    try:
+        wav_path = await build_greeting_listen_preview(
+            config,
+            audio_override=body.audio,
+        )
+    except Exception as exc:
+        logger.exception("Apercu accueil echoue: {}", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return FileResponse(
+        wav_path,
+        media_type="audio/wav",
+        filename="greeting_preview.wav",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post(
+    "/settings/incoming-call/greeting/regenerate",
+    response_model=GreetingAudioStatusResponse,
+)
+async def post_greeting_audio_regenerate(
+    request: Request,
+    body: GreetingPreviewRequest = GreetingPreviewRequest(),
+    config: Config = Depends(get_config),
+) -> GreetingAudioStatusResponse:
+    """
+    Regenere le cache WAV accueil sur le Pi (voix + mix) et recharge le modem.
+
+    Accepte le meme patch audio que l'apercu (parametres formulaire courants).
+    """
+    if _should_proxy_settings_to_daemon(config, request):
+        data = await _proxy_settings_json(
+            request,
+            config,
+            "POST",
+            "/api/v1/settings/incoming-call/greeting/regenerate",
+            body.model_dump(exclude_none=True),
+            timeout=120.0,
+        )
+        return GreetingAudioStatusResponse(**data)
+
+    cm = _local_call_manager(request)
+    try:
+        data = await regenerate_greeting_production_cache(
+            config,
+            cm,
+            audio_override=body.audio,
+        )
+    except Exception as exc:
+        logger.exception("Regeneration accueil echouee: {}", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return GreetingAudioStatusResponse(**data)
 
 
 @router.get("/settings", response_model=SettingsResponse)

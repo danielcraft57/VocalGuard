@@ -17,7 +17,7 @@ param(
     [string]$CertbotEmail = "",
     [string]$CertbotCertName = "vocalguard-multidomain",
     [switch]$HealthCheck,
-    [bool]$EnableTelephonyDaemon = $false
+    [bool]$EnableTelephonyDaemon = $true
 )
 
 $ErrorActionPreference = "Stop"

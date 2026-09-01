@@ -1,5 +1,5 @@
 """
-Resolution des assets audio pour la ligne entrante (WAV / TTS).
+Mise a jour des chemins audio accueil et assets voice (layout resources/voice/).
 """
 
 from __future__ import annotations
@@ -11,14 +11,28 @@ from loguru import logger
 
 from backend.core.config import Config
 from backend.core.incoming_call_types import IncomingCallAudioConfig, IncomingCallSettingsData
-from backend.voice.audio_utils import write_beep_wav_8k, write_greeting_jingle_wav_8k
+from backend.voice.audio_utils import (
+    write_beep_wav_8k,
+    write_greeting_intro_wav,
+)
+from backend.voice.audio_utils import recommended_edge_tts_pitch_for_jingle
+from backend.voice.voice_paths import (
+    BEEP_WAV,
+    BLOCKED_WAV,
+    INTRO_DEFAULT_WAV,
+    WHISPERING_ICELAND_MP3,
+    ensure_voice_tree,
+    intro_variant_path,
+    resolve_beep_wav,
+    resolve_blocked_wav,
+    resolve_intro_wav,
+    resolve_voice_asset,
+    voice_root,
+)
 
 DEFAULT_BLOCKED_TTS = "Desole, cet appel a ete bloque."
 DEFAULT_GREETING_TTS = (
-    "Bonjour. <break time=\"400ms\"/> "
-    "Vous etes bien chez DanielCraft, <break time=\"250ms\"/> "
-    "de Loic Daniel. <break time=\"500ms\"/> "
-    "Merci de laisser votre message apres le bip."
+    "Bonjour, Monsieur Daniel est absent. Merci de laisser un message apres le bip."
 )
 
 
@@ -40,15 +54,7 @@ def resolve_resource_path(config: Config, relative: Optional[str]) -> Optional[P
     @param relative Chemin relatif ou absolu.
     @returns Path absolu si le fichier existe, sinon None.
     """
-    if not relative or not str(relative).strip():
-        return None
-    raw = Path(str(relative).strip())
-    candidate = raw if raw.is_absolute() else project_base(config) / raw
-    try:
-        resolved = candidate.resolve()
-    except OSError:
-        return None
-    return resolved if resolved.is_file() else None
+    return resolve_voice_asset(project_base(config), relative)
 
 
 def greeting_text(config: Config, settings: IncomingCallSettingsData) -> str:
@@ -61,7 +67,8 @@ def greeting_text(config: Config, settings: IncomingCallSettingsData) -> str:
     """
     custom = (settings.audio.greeting_tts_text or "").strip()
     if custom:
-        return custom
+        # YAML multiligne : une seule ligne pour TTS + cle cache stable.
+        return " ".join(custom.split())
     legacy = (getattr(config, "voicemail_greeting", None) or "").strip()
     if legacy:
         return legacy
@@ -79,8 +86,13 @@ def sync_edge_tts_from_audio(config: Config, audio: IncomingCallAudioConfig) -> 
         config.edge_tts_rate = str(audio.edge_tts_rate)
     if audio.edge_tts_voice:
         config.edge_tts_voice = str(audio.edge_tts_voice)
-    if audio.edge_tts_pitch:
-        config.edge_tts_pitch = str(audio.edge_tts_pitch)
+    pitch = (audio.edge_tts_pitch or "").strip()
+    intro_mode = getattr(audio, "greeting_intro_mode", "none") or "none"
+    intro_variant = getattr(audio, "greeting_intro_variant", None) or "sting_marimba"
+    if intro_mode == "jingle" and intro_variant:
+        pitch = recommended_edge_tts_pitch_for_jingle(str(intro_variant))
+    if pitch:
+        config.edge_tts_pitch = pitch
 
 
 def greeting_intro_path(config: Config, audio: IncomingCallAudioConfig) -> Optional[Path]:
@@ -94,24 +106,26 @@ def greeting_intro_path(config: Config, audio: IncomingCallAudioConfig) -> Optio
     mode = getattr(audio, "greeting_intro_mode", "none") or "none"
     if mode == "none":
         return None
+    base = project_base(config)
     if mode == "wav":
-        return resolve_resource_path(
-            config,
-            audio.greeting_intro_wav_path or "resources/voice/greeting_intro.wav",
-        )
-    # jingle genere
-    rel = audio.greeting_intro_wav_path or "resources/voice/greeting_intro.wav"
-    path = resolve_resource_path(config, rel)
-    if path and path.is_file():
-        return path
-    voice_dir = project_base(config) / "resources" / "voice"
-    target = voice_dir / "greeting_intro.wav"
+        return resolve_intro_wav(base, audio.greeting_intro_wav_path)
+    if mode == "track":
+        configured = audio.greeting_intro_wav_path or str(WHISPERING_ICELAND_MP3)
+        return resolve_intro_wav(base, configured)
+    configured = audio.greeting_intro_wav_path or str(INTRO_DEFAULT_WAV)
+    existing = resolve_intro_wav(base, configured)
+    if existing:
+        return existing
+    variant = getattr(audio, "greeting_intro_variant", None) or "sting_marimba"
+    variant_path = intro_variant_path(str(variant), base)
+    default_path = base / INTRO_DEFAULT_WAV
     try:
-        duration_ms = int(float(getattr(audio, "greeting_intro_sec", 4.0) or 4.0) * 1000)
-        write_greeting_jingle_wav_8k(target, duration_ms=duration_ms)
-        return target if target.is_file() else None
+        duration_ms = int(float(getattr(audio, "greeting_intro_sec", 3.2) or 3.2) * 1000)
+        write_greeting_intro_wav(variant_path, variant=str(variant), duration_ms=duration_ms)
+        write_greeting_intro_wav(default_path, variant=str(variant), duration_ms=duration_ms)
+        return default_path if default_path.is_file() else variant_path
     except OSError as exc:
-        logger.warning("greeting_intro jingle: {}", exc)
+        logger.warning("greeting_intro: {}", exc)
         return None
 
 
@@ -128,22 +142,22 @@ def blocked_message_text(settings: IncomingCallSettingsData) -> str:
 
 def ensure_default_voice_assets(config: Config) -> None:
     """
-    Cree les WAV par defaut sous resources/voice/ s'ils manquent.
+    Cree les WAV par defaut (system/ + intros/default.wav).
 
     @param config Configuration (base_path).
     """
-    voice_dir = project_base(config) / "resources" / "voice"
+    base = project_base(config)
     try:
-        voice_dir.mkdir(parents=True, exist_ok=True)
-        beep = voice_dir / "beep.wav"
-        if not beep.is_file():
+        ensure_voice_tree(base)
+        beep = base / BEEP_WAV
+        if not resolve_beep_wav(base):
             write_beep_wav_8k(beep)
-        blocked = voice_dir / "blocked_short.wav"
-        if not blocked.is_file():
+        blocked = base / BLOCKED_WAV
+        if not resolve_blocked_wav(base):
             write_beep_wav_8k(blocked, freq_hz=620, duration_ms=350)
-        intro = voice_dir / "greeting_intro.wav"
+        intro = base / INTRO_DEFAULT_WAV
         if not intro.is_file():
-            write_greeting_jingle_wav_8k(intro)
+            write_greeting_intro_wav(intro, variant="sting_marimba", duration_ms=3200)
     except OSError as exc:
         logger.warning("ensure_default_voice_assets: {}", exc)
 
@@ -180,9 +194,10 @@ def beep_wav_path(config: Config, audio: IncomingCallAudioConfig) -> Optional[Pa
     if audio.record_beep == "none":
         return None
     if audio.record_beep == "wav":
-        found = resolve_resource_path(config, audio.record_beep_wav_path)
+        base = project_base(config)
+        found = resolve_beep_wav(base, audio.record_beep_wav_path)
         if found:
             return found
         ensure_default_voice_assets(config)
-        return resolve_resource_path(config, audio.record_beep_wav_path or "resources/voice/beep.wav")
+        return resolve_beep_wav(base, audio.record_beep_wav_path or str(BEEP_WAV))
     return None

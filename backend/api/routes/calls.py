@@ -1019,6 +1019,31 @@ async def outgoing_hangup(
     return OutgoingCallActionResponse(ok=True, call_id=call_id, message="Raccrochage demande")
 
 
+@router.post("/calls/incoming/{call_id}/hangup", response_model=OutgoingCallActionResponse)
+async def incoming_hangup(
+    call_id: int,
+    request: Request,
+    config: Config = Depends(get_config),
+):
+    """Raccroche un appel entrant en cours (repondeur / messagerie)."""
+    if _should_proxy_outgoing_to_daemon(config, request):
+        return await _proxy_outgoing_to_telephony(
+            request,
+            config,
+            f"/api/v1/calls/incoming/{call_id}/hangup",
+            {},
+        )
+    call_manager = getattr(request.app.state, "call_manager", None)
+    if call_manager is None:
+        raise HTTPException(status_code=503, detail="Call manager indisponible")
+    ok = await call_manager.request_ui_hangup(call_id)
+    return OutgoingCallActionResponse(
+        ok=bool(ok),
+        call_id=call_id,
+        message="Raccrochage demande" if ok else "Appel non actif",
+    )
+
+
 @router.patch("/calls/{call_id}/tag")
 async def patch_call_tag(
     call_id: int,

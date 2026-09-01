@@ -144,6 +144,13 @@ export async function hangupOutgoingCall(callId: number): Promise<OutgoingCallAc
   return postJson<OutgoingCallActionResponse>(`/calls/outgoing/${callId}/hangup`, {});
 }
 
+/**
+ * Raccroche un appel entrant en cours (repondeur).
+ */
+export async function hangupIncomingCall(callId: number): Promise<OutgoingCallActionResponse> {
+  return postJson<OutgoingCallActionResponse>(`/calls/incoming/${callId}/hangup`, {});
+}
+
 export type CallUiTag = "permitted" | "restricted" | "unknown" | "blocked" | "commercial" | "none";
 
 async function patchJson<T>(path: string, body: unknown): Promise<T> {

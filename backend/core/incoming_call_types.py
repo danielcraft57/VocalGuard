@@ -25,7 +25,7 @@ IncomingLineMode = Literal["voicemail", "phone"]
 WhitelistMatchMode = Literal["exact", "prefix", "e164_normalize"]
 AudioSource = Literal["tts", "wav"]
 RecordBeepMode = Literal["wav", "dtmf", "none"]
-GreetingIntroMode = Literal["none", "jingle", "wav"]
+GreetingIntroMode = Literal["none", "jingle", "wav", "track"]
 
 
 class IncomingProfileConfig(BaseModel):
@@ -68,18 +68,47 @@ class IncomingCallAudioConfig(BaseModel):
 
   greeting_source: AudioSource = "tts"
   greeting_wav_path: Optional[str] = None
-  greeting_tts_text: Optional[str] = None
   blocked_source: AudioSource = "wav"
-  blocked_wav_path: Optional[str] = "resources/voice/blocked_short.wav"
+  blocked_wav_path: Optional[str] = "resources/voice/system/blocked_short.wav"
   blocked_tts_text: Optional[str] = None
   record_beep: RecordBeepMode = "wav"
-  record_beep_wav_path: Optional[str] = "resources/voice/beep.wav"
+  record_beep_wav_path: Optional[str] = "resources/voice/system/beep.wav"
   edge_tts_rate: str = "+0%"
-  edge_tts_voice: str = "fr-FR-HenriNeural"
-  edge_tts_pitch: str = "+2Hz"
+  edge_tts_voice: str = "fr-FR-VivienneMultilingualNeural"
+  edge_tts_pitch: str = "+7Hz"
   greeting_intro_mode: GreetingIntroMode = "jingle"
-  greeting_intro_wav_path: Optional[str] = "resources/voice/greeting_intro.wav"
-  greeting_intro_sec: float = Field(default=4.0, ge=0.5, le=15.0)
+  greeting_intro_variant: str = "sting_marimba"
+  greeting_intro_wav_path: Optional[str] = "resources/voice/intros/default.wav"
+  greeting_intro_sec: float = Field(default=2.2, ge=0.0, le=20.0)
+  greeting_intro_crossfade_ms: int = Field(default=280, ge=100, le=2000)
+  greeting_intro_voice_gain_db: float = Field(
+      default=5.0,
+      ge=0.0,
+      le=12.0,
+      description="Gain supplementaire voix d'accueil sur le jingle (dB).",
+  )
+  greeting_intro_voice_bed_db: float = Field(
+      default=-24.0,
+      ge=-40.0,
+      le=0.0,
+      description="Niveau du fond musical sous la voix (dB, 0=desactive).",
+  )
+  greeting_intro_bed_variant: Optional[str] = None
+  greeting_intro_track_duck_db: float = Field(
+      default=0.0,
+      ge=0.0,
+      le=28.0,
+      description="Attenuation musique sous la voix en mode track (0 = auto).",
+  )
+  greeting_intro_music_offset_sec: float = Field(
+      default=0.0,
+      ge=0.0,
+      le=120.0,
+      description="Point de depart dans la piste musicale (secondes).",
+  )
+  greeting_tts_text: Optional[str] = (
+      "Bonjour, Monsieur Daniel est absent. Merci de laisser un message apres le bip."
+  )
 
 
 class IncomingVoicemailConfig(BaseModel):

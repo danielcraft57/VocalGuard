@@ -10,7 +10,7 @@ import time
 import wave
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from loguru import logger
 from sqlalchemy.orm import Session
 
@@ -37,7 +37,17 @@ from backend.core.incoming_call_settings import (
 from backend.voice.recognition import VoiceRecognition
 from backend.voice.synthesis import VoiceSynthesis
 from backend.voice.ivr_patterns import IvrPatternsEngine
-from backend.voice.audio_utils import export_wav_8k_8bit, load_wav_as_16k16bit_pcm, trim_leading_trailing_silence, write_beep_wav_8k
+from backend.voice.audio_utils import (
+    combine_intro_voice_crossfade,
+    combine_music_track_voice_overlay,
+    combine_modem_wav_files,
+    default_bed_variant_for_jingle,
+    export_wav_8k_8bit,
+    load_wav_as_16k16bit_pcm,
+    trim_leading_trailing_silence,
+    tts_source_to_modem_wav,
+    write_beep_wav_8k,
+)
 from backend.voice.ivr_cache import IvrAudioCache
 
 DEFAULT_VOICEMAIL_GREETING = (
@@ -203,6 +213,23 @@ class CallManager:
         
         # Enregistrer les handlers d'événements
         self._setup_event_handlers()
+
+    async def request_ui_hangup(self, call_id: int) -> bool:
+        """
+        Raccrochage demande depuis l'UI pendant un appel entrant actif.
+
+        @param call_id Identifiant de l'appel en cours.
+        @returns True si la demande est acceptee (idempotent si autre appel).
+        """
+        if self.current_call_id is not None and int(call_id) != int(self.current_call_id):
+            return True
+        logger.info("Raccrochage UI pour appel {}", call_id)
+        self.modem._voice_abort = True
+        try:
+            await self.modem.hangup()
+        except Exception as exc:
+            logger.warning("Raccrochage UI modem: {}", exc)
+        return True
     
     def _ensure_ivr_wav_dir(self) -> Path:
         if self._ivr_wav_dir is None:
@@ -280,6 +307,12 @@ class CallManager:
 
         if self._voice_available:
             ensure_default_voice_assets(self.config)
+            logger.info(
+                "TTS accueil: voix={} pitch={} rate={}",
+                getattr(self.config, "edge_tts_voice", "?"),
+                getattr(self.config, "edge_tts_pitch", "?"),
+                getattr(self.config, "edge_tts_rate", "?"),
+            )
             await self._warmup_ivr_cache()
 
         logger.info(
@@ -354,11 +387,159 @@ class CallManager:
         goodbye = await self._ivr_cache.ensure(VOICEMAIL_GOODBYE, "voicemail_goodbye")
         beep_path = self._ensure_ivr_wav_dir() / "voicemail_beep.wav"
         write_beep_wav_8k(beep_path)
+        system_beep = Path(self.config.base_path or ".") / "resources" / "voice" / "system" / "beep.wav"
+        if not system_beep.is_file():
+            write_beep_wav_8k(system_beep)
+        await self._warmup_track_greeting_cache()
         if greeting:
             logger.info("IVR pret: {}", greeting.name)
         if goodbye:
             logger.info("IVR pret: {}", goodbye.name)
         logger.info("IVR pret: {}", beep_path.name)
+        self._refresh_early_greeting_wav()
+
+    async def regenerate_greeting_cache(
+        self,
+        audio_override: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """
+        Force la regeneration complete du cache accueil (voix + mix) pour le modem.
+
+        Utilise la meme logique que l'apercu UI (TTS + mix intro selon le mode).
+
+        @param audio_override Patch audio formulaire (meme si non sauvegarde).
+        @returns Metadonnees du fichier actif (nom, duree, voix TTS).
+        """
+        from backend.services.greeting_audio_service import (
+            _build_modem_greeting_wav_sync,
+            _merge_audio_settings,
+            _write_greeting_modem_active_meta,
+            greeting_modem_active_wav_path,
+        )
+
+        self.reload_incoming_policy()
+        settings = _merge_audio_settings(
+            load_incoming_call_settings(self.config),
+            audio_override,
+        )
+        apply_incoming_call_settings(self.config, settings)
+        if hasattr(self, "incoming_policy"):
+            self.incoming_policy.settings = settings
+
+        greeting = greeting_text(self.config, settings)
+        ivr_dir = self._ensure_ivr_wav_dir()
+        for pattern in (
+            "voicemail_greeting.*",
+            "greeting_track_*.wav",
+            "greeting_seq_*.wav",
+            "greeting_modem_active.*",
+        ):
+            for path in ivr_dir.glob(pattern):
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError as exc:
+                    logger.warning("Suppression cache {}: {}", path.name, exc)
+
+        voice_wav = await self._ivr_cache.ensure(greeting, "voicemail_greeting")
+        if not voice_wav or not voice_wav.is_file():
+            raise RuntimeError("Generation TTS accueil echouee")
+
+        active_path = greeting_modem_active_wav_path(self.config)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: _build_modem_greeting_wav_sync(
+                self.config,
+                settings,
+                voice_wav,
+                out_modem=active_path,
+            ),
+        )
+        if not active_path.is_file() or active_path.stat().st_size < 2000:
+            raise RuntimeError("Mix accueil modem vide ou absent")
+
+        regenerated_at = _write_greeting_modem_active_meta(self.config, settings, greeting)
+        await self._ivr_cache.ensure(VOICEMAIL_GOODBYE, "voicemail_goodbye")
+        beep_path = ivr_dir / "voicemail_beep.wav"
+        write_beep_wav_8k(beep_path)
+        self._refresh_early_greeting_wav()
+
+        duration = None
+        try:
+            with wave.open(str(active_path), "rb") as wf:
+                rate = wf.getframerate()
+                if rate > 0:
+                    duration = round(wf.getnframes() / float(rate), 2)
+        except (OSError, wave.Error):
+            duration = None
+
+        logger.info(
+            "Cache accueil modem regenere: {} ({} octets, intro={})",
+            active_path.name,
+            active_path.stat().st_size,
+            getattr(settings.audio, "greeting_intro_mode", "none"),
+        )
+        return {
+            "track_wav": active_path.name,
+            "voice_wav": "voicemail_greeting.wav",
+            "duration_sec": duration,
+            "voice": getattr(self.config, "edge_tts_voice", "") or "",
+            "pitch": getattr(self.config, "edge_tts_pitch", "") or "",
+            "rate": getattr(self.config, "edge_tts_rate", "") or "",
+            "text": greeting,
+            "regenerated_at": regenerated_at,
+        }
+
+    async def _warmup_track_greeting_cache(self) -> None:
+        """
+        Pre-construit le mix musique + voix (mode track) pour eviter 20-30 s de silence au 1er appel.
+
+        Le fichier est le meme que celui utilise par ``_play_greeting_sequence``.
+        """
+        audio = self._audio_settings()
+        intro_mode = str(getattr(audio, "greeting_intro_mode", "none") or "none")
+        if intro_mode != "track":
+            return
+        intro = greeting_intro_path(self.config, audio)
+        if not intro or not intro.is_file():
+            logger.warning("Warmup track: piste absente ({})", intro)
+            return
+        greeting = self._greeting_text()
+        voice_wav = await self._resolve_greeting_modem_wav(greeting, audio)
+        if not voice_wav or not voice_wav.is_file():
+            logger.warning("Warmup track: voix accueil indisponible")
+            return
+        intro_ms = int(float(getattr(audio, "greeting_intro_sec", 2.0) or 2.0) * 1000)
+        crossfade_ms = int(float(getattr(audio, "greeting_intro_crossfade_ms", 450) or 450))
+        music_offset_ms = int(
+            float(getattr(audio, "greeting_intro_music_offset_sec", 0.0) or 0.0) * 1000
+        )
+        track_duck_db = float(getattr(audio, "greeting_intro_track_duck_db", 0.0) or 0.0)
+        voice_gain = float(getattr(audio, "greeting_intro_voice_gain_db", 5.0) or 5.0)
+        combined = self._track_greeting_cache_path(intro, audio, greeting)
+        if not self._track_greeting_cache_stale(combined, intro, voice_wav):
+            logger.info("Warmup track deja present: {}", combined.name)
+            self._refresh_early_greeting_wav()
+            return
+        loop = asyncio.get_running_loop()
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: combine_music_track_voice_overlay(
+                    intro,
+                    voice_wav,
+                    combined,
+                    music_solo_ms=intro_ms,
+                    music_offset_ms=music_offset_ms,
+                    voice_fade_ms=crossfade_ms,
+                    music_duck_db=track_duck_db if track_duck_db > 0.5 else None,
+                    voice_mix_gain_db=voice_gain,
+                ),
+            )
+            logger.info("Warmup track pret: {}", combined.name)
+        except Exception as exc:
+            logger.warning("Warmup track echoue: {}", exc)
+        self._refresh_early_greeting_wav()
     
     async def run(self):
         """Lance la boucle principale de gestion des appels"""
@@ -423,6 +604,56 @@ class CallManager:
             min_answer_rings,
             whitelist_ring_only,
         )
+        self._refresh_early_greeting_wav()
+
+    def _incoming_settings(self):
+        """Settings incoming_call en memoire (policy ou YAML)."""
+        if hasattr(self, "incoming_policy"):
+            return self.incoming_policy.settings
+        return load_incoming_call_settings(self.config)
+
+    def _resolve_early_greeting_wav_path(self) -> Optional[Path]:
+        """
+        WAV d'accueil pre-genere pour lecture immediate au seize (sync, sans TTS).
+
+        @returns Chemin cache actif modem, track ou voicemail_greeting.
+        """
+        from backend.services.greeting_audio_service import (
+            greeting_modem_active_wav_path,
+            is_greeting_modem_active_fresh,
+        )
+
+        settings = self._incoming_settings()
+        greeting = greeting_text(self.config, settings)
+        active = greeting_modem_active_wav_path(self.config)
+        if active.is_file() and is_greeting_modem_active_fresh(self.config, settings, greeting):
+            return active
+
+        audio = settings.audio
+        intro_mode = str(getattr(audio, "greeting_intro_mode", "none") or "none")
+        if intro_mode == "track":
+            intro = greeting_intro_path(self.config, audio)
+            if intro and intro.is_file():
+                combined = self._track_greeting_cache_path(intro, audio, greeting)
+                if combined.is_file() and combined.stat().st_size >= 2000:
+                    return combined
+            return None
+        cached = self._ivr_cache.get_if_fresh(greeting, "voicemail_greeting")
+        if cached and cached.is_file():
+            return cached
+        return None
+
+    def _refresh_early_greeting_wav(self) -> None:
+        """Pousse le WAV accueil cache vers le modem (si seize immediat actif)."""
+        if not getattr(self.modem, "set_early_greeting_wav", None):
+            return
+        path = self._resolve_early_greeting_wav_path()
+        enabled = bool(getattr(self.modem, "instant_ring_seize", False))
+        self.modem.set_early_greeting_wav(path, enabled=enabled)
+        if path:
+            logger.info("Accueil immediat configure: {} (enabled={})", path.name, enabled)
+        else:
+            logger.debug("Accueil immediat: pas de WAV cache pret")
 
     def reload_incoming_policy(self) -> None:
         """
@@ -757,7 +988,7 @@ class CallManager:
             else:
                 fast_seize = rings <= 0 and auto_answer and self.modem.supports_voice_serial
                 ok, ata_cid, ata_cname = await self.modem.answer_call(fast_voice_seize=fast_seize)
-            if ok and auto_answer and rings <= 0:
+            if ok and auto_answer and rings <= 0 and not getattr(self.modem, "_voice_line_ready", False):
                 await self.modem.prepare_voice_line_after_seize()
             self._line_already_answered = ok
             if not caller_id and ata_cid:
@@ -889,13 +1120,33 @@ class CallManager:
 
             greeting = self._greeting_text()
             audio = self._audio_settings()
-            played = await self._play_greeting_sequence(
-                greeting=greeting,
-                audio=audio,
-                already_in_voice_mode=True,
-                recorder=None,
-            )
-            if not played and skip_modem_answer:
+            early_mode = bool(getattr(self.modem, "early_greeting_was_scheduled", lambda: False)())
+            await self.modem.wait_early_greeting_done()
+            played = bool(getattr(self.modem, "_greeting_played_on_seize", False))
+            interrupted = bool(getattr(self.modem, "_playback_interrupted", False))
+            if played and not interrupted:
+                logger.info("Accueil deja joue au seize — suite repondeur")
+            elif early_mode:
+                if not played:
+                    logger.warning("Accueil immediat echoue — un seul reessai apres reprise ligne")
+                    self.modem._playback_interrupted = False
+                    self.modem._voice_abort = False
+                    await self.modem.prepare_voice_line_after_seize()
+                    played = await self._play_greeting_sequence(
+                        greeting=greeting,
+                        audio=audio,
+                        already_in_voice_mode=True,
+                        recorder=None,
+                    )
+                    interrupted = bool(getattr(self.modem, "_playback_interrupted", False))
+            else:
+                played = await self._play_greeting_sequence(
+                    greeting=greeting,
+                    audio=audio,
+                    already_in_voice_mode=True,
+                    recorder=None,
+                )
+            if not played and skip_modem_answer and not early_mode:
                 logger.warning("Accueil echoue apres seize — reprise ligne voix puis nouvel essai")
                 await self.modem.prepare_voice_line_after_seize()
                 played = await self._play_greeting_sequence(
@@ -905,7 +1156,7 @@ class CallManager:
                     recorder=None,
                 )
             # Call screening : si le fixe a pris pendant l'accueil, on coupe et on laisse la ligne.
-            if getattr(self.modem, "_playback_interrupted", False) or played is False:
+            if interrupted or played is False:
                 logger.info("Accueil interrompu (tel parallele / hangup) — fin sans repondeur")
                 if self.current_call_id:
                     await self.call_service.complete_call(self.current_call_id, duration=None)
@@ -1078,6 +1329,8 @@ class CallManager:
         beep_path = configured or (self._ensure_ivr_wav_dir() / "voicemail_beep.wav")
         if not beep_path.is_file():
             write_beep_wav_8k(beep_path)
+        if self._use_modem_voice_serial():
+            await self.modem.prepare_voice_line_after_seize()
         return await self._play_wav_file_on_line(
             beep_path,
             already_in_voice_mode=True,
@@ -1262,6 +1515,111 @@ class CallManager:
             if rec:
                 await rec.resume(already_in_voice_mode=True)
 
+    def _track_greeting_voice_key(self, audio) -> tuple[str, str, str]:
+        """
+        Cle voix TTS pour invalider le cache track si Vivienne/pitch change.
+
+        @param audio Bloc IncomingCallAudioConfig.
+        @returns Tuple (voix, pitch, rate).
+        """
+        return (
+            str(getattr(audio, "edge_tts_voice", "") or ""),
+            str(getattr(audio, "edge_tts_pitch", "") or ""),
+            str(getattr(audio, "edge_tts_rate", "") or ""),
+        )
+
+    def _track_greeting_cache_path(
+        self,
+        intro: Path,
+        audio,
+        greeting: str,
+    ) -> Path:
+        """
+        Chemin cache du mix piste + voix (meme cle que le warmup).
+
+        @param intro Piste musicale.
+        @param audio Config audio.
+        @param greeting Texte accueil.
+        @returns Fichier WAV cache sous ivr_wav/.
+        """
+        intro_ms = int(float(getattr(audio, "greeting_intro_sec", 2.0) or 2.0) * 1000)
+        crossfade_ms = int(float(getattr(audio, "greeting_intro_crossfade_ms", 450) or 450))
+        music_offset_ms = int(
+            float(getattr(audio, "greeting_intro_music_offset_sec", 0.0) or 0.0) * 1000
+        )
+        track_duck_db = float(getattr(audio, "greeting_intro_track_duck_db", 0.0) or 0.0)
+        voice_gain = float(getattr(audio, "greeting_intro_voice_gain_db", 5.0) or 5.0)
+        voice_key = self._track_greeting_voice_key(audio)
+        intro_key = str(intro.resolve())
+        return self._ensure_ivr_wav_dir() / (
+            "greeting_track_"
+            f"{hash((intro_key, intro_ms, crossfade_ms, music_offset_ms, track_duck_db, voice_gain, greeting, voice_key)) % 2**31}.wav"
+        )
+
+    def _track_greeting_cache_stale(self, combined: Path, intro: Path, voice_wav: Path) -> bool:
+        """
+        True si le cache track doit etre regenere.
+
+        @param combined Fichier mix cache.
+        @param intro Piste source.
+        @param voice_wav Voix TTS modem.
+        @returns True si absent ou plus vieux qu'une source.
+        """
+        if not combined.is_file() or combined.stat().st_size < 2000:
+            return True
+        cache_mtime = combined.stat().st_mtime
+        for dep in (intro, voice_wav):
+            try:
+                if dep.is_file() and dep.stat().st_mtime > cache_mtime:
+                    return True
+            except OSError:
+                return True
+        return False
+
+    async def _ensure_track_greeting_wav(
+        self,
+        intro: Path,
+        voice_wav: Path,
+        audio,
+        greeting: str,
+    ) -> Path:
+        """
+        Retourne le WAV mix piste+voix, pre-genere au demarrage ou en tache de fond.
+
+        @param intro Piste musicale.
+        @param voice_wav Message vocal modem.
+        @param audio Config audio.
+        @param greeting Texte accueil.
+        @returns Chemin WAV pret pour le modem.
+        """
+        combined = self._track_greeting_cache_path(intro, audio, greeting)
+        if not self._track_greeting_cache_stale(combined, intro, voice_wav):
+            logger.info("Accueil track cache: {}", combined.name)
+            return combined
+        intro_ms = int(float(getattr(audio, "greeting_intro_sec", 2.0) or 2.0) * 1000)
+        crossfade_ms = int(float(getattr(audio, "greeting_intro_crossfade_ms", 450) or 450))
+        music_offset_ms = int(
+            float(getattr(audio, "greeting_intro_music_offset_sec", 0.0) or 0.0) * 1000
+        )
+        track_duck_db = float(getattr(audio, "greeting_intro_track_duck_db", 0.0) or 0.0)
+        voice_gain = float(getattr(audio, "greeting_intro_voice_gain_db", 5.0) or 5.0)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: combine_music_track_voice_overlay(
+                intro,
+                voice_wav,
+                combined,
+                music_solo_ms=intro_ms,
+                music_offset_ms=music_offset_ms,
+                voice_fade_ms=crossfade_ms,
+                music_duck_db=track_duck_db if track_duck_db > 0.5 else None,
+                voice_mix_gain_db=voice_gain,
+            ),
+        )
+        logger.info("Accueil track regenere: {}", combined.name)
+        return combined
+
     async def _play_greeting_sequence(
         self,
         *,
@@ -1271,7 +1629,7 @@ class CallManager:
         recorder: Optional[_IncomingLineRecorder] = None,
     ) -> bool:
         """
-        Joue l'intro musicale (si configuree) puis le message d'accueil.
+        Joue l'intro musicale puis le message d'accueil en une seule session VTX (fluide).
 
         @param greeting Texte d'accueil effectif.
         @param audio Bloc IncomingCallAudioConfig.
@@ -1279,7 +1637,74 @@ class CallManager:
         @param recorder Enregistreur parallele.
         @returns True si au moins la voix d'accueil a ete jouee.
         """
+        if self._use_modem_voice_serial() and already_in_voice_mode:
+            if not getattr(self.modem, "_voice_line_ready", False):
+                await self.modem.prepare_voice_line_after_seize()
+
+        cached_active = self._resolve_early_greeting_wav_path()
+        if cached_active and cached_active.is_file():
+            logger.info("Accueil cache modem: {}", cached_active.name)
+            return await self._play_wav_file_on_line(
+                cached_active,
+                already_in_voice_mode=already_in_voice_mode,
+                recorder=recorder,
+            )
+
         intro = greeting_intro_path(self.config, audio)
+        greeting_wav = await self._resolve_greeting_modem_wav(greeting, audio)
+        intro_mode = str(getattr(audio, "greeting_intro_mode", "none") or "none")
+        if intro and intro.is_file() and greeting_wav and greeting_wav.is_file():
+            intro_ms = int(float(getattr(audio, "greeting_intro_sec", 3.2) or 3.2) * 1000)
+            crossfade_ms = int(float(getattr(audio, "greeting_intro_crossfade_ms", 520) or 520))
+            bed_db = float(getattr(audio, "greeting_intro_voice_bed_db", -24.0) or -24.0)
+            if bed_db > -1.0:
+                bed_db = None
+            voice_gain = float(getattr(audio, "greeting_intro_voice_gain_db", 5.0) or 5.0)
+            intro_variant = str(getattr(audio, "greeting_intro_variant", "sting_marimba") or "sting_marimba")
+            bed_variant = (
+                getattr(audio, "greeting_intro_bed_variant", None)
+                or default_bed_variant_for_jingle(intro_variant)
+            )
+            if intro_mode == "track":
+                try:
+                    combined = await self._ensure_track_greeting_wav(
+                        intro,
+                        greeting_wav,
+                        audio,
+                        greeting,
+                    )
+                    logger.info("Accueil combine (piste): musique + voix -> {}", combined.name)
+                    return await self._play_wav_file_on_line(
+                        combined,
+                        already_in_voice_mode=already_in_voice_mode,
+                        recorder=recorder,
+                    )
+                except Exception as exc:
+                    logger.warning("Accueil piste echoue ({}), lecture en deux temps", exc)
+            else:
+                combined = self._ensure_ivr_wav_dir() / f"greeting_seq_{hash((str(intro), intro_ms, crossfade_ms, bed_db, voice_gain, intro_variant, bed_variant, greeting)) % 2**31}.wav"
+                try:
+                    combine_intro_voice_crossfade(
+                        intro,
+                        greeting_wav,
+                        combined,
+                        crossfade_ms=crossfade_ms,
+                        intro_max_ms=intro_ms,
+                        intro_variant=intro_variant,
+                        normalize=True,
+                        voice_bed_gain_db=bed_db,
+                        voice_mix_gain_db=voice_gain,
+                        voice_bed_variant=str(bed_variant),
+                    )
+                    logger.info("Accueil combine (fondu): intro + voix -> {}", combined.name)
+                    return await self._play_wav_file_on_line(
+                        combined,
+                        already_in_voice_mode=already_in_voice_mode,
+                        recorder=recorder,
+                    )
+                except Exception as exc:
+                    logger.warning("Accueil combine echoue ({}), lecture en deux temps", exc)
+
         if intro and intro.is_file():
             logger.info("Intro accueil: {}", intro.name)
             intro_ok = await self._play_wav_file_on_line(
@@ -1301,6 +1726,46 @@ class CallManager:
             already_in_voice_mode=already_in_voice_mode,
             recorder=recorder,
         )
+
+    async def _resolve_greeting_modem_wav(self, greeting: str, audio) -> Optional[Path]:
+        """
+        Retourne le WAV 8 kHz du message d'accueil (cache IVR ou generation TTS).
+
+        @param greeting Texte d'accueil effectif.
+        @param audio Bloc audio incoming_call.
+        @returns Chemin WAV modem ou None.
+        """
+        if audio.greeting_source == "wav":
+            resolved = pick_wav_or_none(self.config, audio, source="wav", wav_path=audio.greeting_wav_path)
+            if resolved:
+                return resolved
+        text = (greeting or "").strip()
+        if not text or not self._voice_available:
+            return None
+        basename = self._ivr_basename_for_text(text)
+        if basename:
+            cached = self._ivr_cache.get_if_fresh(text, basename)
+            if cached:
+                return cached
+        try:
+            from pydub import AudioSegment
+        except ImportError:
+            return None
+        temp_tts = await self.voice_synthesis.speak(
+            text,
+            rate=getattr(self.config, "edge_tts_rate", "+0%"),
+            pitch=getattr(self.config, "edge_tts_pitch", "+0Hz"),
+        )
+        if not temp_tts or not Path(temp_tts).exists():
+            return None
+        ivr_dir = self._ensure_ivr_wav_dir()
+        out_wav = ivr_dir / f"ivr_live_{hash(text) % 2**31}.wav"
+        try:
+            tts_source_to_modem_wav(Path(temp_tts), out_wav)
+            return out_wav
+        except Exception as exc:
+            logger.warning("resolve_greeting_modem_wav: {}", exc)
+            return None
 
     async def _play_configured_message(
         self,

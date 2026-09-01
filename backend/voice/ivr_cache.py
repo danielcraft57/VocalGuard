@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Optional
 
 from loguru import logger
 
-from backend.voice.audio_utils import export_wav_8k_8bit, trim_leading_trailing_silence
+from backend.voice.audio_utils import tts_source_to_modem_wav
 
 if TYPE_CHECKING:
     from backend.core.config import Config
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 def ivr_content_hash(text: str, engine: str, voice: str, speech_rate: str = "+0%", speech_pitch: str = "+0Hz") -> str:
-    raw = f"{engine}\0{voice}\0{speech_rate}\0{speech_pitch}\0{text.strip()}"
+    raw = f"v4-partitions\0{engine}\0{voice}\0{speech_rate}\0{speech_pitch}\0{text.strip()}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -96,12 +96,7 @@ class IvrAudioCache:
             return None
 
         try:
-            segment = AudioSegment.from_file(str(temp))
-            thresh = -40.0
-            if segment.dBFS != float("-inf"):
-                thresh = max(-45.0, segment.dBFS - 18.0)
-            segment = trim_leading_trailing_silence(segment, silence_threshold=thresh, padding_ms=15)
-            export_wav_8k_8bit(segment, wav, normalize=True)
+            tts_source_to_modem_wav(Path(temp), wav)
             self._meta_path(basename).write_text(
                 json.dumps(
                     {"hash": self._current_hash(text), "text": text.strip()},
