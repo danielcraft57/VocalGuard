@@ -38,6 +38,8 @@ class Config(BaseSettings):
     api_port: int = Field(default=8000)
     api_debug: bool = Field(default=False)
     api_public_admin_token: Optional[str] = Field(default=None)
+    ui_password: Optional[str] = Field(default=None)
+    ui_session_secret: Optional[str] = Field(default=None)
     public_base_url: str = Field(default="http://localhost:8000")
     agenda_public_secret: str = Field(default="change-me")
 
@@ -197,6 +199,10 @@ class Config(BaseSettings):
             self.api_debug = os.environ.get("API_DEBUG", "").strip().lower() in ("1", "true", "yes", "on")
         if os.environ.get("API_PUBLIC_ADMIN_TOKEN"):
             self.api_public_admin_token = os.environ.get("API_PUBLIC_ADMIN_TOKEN", "").strip() or None
+        if os.environ.get("VG_UI_PASSWORD"):
+            self.ui_password = os.environ.get("VG_UI_PASSWORD", "").strip() or None
+        if os.environ.get("VG_UI_SESSION_SECRET"):
+            self.ui_session_secret = os.environ.get("VG_UI_SESSION_SECRET", "").strip() or None
         if os.environ.get("PUBLIC_BASE_URL"):
             self.public_base_url = os.environ.get("PUBLIC_BASE_URL", "").strip() or self.public_base_url
         if os.environ.get("AGENDA_PUBLIC_SECRET"):

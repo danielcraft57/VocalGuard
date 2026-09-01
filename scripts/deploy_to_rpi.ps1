@@ -188,6 +188,10 @@ try {
         --exclude=*.db `
         --exclude=.env `
         --exclude=.env.prod `
+        --exclude=scripts/modem_lab/generated `
+        --exclude=scripts/experimental/modem_lab/generated `
+        --exclude=.research `
+        --exclude=mobile/.expo `
         .
 } finally {
     Pop-Location

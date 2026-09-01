@@ -200,6 +200,14 @@ def _apply_lightweight_migrations(engine) -> None:
                 conn.execute(text("ALTER TABLE api_public_tokens ADD COLUMN can_write_quotes BOOLEAN NOT NULL DEFAULT 0"))
             if "can_read_calls" not in token_columns:
                 conn.execute(text("ALTER TABLE api_public_tokens ADD COLUMN can_read_calls BOOLEAN NOT NULL DEFAULT 0"))
+            if "can_read_voicemails" not in token_columns:
+                conn.execute(text("ALTER TABLE api_public_tokens ADD COLUMN can_read_voicemails BOOLEAN NOT NULL DEFAULT 0"))
+            if "can_write_calls" not in token_columns:
+                conn.execute(text("ALTER TABLE api_public_tokens ADD COLUMN can_write_calls BOOLEAN NOT NULL DEFAULT 0"))
+            if "can_subscribe_realtime" not in token_columns:
+                conn.execute(text("ALTER TABLE api_public_tokens ADD COLUMN can_subscribe_realtime BOOLEAN NOT NULL DEFAULT 0"))
+            if "can_write_trusted" not in token_columns:
+                conn.execute(text("ALTER TABLE api_public_tokens ADD COLUMN can_write_trusted BOOLEAN NOT NULL DEFAULT 0"))
 
         if "entreprise_emails" not in table_names:
             conn.execute(

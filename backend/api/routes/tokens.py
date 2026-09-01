@@ -3,16 +3,31 @@
 from __future__ import annotations
 
 import secrets
-from datetime import datetime
+from datetime import datetime, timedelta
+from urllib.parse import quote
+import hashlib
+import string
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
-from backend.api.models import PublicApiTokenCreate, PublicApiTokenResponse, PublicApiTokenUpdate
+from backend.api.models import (
+    MobilePairingSessionCreate,
+    MobilePairingSessionResponse,
+    PublicApiTokenCreate,
+    PublicApiTokenResponse,
+    PublicApiTokenUpdate,
+)
 from backend.core.config import Config
 from backend.database.database import get_db
-from backend.database.models import ApiPublicToken
+from backend.database.models import ApiPublicToken, MobilePairingSession
+from backend.services.pairing_time import utc_now_naive
+from backend.services.ui_session_service import (
+    COOKIE_NAME,
+    derive_ui_session_secret,
+    verify_ui_session_cookie_value,
+)
 
 router = APIRouter(prefix="/tokens", tags=["tokens"])
 
@@ -41,26 +56,51 @@ def _to_token_response(row: ApiPublicToken, include_token: bool) -> PublicApiTok
         can_read_quotes=bool(getattr(row, "can_read_quotes", False)),
         can_write_quotes=bool(getattr(row, "can_write_quotes", False)),
         can_read_calls=bool(getattr(row, "can_read_calls", False)),
+        can_read_voicemails=bool(getattr(row, "can_read_voicemails", False)),
+        can_write_calls=bool(getattr(row, "can_write_calls", False)),
+        can_subscribe_realtime=bool(getattr(row, "can_subscribe_realtime", False)),
+        can_write_trusted=bool(getattr(row, "can_write_trusted", False)),
         created_at=row.created_at,
         last_used_at=row.last_used_at,
     )
 
 
 def _require_token_admin(
+    request: Request,
     db: Session = Depends(get_db),
     x_admin_token: Optional[str] = Header(default=None),
 ) -> None:
     """
-    Protection simple pour l'admin tokens:
-    - si API_PUBLIC_ADMIN_TOKEN est défini, il doit matcher le header x-admin-token
-    - sinon, en dev local, on laisse passer (utile pour itérer).
+    Protection admin tokens:
+    - si API_PUBLIC_ADMIN_TOKEN est defini, header x-admin-token doit matcher
+    - OU session UI valide (cookie vg_ui_session apres login web)
+    - si aucun admin token configure, on laisse passer (dev local)
     """
     config = Config()
     expected = (config.api_public_admin_token or "").strip()
+    if x_admin_token and expected and x_admin_token.strip() == expected:
+        return
+
+    ui_password = (getattr(config, "ui_password", None) or "").strip()
+    if ui_password:
+        explicit = (getattr(config, "ui_session_secret", None) or "").strip()
+        secret = explicit or derive_ui_session_secret(ui_password)
+        cookie = request.cookies.get(COOKIE_NAME)
+        if verify_ui_session_cookie_value(secret, cookie):
+            return
+
     if not expected:
         return
-    if not x_admin_token or x_admin_token.strip() != expected:
-        raise HTTPException(status_code=401, detail="Accès admin tokens requis.")
+    raise HTTPException(
+        status_code=401,
+        detail="Acces admin tokens requis (session UI ou x-admin-token).",
+    )
+
+
+def _generate_pairing_code(length: int = 8) -> str:
+    """Genere un code alphanumerique uppercase."""
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 @router.get("/docs")
@@ -419,6 +459,10 @@ async def create_token(payload: PublicApiTokenCreate, db: Session = Depends(get_
         can_read_quotes=getattr(payload, "can_read_quotes", False),
         can_write_quotes=getattr(payload, "can_write_quotes", False),
         can_read_calls=getattr(payload, "can_read_calls", False),
+        can_read_voicemails=getattr(payload, "can_read_voicemails", False),
+        can_write_calls=getattr(payload, "can_write_calls", False),
+        can_subscribe_realtime=getattr(payload, "can_subscribe_realtime", False),
+        can_write_trusted=getattr(payload, "can_write_trusted", False),
     )
     db.add(token)
     db.commit()
@@ -465,4 +509,60 @@ async def delete_token(token_id: int, db: Session = Depends(get_db)) -> Response
     db.delete(row)
     db.commit()
     return Response(status_code=204)
+
+
+@router.post("/pairing-sessions", response_model=MobilePairingSessionResponse, dependencies=[Depends(_require_token_admin)])
+async def create_pairing_session(payload: MobilePairingSessionCreate, db: Session = Depends(get_db)) -> MobilePairingSessionResponse:
+    """
+    Cree une session appairage mobile ephemere (QR code).
+
+    @param payload Token existant ou creation automatique.
+    @returns Code en clair (usage unique, TTL 20 min).
+    """
+    base_url = (payload.base_url or "").strip().rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=400, detail="base_url requis.")
+
+    api_token: ApiPublicToken | None = None
+    if payload.api_token_id is not None:
+        api_token = db.get(ApiPublicToken, payload.api_token_id)  # type: ignore[arg-type]
+        if not api_token or not api_token.is_active:
+            raise HTTPException(status_code=404, detail="Token API introuvable ou inactif.")
+    elif payload.create_token_if_missing:
+        api_token = ApiPublicToken(
+            name=(payload.token_name or "Token mobile").strip(),
+            app_url=base_url,
+            token=secrets.token_hex(32),
+            is_active=True,
+            can_read_calls=True,
+            can_read_voicemails=True,
+            can_write_calls=True,
+            can_subscribe_realtime=True,
+            can_write_trusted=True,
+        )
+        db.add(api_token)
+        db.flush()
+    else:
+        raise HTTPException(status_code=400, detail="api_token_id ou create_token_if_missing requis.")
+
+    code = _generate_pairing_code()
+    code_hash = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    expires_at = utc_now_naive() + timedelta(minutes=20)
+    session = MobilePairingSession(
+        code_hash=code_hash,
+        api_token_id=api_token.id,
+        base_url=base_url,
+        expires_at=expires_at,
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    qr_uri = f"vocalguard://pair?v=1&host={quote(base_url, safe='')}&code={code}"
+    return MobilePairingSessionResponse(
+        pairing_id=session.id,
+        code=code,
+        expires_at=expires_at,
+        qr_uri=qr_uri,
+    )
 

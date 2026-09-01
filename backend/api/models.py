@@ -488,6 +488,10 @@ class PublicApiTokenCreate(BaseModel):
     can_read_quotes: bool = False
     can_write_quotes: bool = False
     can_read_calls: bool = False
+    can_read_voicemails: bool = False
+    can_write_calls: bool = False
+    can_subscribe_realtime: bool = False
+    can_write_trusted: bool = False
 
 
 class PublicApiTokenResponse(BaseModel):
@@ -508,6 +512,10 @@ class PublicApiTokenResponse(BaseModel):
     can_read_quotes: bool = False
     can_write_quotes: bool = False
     can_read_calls: bool = False
+    can_read_voicemails: bool = False
+    can_write_calls: bool = False
+    can_subscribe_realtime: bool = False
+    can_write_trusted: bool = False
     created_at: datetime
     last_used_at: Optional[datetime] = None
 
@@ -530,6 +538,10 @@ class PublicApiTokenUpdate(BaseModel):
     can_read_quotes: Optional[bool] = None
     can_write_quotes: Optional[bool] = None
     can_read_calls: Optional[bool] = None
+    can_read_voicemails: Optional[bool] = None
+    can_write_calls: Optional[bool] = None
+    can_subscribe_realtime: Optional[bool] = None
+    can_write_trusted: Optional[bool] = None
 
 
 class PublicAgendaBookingCreate(BaseModel):

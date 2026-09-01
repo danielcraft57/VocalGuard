@@ -15,6 +15,7 @@ from loguru import logger
 
 from backend.core.config import Config
 from backend.core.call_manager import CallManager
+from backend.api.middleware.ui_auth import UiAuthMiddleware
 from backend.api.routes import (
     calls,
     callers,
@@ -34,6 +35,8 @@ from backend.api.routes import (
     internal_telephony,
     agenda_public,
     public_api,
+    public_mobile,
+    auth_ui,
     tokens,
 )
 from backend.api.routes.realtime import wire_main_process_realtime
@@ -67,6 +70,7 @@ def create_app(config: Config) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_middleware(UiAuthMiddleware, config=config)
     
     # Inclure les routes
     app.include_router(calls.router, prefix="/api/v1", tags=["calls"])
@@ -89,6 +93,8 @@ def create_app(config: Config) -> FastAPI:
     if not config.use_telephony_daemon:
         app.include_router(outgoing_audio.router, tags=["outgoing-audio"])
     app.include_router(public_api.router, prefix="/api/v1")
+    app.include_router(public_mobile.router, prefix="/api/v1")
+    app.include_router(auth_ui.router, prefix="/api/v1")
     app.include_router(tokens.router, prefix="/api/v1")
     
     # Dossier qui accueille le front (build statique Next.js copié depuis `frontend/out`)

@@ -484,6 +484,25 @@ class ApiPublicToken(Base):
     can_read_quotes = Column(Boolean, nullable=False, default=False)
     can_write_quotes = Column(Boolean, nullable=False, default=False)
     can_read_calls = Column(Boolean, nullable=False, default=False)
+    can_read_voicemails = Column(Boolean, nullable=False, default=False)
+    can_write_calls = Column(Boolean, nullable=False, default=False)
+    can_subscribe_realtime = Column(Boolean, nullable=False, default=False)
+    can_write_trusted = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     last_used_at = Column(DateTime, nullable=True)
+
+
+class MobilePairingSession(Base):
+    """Session d appairage mobile ephemere (QR code)."""
+
+    __tablename__ = "mobile_pairing_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code_hash = Column(String(128), unique=True, nullable=False, index=True)
+    api_token_id = Column(Integer, ForeignKey("api_public_tokens.id", ondelete="CASCADE"), nullable=False)
+    base_url = Column(String(500), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    claimed_at = Column(DateTime, nullable=True)
+    claimed_device_hint = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 

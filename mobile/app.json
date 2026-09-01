@@ -1,0 +1,42 @@
+{
+  "expo": {
+    "name": "VocalGuard",
+    "slug": "vocalguard-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "vocalguard",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "backgroundColor": "#0f172a"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "fr.danielcraft.vocalguard"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0f172a"
+      },
+      "package": "fr.danielcraft.vocalguard"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Autoriser VocalGuard a scanner le QR code d appairage."
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "Autoriser VocalGuard a importer vos contacts de confiance."
+        }
+      ],
+      "expo-notifications"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
