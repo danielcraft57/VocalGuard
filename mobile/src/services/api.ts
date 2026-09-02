@@ -1,8 +1,34 @@
 import { log } from "./log";
+import { invalidateMobileSession } from "./session";
 
 export interface ApiConfig {
   baseUrl: string;
   token: string;
+}
+
+export class ApiHttpError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiHttpError";
+    this.status = status;
+  }
+}
+
+/**
+ * Indique si l erreur est un 401 (token invalide / expire).
+ */
+export function isApiUnauthorized(err: unknown): boolean {
+  return err instanceof ApiHttpError && err.status === 401;
+}
+
+async function handleFailedResponse(method: string, path: string, res: Response): Promise<never> {
+  log.warn("api", `${method} ${path} -> ${res.status}`);
+  if (res.status === 401) {
+    void invalidateMobileSession(`${method} ${path}`);
+  }
+  throw new ApiHttpError(res.status, `API ${method} ${path} -> ${res.status}`);
 }
 
 export interface SyncDeltaResponse {
@@ -56,8 +82,7 @@ export async function apiGet<T>(config: ApiConfig, path: string): Promise<T> {
     headers: { Authorization: `Bearer ${config.token}` },
   });
   if (!res.ok) {
-    log.warn("api", `GET ${path} -> ${res.status}`);
-    throw new Error(`API GET ${path} -> ${res.status}`);
+    await handleFailedResponse("GET", path, res);
   }
   return (await res.json()) as T;
 }
@@ -81,8 +106,26 @@ export async function apiPost<T>(config: ApiConfig, path: string, body: unknown)
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    log.warn("api", `POST ${path} -> ${res.status}`);
-    throw new Error(`API POST ${path} -> ${res.status}`);
+    await handleFailedResponse("POST", path, res);
+  }
+  return (await res.json()) as T;
+}
+
+/**
+ * Effectue une requete DELETE authentifiee.
+ *
+ * @param config Configuration API.
+ * @param path Chemin sous /api/v1/public.
+ */
+export async function apiDelete<T = { ok: boolean }>(config: ApiConfig, path: string): Promise<T> {
+  const url = buildApiUrl(config.baseUrl, path);
+  log.debug("api", "DELETE", { path });
+  const res = await fetchWithTimeout(url, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${config.token}` },
+  });
+  if (!res.ok) {
+    await handleFailedResponse("DELETE", path, res);
   }
   return (await res.json()) as T;
 }

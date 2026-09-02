@@ -34,6 +34,13 @@ type VoicemailMem = {
   audio_local_path: string | null;
   synced_at: string | null;
 };
+type TrustedMem = {
+  phone_number: string;
+  display_name: string | null;
+  device_contact_id: string | null;
+  synced_at: string | null;
+  is_whitelisted: number;
+};
 
 /**
  * Initialise une base memoire simplifiee (Jest / navigateur web).
@@ -119,9 +126,41 @@ export function createMemoryDb(): SqlDb {
         else rows.push(row);
         return { changes: 1, lastInsertRowId: row.id };
       }
+      if (sql.includes("UPDATE voicemails SET is_read")) {
+        const rows = memoryDb!.get("voicemails") as VoicemailMem[];
+        const id = Number(params[1]);
+        const row = rows.find((r) => r.id === id);
+        if (row) row.is_read = Number(params[0]);
+        return { changes: 1, lastInsertRowId: 0 };
+      }
+      if (sql.includes("DELETE FROM trusted_contacts")) {
+        if (sql.includes("WHERE phone_number")) {
+          const rows = memoryDb!.get("trusted_contacts") as TrustedMem[];
+          const phone = String(params[0]);
+          const idx = rows.findIndex((r) => r.phone_number === phone);
+          if (idx >= 0) rows.splice(idx, 1);
+        } else {
+          memoryDb!.set("trusted_contacts", []);
+        }
+        return { changes: 1, lastInsertRowId: 0 };
+      }
+      if (sql.includes("INSERT OR REPLACE INTO trusted_contacts")) {
+        const rows = memoryDb!.get("trusted_contacts") as TrustedMem[];
+        const row: TrustedMem = {
+          phone_number: String(params[0]),
+          display_name: (params[1] as string | null) ?? null,
+          device_contact_id: null,
+          synced_at: String(params[2]),
+          is_whitelisted: Number(params[3] ?? 1),
+        };
+        const idx = rows.findIndex((r) => r.phone_number === row.phone_number);
+        if (idx >= 0) rows[idx] = row;
+        else rows.push(row);
+        return { changes: 1, lastInsertRowId: 0 };
+      }
       return { changes: 0, lastInsertRowId: 0 };
     },
-    async getAllAsync<T>(sql: string, _params: unknown[] = []) {
+    async getAllAsync<T>(sql: string, params: unknown[] = []) {
       if (sql.includes("FROM pending_actions")) {
         return (memoryDb!.get("pending_actions") ?? []) as T[];
       }
@@ -131,12 +170,21 @@ export function createMemoryDb(): SqlDb {
       if (sql.includes("FROM voicemails")) {
         return (memoryDb!.get("voicemails") ?? []) as T[];
       }
+      if (sql.includes("FROM trusted_contacts")) {
+        const rows = (memoryDb!.get("trusted_contacts") ?? []) as TrustedMem[];
+        return rows.filter((r) => r.is_whitelisted === 1) as T[];
+      }
       return [] as T[];
     },
-    async getFirstAsync<T>(sql: string) {
+    async getFirstAsync<T>(sql: string, params: unknown[] = []) {
       if (sql.includes("FROM sync_state")) {
         const rows = memoryDb!.get("sync_state") as T[];
         return rows[0] ?? null;
+      }
+      if (sql.includes("FROM voicemails") && sql.includes("WHERE id")) {
+        const rows = memoryDb!.get("voicemails") as VoicemailMem[];
+        const id = Number(params[0]);
+        return (rows.find((r) => r.id === id) as T) ?? null;
       }
       return null;
     },

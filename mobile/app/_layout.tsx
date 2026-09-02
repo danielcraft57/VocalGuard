@@ -1,9 +1,12 @@
 import React, { useEffect, useRef } from "react";
+import { Alert } from "react-native";
 import { Stack, useRouter, useSegments, type Href } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { resolveAuthRedirect } from "../src/services/authNav";
 import { getStoredCredentials } from "../src/services/credentials";
 import { log } from "../src/services/log";
+import { setSessionCleanupHandler, setSessionExpiredHandler } from "../src/services/session";
+import { stopRealtime } from "../src/services/realtime";
 import { colors } from "../src/theme/colors";
 
 /** Re-export pour les ecrans onboarding (evite imports depuis _layout). */
@@ -17,6 +20,23 @@ export default function RootLayout() {
   const router = useRouter();
   const segments = useSegments();
   const guardRunning = useRef(false);
+  const sessionAlertShown = useRef(false);
+
+  useEffect(() => {
+    setSessionCleanupHandler(() => stopRealtime());
+    setSessionExpiredHandler(() => {
+      if (!sessionAlertShown.current) {
+        sessionAlertShown.current = true;
+        Alert.alert(
+          "Session expiree",
+          "Ton appairage n est plus valide. Scanne un nouveau QR code sur VocalGuard.",
+          [{ text: "OK", onPress: () => router.replace("/onboarding" as Href) }],
+        );
+      } else {
+        router.replace("/onboarding" as Href);
+      }
+    });
+  }, [router]);
 
   useEffect(() => {
     if (guardRunning.current) return;
@@ -30,18 +50,16 @@ export default function RootLayout() {
 
         const first = segments[0] as string | undefined;
         const second = segments[1] as string | undefined;
-        const onSuccess = first === "onboarding" && second === "success";
-        const target = resolveAuthRedirect(creds.token, first);
+        const target = resolveAuthRedirect(creds.token, first, second);
 
         log.info("nav", "garde", {
           hasToken: Boolean(creds.token),
           first,
           second,
           target,
-          onSuccess,
         });
 
-        if (target && !onSuccess) {
+        if (target) {
           router.replace(target as Href);
         }
       } catch (err) {
@@ -66,7 +84,11 @@ export default function RootLayout() {
           headerTintColor: colors.text,
           contentStyle: { backgroundColor: colors.slate },
         }}
-      />
+      >
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+        <Stack.Screen name="trusted" options={{ headerShown: false }} />
+      </Stack>
     </>
   );
 }

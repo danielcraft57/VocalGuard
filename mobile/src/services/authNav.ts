@@ -17,10 +17,14 @@ export type AuthRedirect = "/onboarding" | "/(tabs)/calls";
 export function resolveAuthRedirect(
   token: string | null,
   firstSegment: string | undefined,
+  secondSegment?: string | undefined,
 ): AuthRedirect | null {
   const inOnboarding = firstSegment === "onboarding";
+  const pairingScreen =
+    secondSegment === "success" || secondSegment === "scan" || secondSegment === "manual";
+
   if (!token && !inOnboarding) return "/onboarding";
-  if (token && inOnboarding) return "/(tabs)/calls";
+  if (token && inOnboarding && !pairingScreen) return "/(tabs)/calls";
   if (token && (!firstSegment || firstSegment === "index")) return "/(tabs)/calls";
   return null;
 }

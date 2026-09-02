@@ -1,5 +1,5 @@
 /** Tests parse QR et claim. */
-import { parsePairUri } from "./pairing";
+import { barcodeScanPayload, parsePairUri } from "./pairing";
 import { buildApiUrl, claimPairing } from "./api";
 
 describe("pairing", () => {
@@ -7,6 +7,17 @@ describe("pairing", () => {
     const parsed = parsePairUri("vocalguard://pair?v=1&host=https://node12.lan&code=AB12CD34");
     expect(parsed?.code).toBe("AB12CD34");
     expect(parsed?.host).toBe("https://node12.lan");
+  });
+
+  it("parse URI avec slash apres pair", () => {
+    const parsed = parsePairUri("vocalguard://pair/?v=1&host=https://node14.lan&code=ZZ11YY22");
+    expect(parsed?.code).toBe("ZZ11YY22");
+    expect(parsed?.host).toBe("https://node14.lan");
+  });
+
+  it("parse via query string seule", () => {
+    const parsed = parsePairUri("?v=1&host=https://test.lan&code=AB12CD34");
+    expect(parsed?.host).toBe("https://test.lan");
   });
 
   it("parse host URL-encode", () => {
@@ -30,5 +41,10 @@ describe("pairing", () => {
     const res = await claimPairing("https://x", "AB12CD34");
     expect(buildApiUrl("https://x", "/public/mobile/claim")).toContain("/api/v1/public/mobile/claim");
     expect(res.token).toBe("t");
+  });
+
+  it("extrait payload barcode data ou raw", () => {
+    expect(barcodeScanPayload({ data: " abc ", raw: "x" })).toBe("abc");
+    expect(barcodeScanPayload({ raw: "vocalguard://pair?code=1&host=h" })).toContain("vocalguard");
   });
 });

@@ -9,6 +9,15 @@ export interface DeviceContact {
 }
 
 /**
+ * Cle stable pour selectionner un contact (id expo ou fallback nom+numero).
+ */
+export function contactKey(contact: DeviceContact): string {
+  if (contact.id) return contact.id;
+  const phone = contact.phoneNumbers[0] ?? "";
+  return `${contact.name}:${phone}`;
+}
+
+/**
  * Normalise un numero FR en 0XXXXXXXXX.
  *
  * @param raw Numero brut.

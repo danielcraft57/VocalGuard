@@ -31,20 +31,34 @@ export async function applySyncDelta(db: SqlDb, delta: SyncDeltaResponse): Promi
     count += 1;
   }
   for (const vm of delta.voicemails ?? []) {
-    const phone = String(vm.phone_number ?? vm.caller_number ?? vm.caller_phone ?? "");
+    const vmId = Number(vm.id);
+    const incomingPhone = String(vm.phone_number ?? vm.caller_number ?? vm.caller_phone ?? "").trim();
+    const incomingName = ((vm.caller_name as string | null) ?? "").trim() || null;
+    const existing = await db.getFirstAsync<{
+      caller_number: string;
+      caller_name: string | null;
+      transcription: string | null;
+      audio_local_path: string | null;
+    }>("SELECT caller_number, caller_name, transcription, audio_local_path FROM voicemails WHERE id = ?", [
+      vmId,
+    ]);
+    const callerNumber = incomingPhone || existing?.caller_number?.trim() || "";
+    const callerName = incomingName ?? existing?.caller_name ?? null;
+    const incomingTranscription = ((vm.transcription as string | null) ?? "").trim() || null;
+    const transcription = incomingTranscription ?? existing?.transcription ?? null;
     const recordedAt = (vm.created_at as string | null) ?? (vm.recorded_at as string | null) ?? null;
     await db.runAsync(
       `INSERT OR REPLACE INTO voicemails (id, caller_number, caller_name, transcription, duration, is_read, recorded_at, audio_local_path, synced_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        Number(vm.id),
-        phone,
-        (vm.caller_name as string | null) ?? null,
-        (vm.transcription as string | null) ?? null,
+        vmId,
+        callerNumber,
+        callerName,
+        transcription,
         Number(vm.duration ?? 0),
         vm.is_read ? 1 : 0,
         recordedAt,
-        null,
+        existing?.audio_local_path ?? null,
         now,
       ],
     );

@@ -33,7 +33,9 @@
           "contactsPermission": "Autoriser VocalGuard a importer vos contacts de confiance."
         }
       ],
-      "expo-notifications"
+      "expo-notifications",
+      "expo-audio",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true

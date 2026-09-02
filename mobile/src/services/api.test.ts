@@ -1,5 +1,10 @@
 /** Tests client REST mobile. */
-import { apiGet, buildApiUrl, pingMobile } from "./api";
+import { apiGet, ApiHttpError, buildApiUrl, isApiUnauthorized, pingMobile } from "./api";
+import { invalidateMobileSession } from "./session";
+
+jest.mock("./session", () => ({
+  invalidateMobileSession: jest.fn(),
+}));
 
 describe("api", () => {
   beforeEach(() => {
@@ -20,6 +25,8 @@ describe("api", () => {
 
   it("remonte erreur 401", async () => {
     (global.fetch as jest.Mock).mockResolvedValue({ ok: false, status: 401 });
-    await expect(pingMobile({ baseUrl: "https://t", token: "x" })).rejects.toThrow("401");
+    await expect(pingMobile({ baseUrl: "https://t", token: "x" })).rejects.toThrow(ApiHttpError);
+    expect(invalidateMobileSession).toHaveBeenCalled();
+    expect(isApiUnauthorized(new ApiHttpError(401, "x"))).toBe(true);
   });
 });

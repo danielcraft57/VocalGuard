@@ -1,5 +1,5 @@
 /** Tests import contacts confiance. */
-import { buildTrustedImportPayload, filterCallableContacts, normalizeFrPhone } from "./contactsImport";
+import { buildTrustedImportPayload, contactKey, filterCallableContacts, normalizeFrPhone } from "./contactsImport";
 
 describe("contactsImport", () => {
   it("normalise +33 et 06", () => {
@@ -21,5 +21,9 @@ describe("contactsImport", () => {
     ]);
     expect(payload.length).toBeGreaterThanOrEqual(1);
     expect(payload[0].phone_number).toMatch(/^0/);
+  });
+
+  it("genere une cle stable sans id", () => {
+    expect(contactKey({ name: "Bob", phoneNumbers: ["0612345678"] })).toBe("Bob:0612345678");
   });
 });

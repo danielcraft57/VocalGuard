@@ -12,4 +12,5 @@ export const icons = {
   hangup: "phone-hangup",
   qrScan: "qrcode-scan",
   wifiAlert: "wifi-alert",
+  wifi: "wifi",
 } as const;

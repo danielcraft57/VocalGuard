@@ -1,15 +1,22 @@
 /**
  * Bootstrap WebSocket + notifications locales (LAN, pas de FCM cloud).
  */
-import { Platform } from "react-native";
+import { AppState, type NativeEventSubscription } from "react-native";
 import type { Router } from "expo-router";
+import type { VoicemailRow } from "../db/schema";
 import { getStoredCredentials } from "./credentials";
 import { log } from "./log";
+import { canUseExpoNotifications } from "../utils/runtime";
 import {
   notificationFromWsEvent,
   scheduleLocalNotification,
   setLocalNotificationScheduler,
 } from "./localNotifications";
+import {
+  addNotificationResponseReceivedListener,
+  presentExpoLocalNotification,
+  setupExpoLocalNotifications,
+} from "./expoNotificationsLocal";
 import { syncFromServer } from "./sync";
 import { getAppDb } from "../db/getAppDb";
 import { buildWsUrl, VocalGuardWsClient } from "./ws";
@@ -17,6 +24,8 @@ import { buildWsUrl, VocalGuardWsClient } from "./ws";
 let wsClient: VocalGuardWsClient | null = null;
 let notificationsReady = false;
 let pendingPlayVoicemailId: number | null = null;
+let appStateSub: NativeEventSubscription | null = null;
+const MISSED_VM_WINDOW_MS = 5 * 60 * 1000;
 
 export type RealtimePlayRequest = (voicemailId: number) => void;
 
@@ -49,47 +58,21 @@ export function requestVoicemailPlay(id: number): void {
 }
 
 /**
- * Configure expo-notifications (natif uniquement).
+ * Configure les notifications locales (sans module push Expo Go).
  */
 async function ensureNotifications(): Promise<void> {
-  if (notificationsReady || Platform.OS === "web") return;
+  if (notificationsReady || !canUseExpoNotifications()) return;
   try {
-    const Notifications = await import("expo-notifications");
-    Notifications.setNotificationHandler({
-      handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: true,
-        shouldShowBanner: true,
-        shouldShowList: true,
-      }),
-    });
-    if (Platform.OS === "android") {
-      await Notifications.setNotificationChannelAsync("default", {
-        name: "VocalGuard",
-        importance: Notifications.AndroidImportance.HIGH,
-        sound: "default",
-        vibrationPattern: [0, 250, 250, 250],
-      });
-    }
-    const { status } = await Notifications.requestPermissionsAsync();
-    if (status !== "granted") {
+    const granted = await setupExpoLocalNotifications();
+    if (!granted) {
       log.warn("realtime", "permissions notifications refusees");
     }
     setLocalNotificationScheduler(async (payload) => {
-      await Notifications.scheduleNotificationAsync({
-        content: {
-          title: payload.title,
-          body: payload.body,
-          data: payload.data ?? {},
-          sound: "default",
-        },
-        trigger: null,
-      });
+      await presentExpoLocalNotification(payload);
     });
     notificationsReady = true;
   } catch (err) {
-    log.warn("realtime", "expo-notifications indisponible", err);
+    log.warn("realtime", "notifications locales indisponibles", err);
   }
 }
 
@@ -105,7 +88,7 @@ async function handleWsEvent(type: string, payload: Record<string, unknown>): Pr
     await scheduleLocalNotification(notif);
   }
 
-  if (type === "voicemail.recorded" || type.startsWith("call.")) {
+  if (type === "voicemail.recorded" || type === "voicemail.transcribed" || type.startsWith("call.")) {
     try {
       const creds = await getStoredCredentials();
       if (!creds.baseUrl || !creds.token) return;
@@ -118,17 +101,12 @@ async function handleWsEvent(type: string, payload: Record<string, unknown>): Pr
       log.warn("realtime", "sync apres event echouee", err);
     }
   }
-
-  if (type === "voicemail.recorded" && payload.voicemail_id != null) {
-    requestVoicemailPlay(Number(payload.voicemail_id));
-  }
 }
 
 /**
- * Demarre le client WS si credentials presents.
+ * Ouvre ou rouvre le client WebSocket.
  */
-export async function startRealtime(): Promise<void> {
-  await ensureNotifications();
+async function connectWsClient(): Promise<void> {
   const creds = await getStoredCredentials();
   if (!creds.baseUrl || !creds.token) {
     log.debug("realtime", "pas de credentials, WS ignore");
@@ -139,7 +117,7 @@ export async function startRealtime(): Promise<void> {
     wsClient = null;
   }
   const url = buildWsUrl(creds.baseUrl, creds.token);
-  log.info("realtime", "connexion WS");
+  log.info("realtime", "connexion WS", { url: url.replace(/token=[^&]+/, "token=***") });
   wsClient = new VocalGuardWsClient(
     url,
     (evt) => {
@@ -150,6 +128,56 @@ export async function startRealtime(): Promise<void> {
     },
   );
   wsClient.connect();
+}
+
+/**
+ * Sync apres retour au premier plan : rattrape les notifs manquees (WS coupe en arriere-plan).
+ */
+async function catchUpAfterForeground(): Promise<void> {
+  try {
+    const creds = await getStoredCredentials();
+    if (!creds.baseUrl || !creds.token) return;
+    const db = await getAppDb();
+    const known = new Set(
+      (await db.getAllAsync<{ id: number }>("SELECT id FROM voicemails")).map((r) => r.id),
+    );
+    const sync = await db.getFirstAsync<{ last_sync_at: string | null }>(
+      "SELECT last_sync_at FROM sync_state WHERE id = 1",
+    );
+    await syncFromServer(db, { baseUrl: creds.baseUrl, token: creds.token }, sync?.last_sync_at ?? null);
+    const fresh = await db.getAllAsync<VoicemailRow>(
+      "SELECT * FROM voicemails ORDER BY recorded_at DESC LIMIT 20",
+    );
+    const cutoff = Date.now() - MISSED_VM_WINDOW_MS;
+    for (const row of fresh) {
+      if (known.has(row.id)) continue;
+      const at = row.recorded_at ? Date.parse(row.recorded_at) : 0;
+      if (!at || at < cutoff) continue;
+      const phone = row.caller_name ?? row.caller_number;
+      await scheduleLocalNotification({
+        title: "Nouveau message vocal",
+        body: `Message de ${phone}`,
+        data: { type: "voicemail.recorded", voicemail_id: String(row.id) },
+      });
+    }
+  } catch (err) {
+    log.warn("realtime", "catch-up foreground echoue", err);
+  }
+}
+
+/**
+ * Demarre le client WS si credentials presents.
+ */
+export async function startRealtime(): Promise<void> {
+  await ensureNotifications();
+  await connectWsClient();
+  if (!appStateSub) {
+    appStateSub = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      void connectWsClient();
+      void catchUpAfterForeground();
+    });
+  }
 }
 
 /**
@@ -166,14 +194,14 @@ export function stopRealtime(): void {
  * @param router Router Expo.
  */
 export function bindNotificationResponses(router: Router): () => void {
-  if (Platform.OS === "web") {
+  if (!canUseExpoNotifications()) {
     return () => undefined;
   }
   let sub: { remove: () => void } | null = null;
   void (async () => {
     try {
-      const Notifications = await import("expo-notifications");
-      sub = Notifications.addNotificationResponseReceivedListener((response) => {
+      await setupExpoLocalNotifications();
+      sub = addNotificationResponseReceivedListener((response) => {
         const data = response.notification.request.content.data as Record<string, string | undefined>;
         const type = data.type ?? "";
         if (type === "voicemail.recorded" && data.voicemail_id) {

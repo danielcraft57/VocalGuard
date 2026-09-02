@@ -1,10 +1,12 @@
-import React, { useCallback, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { View, Text, Pressable, StyleSheet, ActivityIndicator } from "react-native";
+import { useIsFocused, useFocusEffect } from "@react-navigation/native";
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from "expo-camera";
 import { Link, useRouter } from "expo-router";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { claimPairing } from "../../src/services/api";
-import { parsePairUri } from "../../src/services/pairing";
+import { barcodeScanPayload, parsePairUri } from "../../src/services/pairing";
+import { log } from "../../src/services/log";
 import { saveCredentials } from "../_layout";
 import { colors } from "../../src/theme/colors";
 import { icons } from "../../src/theme/icons";
@@ -14,24 +16,38 @@ import { icons } from "../../src/theme/icons";
  */
 export default function ScanPairingScreen() {
   const router = useRouter();
+  const isFocused = useIsFocused();
   const [permission, requestPermission] = useCameraPermissions();
   const [busy, setBusy] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const handledRef = useRef(false);
+  const busyRef = useRef(false);
+  const modernScannerAvailable = CameraView.isModernBarcodeScannerAvailable;
 
-  const handleBarcode = useCallback(
-    async (result: BarcodeScanningResult) => {
-      if (handledRef.current || busy) return;
-      const raw = (result.data || "").trim();
-      if (!raw) return;
+  useFocusEffect(
+    useCallback(() => {
+      busyRef.current = false;
+      setBusy(false);
+      setError(null);
+      setCameraReady(false);
+    }, []),
+  );
 
-      const parsed = parsePairUri(raw);
+  const processScan = useCallback(
+    async (raw: string) => {
+      if (busyRef.current) return;
+      const text = raw.trim();
+      if (!text) return;
+
+      log.info("pairing", "scan detecte", { len: text.length });
+
+      const parsed = parsePairUri(text);
       if (!parsed) {
         setError("QR non reconnu. Attendu: vocalguard://pair?...");
         return;
       }
 
-      handledRef.current = true;
+      busyRef.current = true;
       setBusy(true);
       setError(null);
       try {
@@ -39,13 +55,38 @@ export default function ScanPairingScreen() {
         await saveCredentials(claimed.token, claimed.base_url);
         router.replace("/onboarding/success");
       } catch (err) {
-        handledRef.current = false;
+        busyRef.current = false;
         setError(err instanceof Error ? err.message : "Appairage echoue.");
         setBusy(false);
       }
     },
-    [busy, router],
+    [router],
   );
+
+  const onBarcodeScanned = useCallback(
+    (result: BarcodeScanningResult) => {
+      void processScan(barcodeScanPayload(result));
+    },
+    [processScan],
+  );
+
+  useEffect(() => {
+    if (!permission?.granted) return;
+    const sub = CameraView.onModernBarcodeScanned((event) => {
+      void processScan(event.data ?? "");
+    });
+    return () => sub.remove();
+  }, [permission?.granted, processScan]);
+
+  const openModernScanner = useCallback(async () => {
+    if (!modernScannerAvailable || busyRef.current) return;
+    try {
+      await CameraView.launchScanner({ barcodeTypes: ["qr"] });
+    } catch (err) {
+      log.warn("pairing", "modern scanner failed", err);
+      setError("Scanner systeme indisponible.");
+    }
+  }, [modernScannerAvailable]);
 
   if (!permission) {
     return (
@@ -73,19 +114,36 @@ export default function ScanPairingScreen() {
     );
   }
 
+  const scanningEnabled = isFocused && cameraReady && !busy;
+
   return (
     <View style={styles.container}>
       <CameraView
         style={StyleSheet.absoluteFill}
         facing="back"
+        active={isFocused && !busy}
+        autofocus="on"
         barcodeScannerSettings={{ barcodeTypes: ["qr"] }}
-        onBarcodeScanned={busy ? undefined : handleBarcode}
+        onCameraReady={() => setCameraReady(true)}
+        onMountError={(event) => setError(event.message)}
+        onBarcodeScanned={scanningEnabled ? onBarcodeScanned : undefined}
       />
-      <View style={styles.overlay}>
+      <View style={styles.overlay} pointerEvents="box-none">
         <Text style={styles.overlayTitle}>Cadre le QR VocalGuard</Text>
         <View style={styles.frame} />
+        {!cameraReady ? (
+          <Text style={styles.hintOverlay}>Initialisation camera...</Text>
+        ) : (
+          <Text style={styles.hintOverlay}>Detection automatique activee</Text>
+        )}
         {busy ? <ActivityIndicator color={colors.primary} style={styles.spinner} /> : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
+        {modernScannerAvailable ? (
+          <Pressable style={styles.modernBtn} onPress={() => void openModernScanner()} disabled={busy}>
+            <MaterialCommunityIcons name={icons.qrScan} size={20} color={colors.slate} />
+            <Text style={styles.modernBtnText}>Scanner systeme (plus fiable)</Text>
+          </Pressable>
+        ) : null}
         <Link href="/onboarding/manual" asChild>
           <Pressable style={styles.secondary}>
             <Text style={styles.secondaryText}>Saisie manuelle</Text>
@@ -109,7 +167,7 @@ const styles = StyleSheet.create({
   title: { color: colors.text, fontSize: 20, fontWeight: "700", textAlign: "center" },
   hint: { color: colors.textMuted, textAlign: "center" },
   overlay: {
-    flex: 1,
+    ...StyleSheet.absoluteFillObject,
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "rgba(15, 23, 42, 0.35)",
@@ -122,13 +180,14 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   frame: {
-    width: 240,
-    height: 240,
+    width: 260,
+    height: 260,
     borderWidth: 3,
     borderColor: colors.primary,
     borderRadius: 16,
     backgroundColor: "transparent",
   },
+  hintOverlay: { color: colors.neutral200, marginTop: 16, fontSize: 13 },
   spinner: { marginTop: 20 },
   error: {
     marginTop: 16,
@@ -138,6 +197,17 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 8,
   },
+  modernBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: colors.primary,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderRadius: 999,
+    marginTop: 16,
+  },
+  modernBtnText: { color: colors.slate, fontWeight: "700" },
   primary: {
     backgroundColor: colors.primary,
     paddingHorizontal: 24,

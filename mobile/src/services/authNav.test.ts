@@ -15,6 +15,12 @@ describe("resolveAuthRedirect", () => {
     expect(resolveAuthRedirect("tok", "onboarding")).toBe("/(tabs)/calls");
   });
 
+  it("laisse le scan et la saisie manuelle pour re-appairage", () => {
+    expect(resolveAuthRedirect("tok", "onboarding", "scan")).toBeNull();
+    expect(resolveAuthRedirect("tok", "onboarding", "manual")).toBeNull();
+    expect(resolveAuthRedirect("tok", "onboarding", "success")).toBeNull();
+  });
+
   it("envoie l index vers les tabs si token present", () => {
     expect(resolveAuthRedirect("tok", undefined)).toBe("/(tabs)/calls");
   });

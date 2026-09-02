@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, Alert } from "react-native";
+import { useLocalSearchParams } from "expo-router";
 import { getStoredCredentials } from "../../src/services/credentials";
 import { DialPad } from "../../src/components/DialPad";
 import { apiPost } from "../../src/services/api";
 import { pingHealth } from "../../src/services/connectivity";
 import { resolveOutgoingState } from "../../src/services/outgoingAudio";
+import { routeParam } from "../../src/utils/nav";
 import { colors } from "../../src/theme/colors";
 import { icons } from "../../src/theme/icons";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
@@ -13,8 +15,14 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
  * Composer / dialer (online LAN uniquement).
  */
 export default function DialerScreen() {
+  const params = useLocalSearchParams<{ phone?: string }>();
   const [phone, setPhone] = useState("");
   const [online, setOnline] = useState(false);
+
+  useEffect(() => {
+    const incoming = routeParam(params.phone);
+    if (incoming) setPhone(incoming);
+  }, [params.phone]);
 
   useEffect(() => {
     void (async () => {
@@ -49,7 +57,7 @@ export default function DialerScreen() {
       {disabled ? (
         <View style={styles.offline}>
           <MaterialCommunityIcons name={icons.wifiAlert} size={28} color={colors.danger} />
-          <Text style={styles.offlineText}>Impossible de joindre node12 · verifier le Wi-Fi</Text>
+          <Text style={styles.offlineText}>Serveur injoignable - verifie le Wi-Fi ou le VPN</Text>
         </View>
       ) : null}
       <DialPad phone={phone} onChange={setPhone} onCall={onCall} disabled={disabled} />
