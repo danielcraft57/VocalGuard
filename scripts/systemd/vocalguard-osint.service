@@ -1,0 +1,19 @@
+[Unit]
+Description=VocalGuard OSINT worker (PhoneInfoga)
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/vocalguard-osint
+Environment=PYTHONPATH=/opt/vocalguard-osint
+Environment=PHONEINFOGA_BIN=/opt/vocalguard-osint/bin/phoneinfoga
+Environment=PHONEINFOGA_API_URL=http://127.0.0.1:5011
+EnvironmentFile=-/opt/vocalguard-osint/.env.osint
+ExecStart=/opt/vocalguard-osint/venv/bin/uvicorn backend.osint_worker.app:app --host 0.0.0.0 --port 8110
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

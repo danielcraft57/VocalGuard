@@ -84,6 +84,10 @@ class Config(BaseSettings):
     # Service STT distant (ex. node15.lan:8100) — messages vocaux batch.
     stt_service_url: Optional[str] = Field(default=None)
     stt_internal_token: Optional[str] = Field(default=None)
+
+    # Service OSINT distant (ex. node15.lan:8110) — PhoneInfoga / scanners.
+    osint_service_url: Optional[str] = Field(default=None)
+    osint_internal_token: Optional[str] = Field(default=None)
     
     # Appels
     rings_before_answer: int = Field(default=0)
@@ -225,6 +229,10 @@ class Config(BaseSettings):
             self.stt_service_url = os.environ.get("STT_SERVICE_URL", "").strip().rstrip("/") or None
         if os.environ.get("STT_INTERNAL_TOKEN"):
             self.stt_internal_token = os.environ.get("STT_INTERNAL_TOKEN", "").strip() or None
+        if os.environ.get("OSINT_SERVICE_URL"):
+            self.osint_service_url = os.environ.get("OSINT_SERVICE_URL", "").strip().rstrip("/") or None
+        if os.environ.get("OSINT_INTERNAL_TOKEN"):
+            self.osint_internal_token = os.environ.get("OSINT_INTERNAL_TOKEN", "").strip() or None
         if os.environ.get("MODEM_PORT"):
             self.modem_port = os.environ.get("MODEM_PORT", "").strip() or None
         if os.environ.get("USE_TELEPHONY_DAEMON"):

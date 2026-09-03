@@ -114,7 +114,20 @@ sudo apt-get install theharvester
 
 Pour des services de blocage/reputation de type callattendant (NOMOROBO pour les USA, SHOULDIANSWER pour le reste), voir [REPUTATION_SERVICES.md](REPUTATION_SERVICES.md). Ils sont branches dans l'OSINT et dans le blocage d'appels.
 
+## Worker OSINT distant (node15)
+
+Pour soulager node14 et utiliser le vrai **PhoneInfoga** (binaire Go sundowndev) :
+
+1. Deployer le worker : `powershell -File scripts/deploy_osint_node15.ps1`
+2. Sur l'API (node14), dans `.env` :
+   - `OSINT_SERVICE_URL=http://node15.lan:8110`
+   - `OSINT_INTERNAL_TOKEN=...` (meme token que `/opt/vocalguard-osint/.env.osint`)
+3. Redemarrer `vocalguard` et `vocalguard-celery`.
+
+Le service expose `POST /v1/scan` et `GET /health` (port **8110**). Localement sur node15, PhoneInfoga ecoute sur `127.0.0.1:5011` (API REST). Les detections FR / CommercialDetector / APIs NumLookup restent sur node14.
+
 ## Liste des appels et profils en base
+
 
 La page **Appels** affiche pour chaque appel la reputation OSINT, le lieu et l'operateur sans appeler les APIs en direct : tout est lu depuis la table `phone_number_profiles`.
 

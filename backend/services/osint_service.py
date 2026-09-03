@@ -46,6 +46,18 @@ class OSINTService:
         self.nomorobo_api_key = getattr(config, 'nomorobo_api_key', None) or os.getenv('NOMOROBO_API_KEY')
         self.shouldianswer_api_key = getattr(config, 'shouldianswer_api_key', None) or os.getenv('SHOULDIANSWER_API_KEY')
         
+        # Worker OSINT distant (node15) — PhoneInfoga Go + scanners
+        self.osint_service_url = (
+            getattr(config, "osint_service_url", None)
+            or (os.getenv("OSINT_SERVICE_URL") or "").strip().rstrip("/")
+            or None
+        )
+        self.osint_internal_token = (
+            getattr(config, "osint_internal_token", None)
+            or (os.getenv("OSINT_INTERNAL_TOKEN") or "").strip()
+            or None
+        )
+
         # Détecter si on est sur WSL/Kali Linux
         self.is_wsl = self._detect_wsl()
         self.available_tools = self._detect_available_tools()
@@ -98,17 +110,21 @@ class OSINTService:
             "shouldianswer": self.block_service == "SHOULDIANSWER" and bool(self.shouldianswer_api_key),
         }
         
-        # Vérifier phoneinfoga
-        try:
-            result = subprocess.run(
-                ["which", "phoneinfoga"],
-                capture_output=True,
-                text=True,
-                timeout=2
-            )
-            tools["phoneinfoga"] = result.returncode == 0
-        except:
-            pass
+        # PhoneInfoga : priorite au worker distant, sinon binaire local
+        if self.osint_service_url:
+            tools["phoneinfoga"] = True
+            tools["phoneinfoga_remote"] = True
+        else:
+            try:
+                result = subprocess.run(
+                    ["which", "phoneinfoga"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2
+                )
+                tools["phoneinfoga"] = result.returncode == 0
+            except Exception:
+                pass
         
         # Vérifier truecaller-scraper (via Python)
         try:
@@ -367,49 +383,54 @@ class OSINTService:
     
     async def _query_phoneinfoga(self, phone_number: str) -> Dict[str, Any]:
         """
-        Interroge phoneinfoga pour obtenir des informations
-        
+        Interroge PhoneInfoga (worker distant prioritaire, sinon CLI locale).
+
         Args:
             phone_number: Numéro de téléphone
-            
+
         Returns:
             Informations depuis phoneinfoga
         """
+        if self.osint_service_url:
+            try:
+                from backend.osint.remote import scan_phone_remote
+
+                data = await scan_phone_remote(
+                    self.osint_service_url,
+                    phone_number,
+                    token=self.osint_internal_token,
+                )
+                external_api_metrics.record("phoneinfoga_remote", True)
+                if data and "sources" not in data:
+                    data["sources"] = ["phoneinfoga"]
+                return data or {}
+            except Exception as e:
+                external_api_metrics.record("phoneinfoga_remote", False)
+                logger.warning(f"OSINT distant KO, fallback local: {e}")
+
         try:
-            # Exécuter phoneinfoga via subprocess
-            # Note: phoneinfoga peut être utilisé via API ou CLI
-            cmd = ["phoneinfoga", "scan", "-n", phone_number, "-o", "json"]
-            
+            cmd = ["phoneinfoga", "scan", "-n", phone_number]
             process = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=str(self.osint_tools_path)
+                cwd=str(self.osint_tools_path),
             )
-            
             stdout, stderr = await process.communicate()
-            
             if process.returncode == 0:
                 external_api_metrics.record("phoneinfoga", True)
-                try:
-                    data = json.loads(stdout.decode())
-                    return {
-                        "sources": ["phoneinfoga"],
-                        "carrier": data.get("carrier"),
-                        "country": data.get("country"),
-                        "line_type": data.get("line_type"),
-                        "reputation": data.get("reputation"),
-                    }
-                except json.JSONDecodeError:
-                    logger.warning("Impossible de parser la réponse phoneinfoga")
-            else:
-                external_api_metrics.record("phoneinfoga", False)
-            
+                text = stdout.decode(errors="replace")
+                # CLI v2 sort du texte ; on garde un marqueur de source
+                return {
+                    "sources": ["phoneinfoga"],
+                    "raw_cli": text[:2000],
+                }
+            external_api_metrics.record("phoneinfoga", False)
         except FileNotFoundError:
             logger.warning("phoneinfoga non trouvé")
         except Exception as e:
             logger.exception(f"Erreur lors de l'interrogation phoneinfoga: {e}")
-        
+
         return {}
     
     async def _query_truecaller(self, phone_number: str) -> Dict[str, Any]:
