@@ -753,7 +753,7 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
 
 def _profile_to_osint_response(profile: PhoneNumberProfile, phone_number: str) -> OsintReputationResponse:
     """
-    Construit OsintReputationResponse a partir d'un PhoneNumberProfile (reputation + lieu + operateur).
+    Construit OsintReputationResponse a partir d'un PhoneNumberProfile (reputation, lieu, operateur, entreprise).
     La reputation en base n'est remplie que par des sources externes (NumLookup, phoneinfoga).
     Si on a lieu/operateur (détection FR) mais pas de reputation, on renvoie "neutral" (non évaluée).
     """
@@ -772,6 +772,13 @@ def _profile_to_osint_response(profile: PhoneNumberProfile, phone_number: str) -
         rec = "allow"
     elif rep == "neutral":
         rec = "review"
+    sources: list[str] = ["database"]
+    raw = profile.raw_data if isinstance(profile.raw_data, dict) else {}
+    extra_sources = raw.get("sources")
+    if isinstance(extra_sources, list):
+        for src in extra_sources:
+            if isinstance(src, str) and src and src not in sources:
+                sources.append(src)
     return OsintReputationResponse(
         phone_number=phone_number,
         reputation=rep,
@@ -780,11 +787,14 @@ def _profile_to_osint_response(profile: PhoneNumberProfile, phone_number: str) -
         is_commercial=profile.is_commercial or False,
         is_telemarketer=profile.is_telemarketer or False,
         confidence=conf_float,
-        sources=["database"],
+        sources=sources,
         recommendation=rec,
         city=profile.city or None,
         region=profile.region or None,
         operator=profile.operator or None,
+        is_company=bool(profile.is_company),
+        name=profile.name or None,
+        company_name=profile.company_name or None,
     )
 
 

@@ -190,6 +190,9 @@ class OsintReputationResponse(BaseModel):
     city: Optional[str] = None
     region: Optional[str] = None
     operator: Optional[str] = None
+    is_company: bool = False
+    name: Optional[str] = None
+    company_name: Optional[str] = None
 
 
 # Resoudre la reference forward dans CallResponse (osint: Optional[OsintReputationResponse])

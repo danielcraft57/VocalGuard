@@ -633,6 +633,12 @@ class OSINTService:
             "confidence": conf,
             "sources": sources,
             "recommendation": self._get_recommendation(result),
+            "city": result.get("city"),
+            "region": result.get("region"),
+            "operator": result.get("operator") or result.get("carrier"),
+            "is_company": bool(result.get("is_company", False)),
+            "name": result.get("name"),
+            "company_name": result.get("company_name"),
         }
 
         return reputation_info

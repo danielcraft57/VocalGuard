@@ -6,6 +6,7 @@ import { Tooltip } from "@mui/material";
 import { AppLayout } from "../../components/AppLayout";
 import { VgProfileChip, type IncomingProfileKind } from "../../components/mui/VgProfileChip";
 import { OutgoingCallDialerModal } from "../../components/OutgoingCallDialerModal";
+import { CallDetailModal } from "../../components/CallDetailModal";
 import {
   fetchCallsWithOsint,
   fetchCallWithOsintById,
@@ -15,8 +16,7 @@ import {
   hangupOutgoingCall,
   queueCallOsint,
   bulkDeleteCalls,
-  deleteCall,
-  getCallRecordingUrl
+  deleteCall
 } from "../../services/callsApi";
 import { getWsBaseUrl } from "../../services/httpClient";
 import { useOutgoingCallAudio, unlockOutgoingAudioContext } from "../../hooks/useOutgoingCallAudio";
@@ -178,7 +178,7 @@ function parseSearchQuery(query: string): {
 }
 
 /**
- * Filtre un appel selon la requete texte (numero, operateur, lieu).
+ * Filtre un appel selon la requete texte (numero, operateur, lieu, entreprise).
  */
 function callMatchesText(call: CallWithOsint, text: string): boolean {
   if (!text) return true;
@@ -188,12 +188,14 @@ function callMatchesText(call: CallWithOsint, text: string): boolean {
   const region = (call.osint?.region ?? "").toLowerCase();
   const city = (call.osint?.city ?? "").toLowerCase();
   const lieu = [call.osint?.city, call.osint?.region].filter(Boolean).join(" ").toLowerCase();
+  const company = (call.osint?.company_name ?? call.osint?.name ?? "").toLowerCase();
   return (
     phone.includes(t) ||
     operator.includes(t) ||
     region.includes(t) ||
     city.includes(t) ||
-    lieu.includes(t)
+    lieu.includes(t) ||
+    company.includes(t)
   );
 }
 
@@ -429,6 +431,10 @@ export default function CallsPage() {
       await queueCallOsint(callId);
       const data = await fetchCallsWithOsint();
       setCalls(data);
+      setDetailCall((d) => {
+        if (!d || d.id !== callId) return d;
+        return data.find((c) => c.id === callId) ?? d;
+      });
     } catch {
       setError("Impossible de lancer l'OSINT");
     }
@@ -565,6 +571,11 @@ export default function CallsPage() {
             </span>
             <div className="vg-call-contact-text">
               <span className="vg-call-phone">{phone}</span>
+              {call.osint?.company_name || call.osint?.name ? (
+                <span className="vg-call-osint-name" title={call.osint.company_name || call.osint.name || undefined}>
+                  {call.osint.company_name || call.osint.name}
+                </span>
+              ) : null}
               {shortTranscript ? (
                 <div
                   className="vg-call-transcript-snippet vg-call-transcript-snippet--mobile"
@@ -1239,173 +1250,16 @@ export default function CallsPage() {
         onKeypadDigit={handleKeypadDigit}
       />
 
-      {(detailCall !== null || detailLoading) && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 1100,
-            background: "rgba(0,0,0,0.65)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: "1rem"
-          }}
-          role="dialog"
-          aria-modal="true"
-          aria-label="Detail appel"
-          onClick={() => !detailLoading && setDetailCall(null)}
-        >
-          <div
-            className="vg-card"
-            style={{
-              maxWidth: 560,
-              width: "100%",
-              maxHeight: "90vh",
-              overflow: "auto",
-              border: "1px solid #374151",
-              padding: "1.25rem"
-            }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            {detailLoading ? (
-              <div style={{ color: "#9ca3af", fontSize: "0.9rem" }}>Chargement...</div>
-            ) : detailCall ? (
-              <>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: "0.75rem" }}>
-                  <div>
-                    <h2 style={{ margin: "0 0 0.25rem", fontSize: "1.15rem", color: "#f9fafb" }}>
-                      Appel #{detailCall.id}
-                    </h2>
-                    <div style={{ fontSize: "0.85rem", color: "#9ca3af" }}>
-                      {detailCall.phone_number ?? "Numero inconnu"}
-                      {detailCall.caller_name ? ` · ${detailCall.caller_name}` : ""}
-                    </div>
-                    <div style={{ fontSize: "0.78rem", color: "#6b7280", marginTop: "0.35rem" }}>
-                      {formatApiDateTime(detailCall.call_time)} · statut {detailCall.status}
-                      {getCallDurationSec(detailCall) > 0
-                        ? ` · ${formatCallDuration(detailCall)}`
-                        : ""}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setDetailCall(null)}
-                    style={{ border: "none", background: "transparent", color: "#9ca3af", cursor: "pointer" }}
-                    aria-label="Fermer"
-                  >
-                    <span className="material-icons">close</span>
-                  </button>
-                </div>
-
-                <div style={{ marginTop: "1rem" }}>
-                  <div style={{ fontSize: "0.72rem", color: "#64748b", textTransform: "uppercase", marginBottom: "0.35rem" }}>
-                    Enregistrement
-                  </div>
-                  {detailCall.audio_file ? (
-                    <audio
-                      controls
-                      src={getCallRecordingUrl(detailCall.id)}
-                      style={{ width: "100%", maxHeight: "48px" }}
-                      preload="metadata"
-                    />
-                  ) : (
-                    <p style={{ margin: 0, fontSize: "0.85rem", color: "#6b7280" }}>Aucun fichier audio pour cet appel.</p>
-                  )}
-                </div>
-
-                <div style={{ marginTop: "1rem" }}>
-                  <div style={{ fontSize: "0.72rem", color: "#64748b", textTransform: "uppercase", marginBottom: "0.35rem" }}>
-                    Transcription
-                  </div>
-                  <div
-                    style={{
-                      whiteSpace: "pre-wrap",
-                      fontSize: "0.88rem",
-                      color: "#e5e7eb",
-                      background: "#111827",
-                      borderRadius: "8px",
-                      padding: "0.65rem",
-                      border: "1px solid #374151",
-                      minHeight: "3rem"
-                    }}
-                  >
-                    {detailCall.transcription?.trim() || "—"}
-                  </div>
-                </div>
-
-                <div style={{ marginTop: "1rem" }}>
-                  <div style={{ fontSize: "0.72rem", color: "#64748b", textTransform: "uppercase", marginBottom: "0.35rem" }}>
-                    OSINT (base)
-                  </div>
-                  {detailCall.osint ? (
-                    <ul style={{ margin: 0, paddingLeft: "1.1rem", fontSize: "0.85rem", color: "#d1d5db", lineHeight: 1.5 }}>
-                      <li>Reputation: {detailCall.osint.recommendation} / {detailCall.osint.reputation}</li>
-                      <li>Operateur: {detailCall.osint.operator ?? "—"}</li>
-                      <li>Lieu: {[detailCall.osint.city, detailCall.osint.region].filter(Boolean).join(", ") || "—"}</li>
-                      <li>
-                        Flags: spam {detailCall.osint.is_spam ? "oui" : "non"}, arnaque {detailCall.osint.is_scam ? "oui" : "non"},
-                        demarchage: {detailCall.osint.is_telemarketer ? "oui" : "non"}
-                      </li>
-                    </ul>
-                  ) : (
-                    <p style={{ margin: 0, fontSize: "0.85rem", color: "#6b7280" }}>Pas de profil OSINT en base.</p>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => void handleRowOsint(detailCall.id)}
-                    style={{
-                      marginTop: "0.5rem",
-                      fontSize: "0.78rem",
-                      padding: "0.35rem 0.65rem",
-                      borderRadius: "8px",
-                      border: "1px solid #6366f1",
-                      background: "transparent",
-                      color: "#a5b4fc",
-                      cursor: "pointer"
-                    }}
-                  >
-                    Rafraichir OSINT (file)
-                  </button>
-                </div>
-
-                <div style={{ display: "flex", gap: "0.5rem", marginTop: "1.25rem", flexWrap: "wrap" }}>
-                  <button
-                    type="button"
-                    onClick={() => void handleDeleteDetailCall()}
-                    style={{
-                      fontSize: "0.82rem",
-                      padding: "0.45rem 0.75rem",
-                      borderRadius: "8px",
-                      border: "1px solid #b91c1c",
-                      background: "#7f1d1d",
-                      color: "#fecaca",
-                      cursor: "pointer"
-                    }}
-                  >
-                    Supprimer cet appel
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setDetailCall(null)}
-                    style={{
-                      fontSize: "0.82rem",
-                      padding: "0.45rem 0.75rem",
-                      borderRadius: "8px",
-                      border: "1px solid #4b5563",
-                      background: "transparent",
-                      color: "#d1d5db",
-                      cursor: "pointer"
-                    }}
-                  >
-                    Fermer
-                  </button>
-                </div>
-              </>
-            ) : null}
-          </div>
-        </div>
-      )}
+      <CallDetailModal
+        open={detailCall !== null || detailLoading}
+        loading={detailLoading}
+        call={detailCall}
+        onClose={() => setDetailCall(null)}
+        onDelete={() => void handleDeleteDetailCall()}
+        onRefreshOsint={() => {
+          if (detailCall) void handleRowOsint(detailCall.id);
+        }}
+      />
     </AppLayout>
   );
 }

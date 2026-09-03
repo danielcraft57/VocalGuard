@@ -1974,6 +1974,14 @@ html.vg-theme-dark .vg-search-field input {
   text-overflow: ellipsis;
 }
 
+.vg-call-osint-name {
+  font-size: 0.78rem;
+  color: var(--vg-color-text-muted, #6b7280);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .vg-call-statut {
   display: flex;
   flex-wrap: wrap;

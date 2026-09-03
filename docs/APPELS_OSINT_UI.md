@@ -6,7 +6,8 @@ Documentation des fonctionnalites ajoutees ou modifiees pour la liste des appels
 
 - **API** : `GET /api/v1/calls?with_osint=true&limit=500` retourne les appels avec reputation, lieu et operateur issus de la table `phone_number_profiles` (un seul appel, pas d'appel OSINT en direct au chargement).
 - **Ordre** : les appels sont tries du **plus recent au plus ancien** (backend : `CallRepository.get_all` avec `order_by(desc(Call.call_time))`).
-- **Colonnes** : Date, Numero, Statut, Reputation OSINT, Lieu, Operateur.
+- **Colonnes** : Date, Contact (numero + nom d'entreprise OSINT si connu), Statut, Duree, Transcription.
+- **OSINT entreprise** : `company_name` / `is_company` sont joints depuis `phone_number_profiles` (ProspectLab / Sirene via node15). La recherche texte matche aussi le nom d'entreprise.
 - **Reputation** : valeurs possibles en base puis affichage : `high` -> Bonne, `low` / spam/scam -> Risque, `neutral` -> Non evaluee (quand on a lieu/operateur mais pas de reputation externe), sinon Inconnue.
 
 ## Backend
@@ -15,7 +16,7 @@ Documentation des fonctionnalites ajoutees ou modifiees pour la liste des appels
 
 - Fichier : `backend/api/routes/calls.py`
 - Parametre `with_osint` : si `true`, jointure sur `PhoneNumberProfile` par numero, construction de `OsintReputationResponse` pour chaque appel.
-- Modele `OsintReputationResponse` (dans `backend/api/models.py`) : `phone_number`, `reputation`, `is_spam`, `is_scam`, etc., et champs optionnels `city`, `region`, `operator` pour lieu et operateur.
+- Modele `OsintReputationResponse` (dans `backend/api/models.py`) : `phone_number`, `reputation`, `is_spam`, `is_scam`, etc., champs optionnels `city`, `region`, `operator`, plus `is_company`, `name`, `company_name`.
 
 ### Reputation "neutral"
 

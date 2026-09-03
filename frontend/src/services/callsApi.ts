@@ -35,6 +35,9 @@ export interface OsintReputation {
   city?: string | null;
   region?: string | null;
   operator?: string | null;
+  is_company?: boolean;
+  name?: string | null;
+  company_name?: string | null;
 }
 
 export interface CallWithOsint extends Call {

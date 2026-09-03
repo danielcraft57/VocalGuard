@@ -193,6 +193,10 @@ export function EntrepriseDetailsDialog(props: {
             ) : osintProfile ? (
               <Stack spacing={1.2}>
                 <Stack direction="row" sx={{ flexWrap: "wrap", gap: 0.75 }}>
+                  {osintProfile.company_name || osintProfile.name ? (
+                    <Chip size="small" color="primary" variant="outlined" label={osintProfile.company_name || osintProfile.name} />
+                  ) : null}
+                  {osintProfile.is_company ? <Chip size="small" variant="outlined" label="Entreprise" /> : null}
                   <Chip size="small" color="primary" label={`Réputation: ${osintProfile.reputation ?? "unknown"}`} />
                   {osintProfile.operator ? <Chip size="small" variant="outlined" label={`Opérateur: ${osintProfile.operator}`} /> : null}
                   {osintProfile.region ? <Chip size="small" variant="outlined" label={`Région: ${osintProfile.region}`} /> : null}
