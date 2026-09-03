@@ -26,7 +26,7 @@ import SubtitlesIcon from "@mui/icons-material/Subtitles";
 import type { CallWithOsint } from "../services/callsApi";
 import { getCallRecordingUrl } from "../services/callsApi";
 import { formatApiDateTime, formatDurationMinSec, parseApiUtcDate } from "../utils/dateTime";
-import { getCallIncomingProfile } from "../utils/callProfile";
+import { getCallIncomingProfile, isCallWithoutMessage, CALL_NO_MESSAGE_LABEL } from "../utils/callProfile";
 import { VgProfileChip } from "./mui/VgProfileChip";
 import {
   buildTranscriptCues,
@@ -258,11 +258,14 @@ export function CallDetailModal({
   const duration = audioDuration > 0.4 ? audioDuration : fallbackDuration;
 
   const cues = useMemo(() => {
-    if (!call) return [];
+    if (!call || isCallWithoutMessage(call)) return [];
     const stored = cuesFromExtraData(call.extra_data ?? null);
     if (stored && stored.length > 0) return stored;
     return buildTranscriptCues(call.transcription || "", duration);
   }, [call, duration]);
+
+  const noMessage = Boolean(call && isCallWithoutMessage(call));
+  const showPlayer = Boolean(recordingUrl) && !noMessage;
 
   const cueIndex = findCueIndexAt(cues, currentTime);
   const wordIndex = cueIndex >= 0 && cues[cueIndex] ? findWordIndexAt(cues[cueIndex], currentTime) : 0;
@@ -364,12 +367,15 @@ export function CallDetailModal({
               <Stack direction="row" spacing={0.75} useFlexGap sx={{ mt: 1, flexWrap: "wrap" }}>
                 {st ? <Chip size="small" label={st.label} color={st.color} /> : null}
                 {profile ? <VgProfileChip profile={profile} /> : null}
+                {noMessage ? (
+                  <Chip size="small" color="default" variant="outlined" label={CALL_NO_MESSAGE_LABEL} />
+                ) : null}
                 <Chip
                   size="small"
                   variant="outlined"
                   label={formatApiDateTime(call.call_time)}
                 />
-                {fallbackDuration > 0 ? (
+                {fallbackDuration > 0 && !noMessage ? (
                   <Chip size="small" variant="outlined" label={formatDurationMinSec(fallbackDuration)} />
                 ) : null}
               </Stack>
@@ -380,103 +386,127 @@ export function CallDetailModal({
           </Box>
 
           <DialogContent sx={{ px: { xs: 0, sm: 0 }, pt: 0, pb: 1 }}>
-            {recordingUrl ? (
-              <audio
-                ref={audioRef}
-                src={recordingUrl}
-                preload="metadata"
-                onTimeUpdate={onTimeUpdate}
-                onLoadedMetadata={(e) => {
-                  const d = e.currentTarget.duration;
-                  if (Number.isFinite(d) && d > 0) setAudioDuration(d);
-                }}
-                onPlay={() => setPlaying(true)}
-                onPause={() => setPlaying(false)}
-                onEnded={() => setPlaying(false)}
-                style={{ display: "none" }}
-              />
-            ) : null}
-
-            <Box
-              sx={{
-                mx: { xs: 2, sm: 3 },
-                borderRadius: 3,
-                bgcolor: theme.palette.mode === "dark" ? "rgba(15,20,28,0.72)" : "rgba(15,23,42,0.04)",
-                border: "1px solid",
-                borderColor: "divider"
-              }}
-            >
+            {noMessage ? (
               <Box
                 sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 1,
-                  px: 1.5,
-                  pt: 1.25,
-                  color: "text.secondary"
+                  mx: { xs: 2, sm: 3 },
+                  borderRadius: 3,
+                  border: "1px solid",
+                  borderColor: "divider",
+                  px: 2.5,
+                  py: 3,
+                  textAlign: "center",
+                  bgcolor:
+                    theme.palette.mode === "dark" ? "rgba(15,20,28,0.72)" : "rgba(15,23,42,0.04)"
                 }}
               >
-                <SubtitlesIcon fontSize="small" />
-                <Typography variant="overline" sx={{ letterSpacing: "0.12em" }}>
-                  Sous-titres
+                <Chip size="small" label={CALL_NO_MESSAGE_LABEL} sx={{ mb: 1.25 }} />
+                <Typography variant="body1" color="text.secondary">
+                  Aucun message vocal laisse sur le repondeur.
+                </Typography>
+                <Typography variant="caption" color="text.disabled" sx={{ mt: 0.75, display: "block" }}>
+                  Pas d&apos;audio ni de transcription a afficher.
                 </Typography>
               </Box>
-              <KaraokeStage
-                cues={cues}
-                cueIndex={cueIndex}
-                wordIndex={wordIndex}
-                onSeekWord={(start) => seekTo(start, true)}
-                onSeekCue={(start) => seekTo(start, true)}
-              />
-              <Box sx={{ px: 2, pb: 2, display: "flex", alignItems: "center", gap: 1.5 }}>
-                <IconButton
-                  color="primary"
-                  onClick={togglePlay}
-                  disabled={!recordingUrl}
-                  aria-label={playing ? "Pause" : "Lecture"}
+            ) : (
+              <Box
+                sx={{
+                  mx: { xs: 2, sm: 3 },
+                  borderRadius: 3,
+                  bgcolor: theme.palette.mode === "dark" ? "rgba(15,20,28,0.72)" : "rgba(15,23,42,0.04)",
+                  border: "1px solid",
+                  borderColor: "divider"
+                }}
+              >
+                {recordingUrl ? (
+                  <audio
+                    ref={audioRef}
+                    src={recordingUrl}
+                    preload="metadata"
+                    onTimeUpdate={onTimeUpdate}
+                    onLoadedMetadata={(e) => {
+                      const d = e.currentTarget.duration;
+                      if (Number.isFinite(d) && d > 0) setAudioDuration(d);
+                    }}
+                    onPlay={() => setPlaying(true)}
+                    onPause={() => setPlaying(false)}
+                    onEnded={() => setPlaying(false)}
+                    style={{ display: "none" }}
+                  />
+                ) : null}
+
+                <Box
                   sx={{
-                    bgcolor: "primary.main",
-                    color: "primary.contrastText",
-                    width: 48,
-                    height: 48,
-                    "&:hover": { bgcolor: "primary.dark" },
-                    "&.Mui-disabled": { bgcolor: "action.disabledBackground" }
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 1,
+                    px: 1.5,
+                    pt: 1.25,
+                    color: "text.secondary"
                   }}
                 >
-                  {playing ? <PauseIcon /> : <PlayArrowIcon />}
-                </IconButton>
-                <Typography
-                  variant="caption"
-                  sx={{ fontVariantNumeric: "tabular-nums", minWidth: 36, color: "text.secondary" }}
-                >
-                  {formatClock(currentTime)}
-                </Typography>
-                <Slider
-                  size="small"
-                  disabled={!recordingUrl || duration <= 0}
-                  min={0}
-                  max={Math.max(duration, 0.01)}
-                  step={0.05}
-                  value={Math.min(currentTime, duration || 0)}
-                  onChange={(_e, v) => seekTo(Array.isArray(v) ? v[0] : v, false)}
-                  aria-label="Position lecture"
-                  sx={{ flex: 1 }}
+                  <SubtitlesIcon fontSize="small" />
+                  <Typography variant="overline" sx={{ letterSpacing: "0.12em" }}>
+                    Sous-titres
+                  </Typography>
+                </Box>
+                <KaraokeStage
+                  cues={cues}
+                  cueIndex={cueIndex}
+                  wordIndex={wordIndex}
+                  onSeekWord={(start) => seekTo(start, true)}
+                  onSeekCue={(start) => seekTo(start, true)}
                 />
-                <Typography
-                  variant="caption"
-                  sx={{ fontVariantNumeric: "tabular-nums", minWidth: 36, color: "text.secondary" }}
-                >
-                  {formatClock(duration)}
-                </Typography>
+                <Box sx={{ px: 2, pb: 2, display: "flex", alignItems: "center", gap: 1.5 }}>
+                  <IconButton
+                    color="primary"
+                    onClick={togglePlay}
+                    disabled={!showPlayer}
+                    aria-label={playing ? "Pause" : "Lecture"}
+                    sx={{
+                      bgcolor: "primary.main",
+                      color: "primary.contrastText",
+                      width: 48,
+                      height: 48,
+                      "&:hover": { bgcolor: "primary.dark" },
+                      "&.Mui-disabled": { bgcolor: "action.disabledBackground" }
+                    }}
+                  >
+                    {playing ? <PauseIcon /> : <PlayArrowIcon />}
+                  </IconButton>
+                  <Typography
+                    variant="caption"
+                    sx={{ fontVariantNumeric: "tabular-nums", minWidth: 36, color: "text.secondary" }}
+                  >
+                    {formatClock(currentTime)}
+                  </Typography>
+                  <Slider
+                    size="small"
+                    disabled={!showPlayer || duration <= 0}
+                    min={0}
+                    max={Math.max(duration, 0.01)}
+                    step={0.05}
+                    value={Math.min(currentTime, duration || 0)}
+                    onChange={(_e, v) => seekTo(Array.isArray(v) ? v[0] : v, false)}
+                    aria-label="Position lecture"
+                    sx={{ flex: 1 }}
+                  />
+                  <Typography
+                    variant="caption"
+                    sx={{ fontVariantNumeric: "tabular-nums", minWidth: 36, color: "text.secondary" }}
+                  >
+                    {formatClock(duration)}
+                  </Typography>
+                </Box>
+                {!recordingUrl ? (
+                  <Typography variant="body2" color="text.secondary" sx={{ px: 2, pb: 2 }}>
+                    Aucun fichier audio pour cet appel.
+                  </Typography>
+                ) : null}
               </Box>
-              {!recordingUrl ? (
-                <Typography variant="body2" color="text.secondary" sx={{ px: 2, pb: 2 }}>
-                  Aucun fichier audio pour cet appel.
-                </Typography>
-              ) : null}
-            </Box>
+            )}
 
-            {call.transcription?.trim() ? (
+            {!noMessage && call.transcription?.trim() ? (
               <Box sx={{ mx: { xs: 2, sm: 3 }, mt: 1.5 }}>
                 <Button
                   size="small"

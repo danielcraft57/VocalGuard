@@ -9,6 +9,7 @@ services adequats.
 
 from typing import Optional
 from datetime import datetime
+from pathlib import Path
 import asyncio
 from sqlalchemy.orm import Session
 from loguru import logger
@@ -40,8 +41,8 @@ class CallService:
         self.db = db
         
         # Service d'enrichissement OSINT des numeros
-        config = Config()
-        self.phone_osint_service = PhoneOsintService(db, config)
+        self.config = Config()
+        self.phone_osint_service = PhoneOsintService(db, self.config)
     
     async def create_incoming_call(
         self,
@@ -326,6 +327,46 @@ class CallService:
         if not call:
             return None
         return self.call_repo.update(call_id, audio_file=audio_file)
+
+    async def mark_call_no_message(
+        self,
+        call_id: int,
+        *,
+        reason: str = "vide",
+    ) -> Optional[Call]:
+        """
+        Marque un appel sans message vocal (bips / silence seulement).
+
+        Pas de STT : transcription fixe « Pas de message » + drapeau extra_data.
+
+        @param call_id ID appel.
+        @param reason Cause (silence, bips_raccrochage, trop_court, ...).
+        @returns Appel mis a jour ou None.
+        """
+        call = self.call_repo.get_by_id(call_id)
+        if not call:
+            return None
+        meta = dict(call.extra_data or {})
+        meta["no_message"] = True
+        meta["no_message_reason"] = str(reason or "vide")[:80]
+        meta.pop("transcription_cues", None)
+        # Plus besoin de garder un WAV d'accueil / bips sans message.
+        audio_path = call.audio_file
+        if audio_path:
+            try:
+                base = Path(self.config.base_path) if self.config.base_path else Path.cwd()
+                wav = (base / str(audio_path).replace("\\", "/").lstrip("/")).resolve()
+                wav.relative_to(base.resolve())
+                if wav.is_file():
+                    wav.unlink()
+            except Exception:
+                logger.debug("Suppression audio sans message ignoree ({})", audio_path)
+        return self.call_repo.update(
+            call_id,
+            transcription="Pas de message",
+            audio_file=None,
+            extra_data=meta,
+        )
 
     async def set_transcription_and_intent(
         self,

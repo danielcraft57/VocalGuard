@@ -192,6 +192,7 @@ class CallManager:
         self.is_running = False
         self.current_call_id: Optional[int] = None
         self._incoming_recorder: Optional[_IncomingLineRecorder] = None
+        self._skip_incoming_recording_save: bool = False
         self._incoming_handling = False
         self._line_already_answered = False
         self._pending_cid: Optional[str] = None
@@ -1336,6 +1337,7 @@ class CallManager:
         self._log_call("autorise_debut")
         recorder = _IncomingLineRecorder(self)
         self._incoming_recorder = recorder
+        self._skip_incoming_recording_save = False
 
         try:
             ok = bool(line_answered) if skip_modem_answer else False
@@ -1449,11 +1451,13 @@ class CallManager:
             )
         finally:
             call_id = tracked_call_id or self.current_call_id
-            if call_id:
+            if call_id and not self._skip_incoming_recording_save:
                 try:
                     await recorder.save(call_id)
                 except Exception as exc:
                     logger.warning("Sauvegarde enregistrement entrant: {}", exc)
+            elif call_id and self._skip_incoming_recording_save:
+                self._log_call("record_ignore", raison="pas_de_message")
             if call_id is not None:
                 await self.release_active_call(
                     reason="permitted_finally",
@@ -1461,6 +1465,7 @@ class CallManager:
                     call_id=call_id,
                 )
             self._incoming_recorder = None
+            self._skip_incoming_recording_save = False
     
     async def _handle_voicemail_simple(
         self,
@@ -1549,25 +1554,39 @@ class CallManager:
                         self._transcribe_voicemail_async(vm.id, audio_data),
                         name=f"stt_vm_{vm.id}",
                     )
-            elif persist_path.exists():
-                if not heard_speech:
-                    logger.info(
-                        "Pas de parole sur la ligne — message ignore ({})",
-                        persist_path.name,
-                    )
-                    self._log_call(
-                        "repondeur_sans_parole",
-                        raison=self.modem.last_vrx_stop_reason or "vide",
-                    )
+            else:
+                no_msg_reason = "vide"
+                if persist_path.exists():
+                    if not heard_speech:
+                        logger.info(
+                            "Pas de parole sur la ligne — message ignore ({})",
+                            persist_path.name,
+                        )
+                        no_msg_reason = self.modem.last_vrx_stop_reason or "vide"
+                    else:
+                        logger.info("Message trop court ignore ({})", persist_path.name)
+                        no_msg_reason = "trop_court"
+                    try:
+                        persist_path.unlink()
+                    except OSError:
+                        pass
+                elif getattr(self.modem, "last_vrx_stop_reason", "") == "disconnect_tones":
+                    no_msg_reason = "bips_raccrochage"
+                    logger.info("Raccrochage pendant l'ecoute — pas de message a enregistrer")
                 else:
-                    logger.info("Message trop court ignore ({})", persist_path.name)
-                try:
-                    persist_path.unlink()
-                except OSError:
-                    pass
-            elif getattr(self.modem, "last_vrx_stop_reason", "") == "disconnect_tones":
-                self._log_call("repondeur_sans_parole", raison="bips_raccrochage")
-                logger.info("Raccrochage pendant l'ecoute — pas de message a enregistrer")
+                    no_msg_reason = self.modem.last_vrx_stop_reason or "vide"
+                self._skip_incoming_recording_save = True
+                self._log_call("repondeur_sans_parole", raison=no_msg_reason)
+                if active_call_id:
+                    try:
+                        await self.call_service.mark_call_no_message(
+                            active_call_id, reason=no_msg_reason
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Echec marquage pas de message (appel #{})",
+                            active_call_id,
+                        )
 
             if self.modem.caller_line_finished():
                 logger.info("Appelant a raccroche — fin immediate sans message de fin")

@@ -26,7 +26,7 @@ import {
   formatDurationMinSec,
   parseApiUtcDate
 } from "../../utils/dateTime";
-import { getCallIncomingProfile, getIncomingProfileHint } from "../../utils/callProfile";
+import { getCallIncomingProfile, getIncomingProfileHint, isCallWithoutMessage, CALL_NO_MESSAGE_LABEL } from "../../utils/callProfile";
 
 function formatStatus(status: string): { label: string; className: string } {
   const normalized = status.toLowerCase();
@@ -527,10 +527,12 @@ export default function CallsPage() {
       (call.extra_data && typeof call.extra_data === "object" && "ivr_intent" in call.extra_data
         ? (call.extra_data as { ivr_intent?: string | null }).ivr_intent
         : null) || null;
-    const shortTranscript =
-      (call.transcription && call.transcription.length > 100
-        ? `${call.transcription.slice(0, 97)}...`
-        : call.transcription) || null;
+    const noMessage = isCallWithoutMessage(call);
+    const shortTranscript = noMessage
+      ? CALL_NO_MESSAGE_LABEL
+      : (call.transcription && call.transcription.length > 100
+          ? `${call.transcription.slice(0, 97)}...`
+          : call.transcription) || null;
 
     return (
       <tr
@@ -578,7 +580,7 @@ export default function CallsPage() {
               ) : null}
               {shortTranscript ? (
                 <div
-                  className="vg-call-transcript-snippet vg-call-transcript-snippet--mobile"
+                  className={`vg-call-transcript-snippet vg-call-transcript-snippet--mobile${noMessage ? " vg-call-transcript-snippet--empty-msg" : ""}`}
                   title={call.transcription ?? undefined}
                 >
                   {shortTranscript}
@@ -605,7 +607,10 @@ export default function CallsPage() {
         </td>
         <td className="vg-calls-col-transcription vg-calls-col-hide-md">
           {shortTranscript ? (
-            <div className="vg-call-transcript-snippet" title={call.transcription ?? undefined}>
+            <div
+              className={`vg-call-transcript-snippet${noMessage ? " vg-call-transcript-snippet--empty-msg" : ""}`}
+              title={call.transcription ?? undefined}
+            >
               {shortTranscript}
             </div>
           ) : (

@@ -1,6 +1,24 @@
 import type { IncomingProfileKind } from "../components/mui/VgProfileChip";
 import type { CallWithOsint } from "../services/callsApi";
 
+/** Libelle stocke en base quand aucun message vocal n'a ete laisse. */
+export const CALL_NO_MESSAGE_LABEL = "Pas de message";
+
+/**
+ * True si l'appel n'a pas de message (bips / silence seulement).
+ *
+ * @param call Ligne appel API.
+ * @returns True si pas de message a ecouter / transcrire.
+ */
+export function isCallWithoutMessage(call: CallWithOsint | null | undefined): boolean {
+  if (!call) return false;
+  const ex = call.extra_data;
+  if (ex && typeof ex === "object" && (ex as { no_message?: unknown }).no_message === true) {
+    return true;
+  }
+  return (call.transcription || "").trim().toLowerCase() === CALL_NO_MESSAGE_LABEL.toLowerCase();
+}
+
 /**
  * Profil policy d'un appel entrant (extra_data ou heuristique statut).
  *

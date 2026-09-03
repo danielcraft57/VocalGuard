@@ -2022,6 +2022,12 @@ html.vg-theme-dark .vg-search-field input {
   overflow: hidden;
 }
 
+.vg-call-transcript-snippet--empty-msg {
+  color: var(--vg-color-text-muted);
+  font-style: italic;
+  -webkit-line-clamp: 1;
+}
+
 .vg-call-transcript-snippet--mobile {
   display: none;
   margin-top: 0.15rem;
