@@ -6,7 +6,10 @@
     "orientation": "portrait",
     "scheme": "vocalguard",
     "userInterfaceStyle": "dark",
+    "icon": "./assets/icon.png",
     "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
       "backgroundColor": "#0f172a"
     },
     "ios": {
@@ -15,7 +18,9 @@
     },
     "android": {
       "adaptiveIcon": {
-        "backgroundColor": "#0f172a"
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "monochromeImage": "./assets/adaptive-icon-monochrome.png",
+        "backgroundColor": "#22C55E"
       },
       "package": "fr.danielcraft.vocalguard"
     },
@@ -33,7 +38,13 @@
           "contactsPermission": "Autoriser VocalGuard a importer vos contacts de confiance."
         }
       ],
-      "expo-notifications",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/notification-icon.png",
+          "color": "#22c55e"
+        }
+      ],
       "expo-audio",
       "expo-asset"
     ],

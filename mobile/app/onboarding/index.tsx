@@ -1,9 +1,7 @@
 import React from "react";
-import { View, Text, Pressable, StyleSheet } from "react-native";
+import { View, Text, Pressable, StyleSheet, Image } from "react-native";
 import { Link } from "expo-router";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { colors } from "../../src/theme/colors";
-import { icons } from "../../src/theme/icons";
 
 /**
  * Accueil onboarding : scan QR ou saisie manuelle.
@@ -11,7 +9,11 @@ import { icons } from "../../src/theme/icons";
 export default function OnboardingIndex() {
   return (
     <View style={styles.container}>
-      <MaterialCommunityIcons name={icons.qrScan} size={64} color={colors.primary} />
+      <Image
+        source={require("../../assets/adaptive-icon.png")}
+        style={styles.logo}
+        accessibilityLabel="VocalGuard"
+      />
       <Text style={styles.title}>Connecter VocalGuard</Text>
       <Text style={styles.subtitle}>Scannez le QR code depuis la page web App mobile.</Text>
       <Link href="/onboarding/scan" asChild>
@@ -37,6 +39,7 @@ const styles = StyleSheet.create({
     padding: 24,
     gap: 16,
   },
+  logo: { width: 128, height: 128 },
   title: { color: colors.text, fontSize: 24, fontWeight: "700" },
   subtitle: { color: colors.textMuted, textAlign: "center" },
   primary: {
