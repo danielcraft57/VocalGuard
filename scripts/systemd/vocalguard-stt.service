@@ -1,0 +1,18 @@
+[Unit]
+Description=VocalGuard STT (Whisper / Vosk persistant)
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/vocalguard-stt
+Environment=PYTHONPATH=/opt/vocalguard-stt
+Environment=STT_BASE_PATH=/opt/vocalguard-stt
+EnvironmentFile=-/opt/vocalguard-stt/.env.stt
+ExecStart=/opt/vocalguard-stt/venv/bin/uvicorn backend.stt_service.app:app --host 0.0.0.0 --port 8100
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

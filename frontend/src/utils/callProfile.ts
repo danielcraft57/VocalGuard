@@ -33,3 +33,19 @@ export function getCallPolicySource(call: CallWithOsint): string | null {
   const src = (ex as { incoming_policy_source?: string }).incoming_policy_source;
   return src ? String(src) : null;
 }
+
+/**
+ * Texte d'aide UX pour le chip de traitement d'appel.
+ *
+ * @param profile Profil incoming.
+ * @returns Phrase courte pour tooltip.
+ */
+export function getIncomingProfileHint(profile: IncomingProfileKind): string {
+  if (profile === "permitted") {
+    return "Appel autorise : traite selon vos regles (fixe / repondeur).";
+  }
+  if (profile === "blocked") {
+    return "Appel bloque : refuse selon le filtrage.";
+  }
+  return "Appel filtre : passe par le repondeur / historique.";
+}

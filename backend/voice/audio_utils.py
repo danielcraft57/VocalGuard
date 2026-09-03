@@ -1984,7 +1984,7 @@ def load_wav_as_16k16bit_pcm(wav_path: Path) -> bytes:
         raise ImportError("pydub requis: pip install pydub")
 
     segment = AudioSegment.from_file(str(wav_path))
-    segment = segment.set_frame_rate(16000).set_channels(1)
+    segment = segment.set_frame_rate(16000).set_channels(1).set_sample_width(2)
     return segment.raw_data
 
 

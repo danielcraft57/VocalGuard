@@ -26,7 +26,7 @@ import {
   formatDurationMinSec,
   parseApiUtcDate
 } from "../../utils/dateTime";
-import { getCallIncomingProfile, getCallPolicySource } from "../../utils/callProfile";
+import { getCallIncomingProfile, getIncomingProfileHint } from "../../utils/callProfile";
 
 function formatStatus(status: string): { label: string; className: string } {
   const normalized = status.toLowerCase();
@@ -97,40 +97,6 @@ function getReputationCategory(osint?: CallWithOsint["osint"]): ReputationCatego
   if (rep === "low" || osint.is_spam || osint.is_scam || osint.is_telemarketer) return "bad";
   if (rep === "neutral") return "neutral";
   return "unknown";
-}
-
-function formatReputation(osint?: CallWithOsint["osint"]): React.ReactNode {
-  const cat = getReputationCategory(osint);
-  if (cat === "good") {
-    return (
-      <span className="vg-chip">
-        <span className="vg-chip-dot vg-chip-dot--good" />
-        <span>Bonne</span>
-      </span>
-    );
-  }
-  if (cat === "bad") {
-    return (
-      <span className="vg-chip">
-        <span className="vg-chip-dot vg-chip-dot--bad" />
-        <span>Risque</span>
-      </span>
-    );
-  }
-  if (cat === "neutral") {
-    return (
-      <span className="vg-chip">
-        <span className="vg-chip-dot vg-chip-dot--unknown" />
-        <span>Non evaluee</span>
-      </span>
-    );
-  }
-  return (
-    <span className="vg-chip">
-      <span className="vg-chip-dot vg-chip-dot--unknown" />
-      <span>Inconnue</span>
-    </span>
-  );
 }
 
 /** Valeur normalisee du statut pour les filtres */
@@ -365,7 +331,7 @@ export default function CallsPage() {
   const profileOptions: { value: string; label: string; profile?: IncomingProfileKind }[] = [
     { value: FILTER_PROFILE_ALL, label: "Tous" },
     { value: "permitted", label: "Autorise", profile: "permitted" },
-    { value: "screened", label: "Inconnu", profile: "screened" },
+    { value: "screened", label: "Filtre", profile: "screened" },
     { value: "blocked", label: "Bloque", profile: "blocked" }
   ];
 
@@ -549,17 +515,15 @@ export default function CallsPage() {
     const phone = call.phone_number ?? "Inconnu";
     const { label: statusLabel, className: statusClass } = formatStatus(call.status);
     const incomingProfile = getCallIncomingProfile(call);
-    const policySource = getCallPolicySource(call);
     const direction = getCallDirection(call);
     const directionLabel = direction === "out" ? "Sortant" : "Entrant";
-    const reputationCat = getReputationCategory(call.osint);
     const intent =
       (call.extra_data && typeof call.extra_data === "object" && "ivr_intent" in call.extra_data
         ? (call.extra_data as { ivr_intent?: string | null }).ivr_intent
         : null) || null;
     const shortTranscript =
-      (call.transcription && call.transcription.length > 80
-        ? `${call.transcription.slice(0, 77)}...`
+      (call.transcription && call.transcription.length > 100
+        ? `${call.transcription.slice(0, 97)}...`
         : call.transcription) || null;
 
     return (
@@ -601,14 +565,21 @@ export default function CallsPage() {
             </span>
             <div className="vg-call-contact-text">
               <span className="vg-call-phone">{phone}</span>
-              <span className="vg-call-direction-label">{directionLabel}</span>
+              {shortTranscript ? (
+                <div
+                  className="vg-call-transcript-snippet vg-call-transcript-snippet--mobile"
+                  title={call.transcription ?? undefined}
+                >
+                  {shortTranscript}
+                </div>
+              ) : null}
             </div>
           </div>
         </td>
         <td className="vg-calls-col-statut">
           <div className="vg-call-statut">
             <span className={statusClass}>{statusLabel}</span>
-            <Tooltip title={policySource ? `Profil policy · ${policySource}` : "Profil appelant"}>
+            <Tooltip title={getIncomingProfileHint(incomingProfile)}>
               <span className="vg-call-profile-wrap">
                 <VgProfileChip profile={incomingProfile} size="small" />
               </span>
@@ -618,22 +589,19 @@ export default function CallsPage() {
             ) : null}
           </div>
         </td>
-        <td className="vg-calls-col-duration">
+        <td className="vg-calls-col-duration vg-calls-col-hide-md">
           <span className="vg-call-duration">{formatCallDuration(call)}</span>
         </td>
-        <td className="vg-calls-col-reputation vg-calls-col-hide-sm">
-          {reputationCat === "unknown" ? (
-            <span className="vg-call-reputation-empty" title="Reputation non evaluee">
-              —
-            </span>
-          ) : (
-            formatReputation(call.osint)
-          )}
+        <td className="vg-calls-col-transcription vg-calls-col-hide-md">
           {shortTranscript ? (
             <div className="vg-call-transcript-snippet" title={call.transcription ?? undefined}>
-              “{shortTranscript}”
+              {shortTranscript}
             </div>
-          ) : null}
+          ) : (
+            <span className="vg-call-transcript-empty" title="Pas encore de transcription">
+              —
+            </span>
+          )}
         </td>
         <td className="vg-calls-col-actions" onClick={(e) => e.stopPropagation()}>
           <div className="vg-icon-btn-group vg-icon-btn-group--compact">
@@ -683,15 +651,8 @@ export default function CallsPage() {
   };
 
   const filterBar = (
-    <div className="vg-calls-filters" style={{ marginBottom: "0.85rem" }}>
-      <div
-        style={{
-          display: "flex",
-          flexWrap: "wrap",
-          alignItems: "center",
-          gap: "0.5rem"
-        }}
-      >
+    <div className="vg-calls-filters">
+      <div className="vg-calls-filters-row">
         <div className="vg-search-field">
           <span className="material-icons" aria-hidden>
             search
@@ -707,17 +668,7 @@ export default function CallsPage() {
             <button
               type="button"
               onClick={() => setSearchInput("")}
-              style={{
-                position: "absolute",
-                right: "0.55rem",
-                background: "none",
-                border: "none",
-                color: "var(--vg-color-text-muted)",
-                cursor: "pointer",
-                padding: "0.25rem",
-                display: "flex",
-                alignItems: "center"
-              }}
+              className="vg-search-clear"
               aria-label="Effacer la recherche"
             >
               <span className="material-icons" style={{ fontSize: "18px" }}>
@@ -732,11 +683,12 @@ export default function CallsPage() {
           className="vg-btn-tonal"
           aria-expanded={filtersOpen}
           aria-label={filtersOpen ? "Fermer les filtres" : "Ouvrir les filtres avances"}
+          title="Filtres"
         >
           <span className="material-icons" style={{ fontSize: "18px" }}>
             filter_list
           </span>
-          Filtres
+          <span className="vg-btn-label">Filtres</span>
           {activeFilterCount > 0 && (
             <span
               style={{
@@ -1109,10 +1061,8 @@ export default function CallsPage() {
       subtitle="Historique des appels traites par VocalGuard, enrichis avec un premier score OSINT."
     >
       <div className="vg-calls-toolbar">
-        <div style={{ fontSize: "0.85rem", color: "var(--vg-color-text-muted)" }}>
-          Historique enrichi OSINT
-        </div>
-        <div style={{ display: "flex", gap: "0.65rem", flexWrap: "wrap" }}>
+        <div className="vg-calls-toolbar-label">Historique enrichi OSINT</div>
+        <div className="vg-calls-toolbar-actions">
           <button
             type="button"
             className={`vg-btn-tonal${refreshing ? " vg-btn-tonal--spin" : ""}${refreshDone ? " vg-btn-tonal--success" : ""}`}
@@ -1126,11 +1076,14 @@ export default function CallsPage() {
             >
               {refreshDone ? "check_circle" : "refresh"}
             </span>
-            {refreshing ? "Actualisation..." : refreshDone ? "A jour" : "Rafraichir"}
+            <span className="vg-btn-label">
+              {refreshing ? "Actualisation..." : refreshDone ? "A jour" : "Rafraichir"}
+            </span>
           </button>
           <button
             type="button"
             className="vg-btn-filled"
+            title="Composer un appel"
             onClick={() => {
               setDialerOpen(true);
               if (dialerStatus !== "dialing" && dialerStatus !== "connected") {
@@ -1147,7 +1100,7 @@ export default function CallsPage() {
             <span className="material-icons" style={{ fontSize: "18px" }}>
               dialpad
             </span>
-            Composer
+            <span className="vg-btn-label">Composer</span>
           </button>
         </div>
       </div>
@@ -1207,7 +1160,7 @@ export default function CallsPage() {
             Aucun appel encore enregistre
           </div>
           <div style={{ fontSize: "0.9rem", color: "#6b7280", marginTop: "0.25rem" }}>
-            Des que le modem et l'API seront en service, les nouveaux appels apparaitront ici avec leur reputation.
+            Des que le modem et l'API seront en service, les nouveaux appels apparaitront ici avec leur transcription.
           </div>
         </div>
       ) : (
@@ -1242,8 +1195,8 @@ export default function CallsPage() {
                 <th className="vg-calls-col-date">Date</th>
                 <th className="vg-calls-col-contact">Contact</th>
                 <th className="vg-calls-col-statut">Statut</th>
-                <th className="vg-calls-col-duration">Duree</th>
-                <th className="vg-calls-col-reputation vg-calls-col-hide-sm">Reputation</th>
+                <th className="vg-calls-col-duration vg-calls-col-hide-md">Duree</th>
+                <th className="vg-calls-col-transcription vg-calls-col-hide-md">Transcription</th>
                 <th className="vg-calls-col-actions">Actions</th>
               </tr>
             </thead>

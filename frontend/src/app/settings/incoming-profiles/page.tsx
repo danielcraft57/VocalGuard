@@ -45,7 +45,7 @@ type ProfileOverride = {
 
 const PROFILE_TABS: { key: ProfileKey; label: string }[] = [
   { key: "permitted", label: "Autorises" },
-  { key: "screened", label: "Inconnus" },
+  { key: "screened", label: "Filtrage" },
   { key: "blocked", label: "Bloques" }
 ];
 

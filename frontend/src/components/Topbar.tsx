@@ -152,24 +152,24 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
             if (v) void switchMode(v);
           }}
           aria-label="Mode prise d'appel"
-          sx={{ mr: 1 }}
+          sx={{ mr: 0.5, flexShrink: 0 }}
         >
           <ToggleButton value="voicemail" aria-label="Repondeur">
-            <VoicemailIcon fontSize="small" sx={{ mr: { xs: 0, sm: 0.5 } }} />
+            <VoicemailIcon fontSize="small" sx={{ mr: { xs: 0, xl: 0.5 } }} />
             <Typography
               component="span"
               variant="button"
-              sx={{ display: { xs: "none", sm: "inline" }, fontSize: "0.75rem" }}
+              sx={{ display: { xs: "none", xl: "inline" }, fontSize: "0.75rem" }}
             >
               Repondeur
             </Typography>
           </ToggleButton>
           <ToggleButton value="phone" aria-label="Telephone">
-            <PhoneInTalkIcon fontSize="small" sx={{ mr: { xs: 0, sm: 0.5 } }} />
+            <PhoneInTalkIcon fontSize="small" sx={{ mr: { xs: 0, xl: 0.5 } }} />
             <Typography
               component="span"
               variant="button"
-              sx={{ display: { xs: "none", sm: "inline" }, fontSize: "0.75rem" }}
+              sx={{ display: { xs: "none", xl: "inline" }, fontSize: "0.75rem" }}
             >
               Telephone
             </Typography>
@@ -187,12 +187,12 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
             label={modemLabel}
             color={modemOk ? "success" : "error"}
             variant="outlined"
-            sx={{ mr: 1 }}
+            sx={{ mr: 0.5, flexShrink: 0 }}
           />
         </Tooltip>
         {lastDecision ? (
           <Tooltip title={tel?.last_incoming_decision || lastDecision.label}>
-            <Box component="span" sx={{ mr: 1, display: "inline-flex" }}>
+            <Box component="span" sx={{ mr: 0.5, display: { xs: "none", md: "inline-flex" }, flexShrink: 0 }}>
               <VgProfileChip profile={lastDecision.profile} />
             </Box>
           </Tooltip>
@@ -202,7 +202,7 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
           spacing={0.5}
           className="vg-topbar-status"
           title={modeLabel}
-          sx={{ alignItems: "center" }}
+          sx={{ alignItems: "center", flexShrink: 0 }}
         >
           {mode === "voicemail" ? (
             <RingVolumeIcon fontSize="small" color="primary" />
@@ -212,7 +212,7 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
           <Typography
             variant="caption"
             className="vg-topbar-status-text"
-            sx={{ display: { xs: "none", md: "inline" } }}
+            sx={{ display: { xs: "none", xl: "inline" }, whiteSpace: "nowrap" }}
           >
             {mode === "voicemail" ? "Repondeur actif" : "Fixe actif"}
           </Typography>

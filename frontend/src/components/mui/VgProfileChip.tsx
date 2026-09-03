@@ -7,7 +7,7 @@ export type IncomingProfileKind = "permitted" | "screened" | "blocked";
 
 const LABELS: Record<IncomingProfileKind, string> = {
   permitted: "Autorise",
-  screened: "Inconnu",
+  screened: "Filtre",
   blocked: "Bloque"
 };
 

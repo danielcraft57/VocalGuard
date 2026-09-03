@@ -17,16 +17,16 @@ async def transcribe_pcm_remote(
     *,
     sample_rate: int = 16000,
     token: Optional[str] = None,
-    timeout_sec: float = 120.0,
+    timeout_sec: float = 600.0,
 ) -> str:
     """
     Envoie du PCM 16 kHz au service STT via un WAV temporaire en memoire.
 
-    @param base_url URL de base (ex. http://serv2.lan:8100).
+    @param base_url URL de base (ex. http://node15.lan:8100).
     @param audio_pcm PCM 16-bit mono little-endian.
     @param sample_rate Taux d'echantillonnage source.
     @param token Token X-STT-Token optionnel.
-    @param timeout_sec Delai max requete.
+    @param timeout_sec Delai max requete (Whisper CPU lent: ~600s).
     @returns Texte transcrit.
     @raises httpx.HTTPError Si le service est injoignable ou renvoie une erreur.
     """

@@ -235,7 +235,7 @@ export default function NumberPatternsSettingsPage() {
                   }
                 >
                   <MenuItem value="permitted">Autorise</MenuItem>
-                  <MenuItem value="screened">Inconnu</MenuItem>
+                  <MenuItem value="screened">Filtre</MenuItem>
                   <MenuItem value="blocked">Bloque</MenuItem>
                 </Select>
               </FormControl>

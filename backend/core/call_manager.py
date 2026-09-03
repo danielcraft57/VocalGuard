@@ -1583,6 +1583,8 @@ class CallManager:
         """
         Transcrit un message vocal (STT) sans bloquer la ligne telephonique.
 
+        Met a jour la VM et, si lie, la transcription de l'appel pour l'UI /calls.
+
         @param voicemail_id ID du message en base.
         @param audio_pcm_16k PCM 16 kHz 16-bit mono (sortie de ``_record_audio``).
         """
@@ -1592,7 +1594,19 @@ class CallManager:
             if not text:
                 logger.info("STT message #{} : vide / inaudible", voicemail_id)
                 return
-            await self.call_service.set_voicemail_transcription(voicemail_id, text)
+            vm = await self.call_service.set_voicemail_transcription(voicemail_id, text)
+            call_id = getattr(vm, "call_id", None) if vm is not None else None
+            if call_id:
+                try:
+                    await self.call_service.set_transcription_and_intent(
+                        int(call_id), transcription=text
+                    )
+                except Exception:
+                    logger.exception(
+                        "STT message #{} : echec maj transcription appel #{}",
+                        voicemail_id,
+                        call_id,
+                    )
             logger.info("STT message #{} : {}", voicemail_id, text[:120])
         except Exception:
             logger.exception("STT message #{} echoue", voicemail_id)
