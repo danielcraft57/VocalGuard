@@ -10,7 +10,9 @@ api_debug: false
 
 # Modem
 modem_port: null  # Auto-détection si null
-modem_baudrate: 115200
+modem_baudrate: 230400
+# USR5637 : 129,11025 (16-bit / 11 kHz). Rollback : 128,8000
+modem_voice_vsm: "129,11025"
 
 # Voice - Reconnaissance
 voice_recognition_engine: "whisper"  # whisper ou vosk

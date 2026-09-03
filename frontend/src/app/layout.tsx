@@ -3,8 +3,11 @@ import "../styles/globals.css";
 import { ThemeProviderWrapper } from "../components/ThemeProviderWrapper";
 
 export const metadata = {
-  title: "VocalGuard - DanielCraftFr",
-  description: "Tableau de bord VocalGuard pour la gestion des appels, RDV et devis."
+  title: {
+    default: "VocalGuard",
+    template: "%s · VocalGuard",
+  },
+  description: "Tableau de bord VocalGuard pour la gestion des appels, RDV et devis.",
 };
 
 export interface RootLayoutProps {

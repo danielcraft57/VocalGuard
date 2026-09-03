@@ -27,6 +27,7 @@ class EventType(str, Enum):
     CALL_SESSION_LOG = "call.session.log"
     
     VOICEMAIL_RECORDED = "voicemail.recorded"
+    VOICEMAIL_TRANSCRIBED = "voicemail.transcribed"
     VOICEMAIL_DELETED = "voicemail.deleted"
     
     CALLER_BLOCKED = "caller.blocked"

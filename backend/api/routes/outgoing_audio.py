@@ -23,7 +23,7 @@ async def websocket_outgoing_call_audio(websocket: WebSocket, call_id: int) -> N
     """
     Audio bidirectionnel pour appel sortant (best effort).
 
-    - Serveur -> client: PCM s16le 16 kHz (arecord si carte capture, sinon flux AT+VRX via modem).
+    - Serveur -> client: PCM s16le 16 kHz (arecord si carte capture, sinon VRX modem resample).
     - Client -> serveur: micro en PCM s16le ;
       * modem voix serie (USR5637) -> file mic_modem_queue puis VTX half-duplex ;
       * sinon aplay ALSA vers la ligne si dispo, sinon meme file modem.

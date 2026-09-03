@@ -1,0 +1,76 @@
+Partitions musicales VocalGuard (jingles + fonds sous la voix)
+=============================================================
+Source code : backend/voice/audio_utils.py
+  _STINGER_SCORES      — jingles d'intro (sting_*, sfr_*)
+  _VOICE_BED_SCORES    — fonds composes sous l'annonce (bed_*)
+
+Format note : (frequence Hz, duree relative en secondes)
+
+
+=== JINGLES D'INTRO (sting_*) ===
+
+sting_marimba — La majeur, harmonise (recommande avec Vivienne)
+  Partition : La4 -> Do#5 -> Mi5 -> La5 -> Mi5 (resolution, fin non aigue)
+  Notes     : 440.00, 554.37, 659.25, 880.00, 659.25
+  Noms      : La4, Do#5, Mi5, La5, Mi5
+  Timbre    : marimba
+  Fond auto : bed_marimba_warm
+
+sting_corporate — Do majeur montant
+  Notes : 523.25, 659.25, 783.99, 1046.50, 1318.51
+  Timbre : piano
+  Fond auto : bed_corporate_pad
+
+sting_startup — synth montant
+  Notes : 392.00, 493.88, 587.33, 783.99, 987.77
+  Timbre : synth
+  Fond auto : bed_corporate_pad
+
+sting_acoustic — Fa majeur feel
+  Notes : 349.23, 440.00, 523.25, 659.25, 783.99
+  Timbre : acoustic
+  Fond auto : bed_calm_wave
+
+sting_mini — court Do majeur
+  Notes : 587.33, 739.99, 880.00, 1174.66
+  Timbre : piano
+  Fond auto : bed_corporate_pad
+
+sting_bell — cloche operateur
+  Notes : 392.00, 493.88, 587.33, 783.99, 987.77
+  Timbre : bell
+  Fond auto : bed_amber_resolve
+
+sfr_a / sfr_b / sfr_c — motifs telecom (voir _TELECOM_INTRO_SCORES)
+
+
+=== FONDS SOUS LA VOIX (bed_*) ===
+Joues pendant le message TTS, volume reglage greeting_intro_voice_bed_db (defaut -24 dB).
+
+bed_marimba_warm — Marimba doux, La majeur
+  Pad racine : La3 (220 Hz)
+  Arpege    : La3, Do#4, Mi4, Do#4 (boucle)
+  Timbre    : marimba + nappe
+
+bed_corporate_pad — Pad corporate, Do majeur
+  Pad racine : Do4 (261.63 Hz)
+  Arpege    : Do4, Mi4, Sol4
+  Timbre    : piano + nappe
+
+bed_calm_wave — Vague calme, Sol majeur
+  Pad racine : Sol3 (196 Hz)
+  Arpege    : Si3, Sol3, Re4, Si3
+  Timbre    : acoustic + nappe
+
+bed_amber_resolve — Ambre, Si majeur
+  Pad racine : Si3 (246.94 Hz)
+  Arpege    : Si3, Re#4, Fa#4, Re#4
+  Timbre    : marimba + nappe
+
+
+=== PREVIEWS LAB ===
+  lab/jingles/     — jingles seuls
+  lab/beds/        — fonds bed_* seuls (ecoute)
+  lab/sequences/   — intro + voix + fond
+
+Regenerer : python scripts/preview_greeting_lab.py

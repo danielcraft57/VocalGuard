@@ -12,10 +12,16 @@ from loguru import logger
 from backend.core.config import Config
 from backend.core.incoming_call_types import IncomingCallAudioConfig, IncomingCallSettingsData
 from backend.voice.audio_utils import (
+    recommended_edge_tts_pitch_for_jingle,
+    wav_matches_modem_profile,
     write_beep_wav_8k,
     write_greeting_intro_wav,
 )
-from backend.voice.audio_utils import recommended_edge_tts_pitch_for_jingle
+from backend.voice.modem_profile import resolve_profile_from_config
+from backend.voice.musicscreen_jingles import (
+    is_musicscreen_jingle,
+    resolve_musicscreen_jingle,
+)
 from backend.voice.voice_paths import (
     BEEP_WAV,
     BLOCKED_WAV,
@@ -32,7 +38,8 @@ from backend.voice.voice_paths import (
 
 DEFAULT_BLOCKED_TTS = "Desole, cet appel a ete bloque."
 DEFAULT_GREETING_TTS = (
-    "Bonjour, Monsieur Daniel est absent. Merci de laisser un message apres le bip."
+    "Bonjour. Vous êtes bien chez Daniel Craft, de Loïc Daniel. "
+    "Merci de laisser votre message après le bip."
 )
 
 
@@ -88,11 +95,34 @@ def sync_edge_tts_from_audio(config: Config, audio: IncomingCallAudioConfig) -> 
         config.edge_tts_voice = str(audio.edge_tts_voice)
     pitch = (audio.edge_tts_pitch or "").strip()
     intro_mode = getattr(audio, "greeting_intro_mode", "none") or "none"
-    intro_variant = getattr(audio, "greeting_intro_variant", None) or "sting_marimba"
-    if intro_mode == "jingle" and intro_variant:
+    intro_variant = getattr(audio, "greeting_intro_variant", None) or "tesla"
+    if intro_mode == "jingle" and intro_variant and not is_musicscreen_jingle(str(intro_variant)):
         pitch = recommended_edge_tts_pitch_for_jingle(str(intro_variant))
     if pitch:
         config.edge_tts_pitch = pitch
+    gain = getattr(audio, "tts_voice_gain_db", None)
+    if gain is not None:
+        config.edge_tts_voice_gain_db = float(gain)
+
+
+def resolve_intro_voice_bed_gain_db(
+    audio: IncomingCallAudioConfig,
+    intro_variant: str,
+) -> Optional[float]:
+    """
+    Attenuation (dB negatif) de la musique sous la voix apres le fondu d'intro.
+
+    Pour les jingles MusicScreen : le jingle continue sous l'annonce (pas de bed synthetique).
+    0 ou proche de 0 = voix seule apres le fondu.
+
+    @param audio Bloc audio settings.
+    @param intro_variant Variante jingle active.
+    @returns Gain en dB negatif, ou None si fond desactive.
+    """
+    bed_db = float(getattr(audio, "greeting_intro_voice_bed_db", -24.0) or -24.0)
+    if bed_db > -1.0:
+        return None
+    return bed_db
 
 
 def greeting_intro_path(config: Config, audio: IncomingCallAudioConfig) -> Optional[Path]:
@@ -108,25 +138,21 @@ def greeting_intro_path(config: Config, audio: IncomingCallAudioConfig) -> Optio
         return None
     base = project_base(config)
     if mode == "wav":
-        return resolve_intro_wav(base, audio.greeting_intro_wav_path)
+        path = resolve_intro_wav(base, audio.greeting_intro_wav_path)
+        if path and not wav_matches_modem_profile(path):
+            try:
+                write_greeting_intro_wav(path, variant="sting_marimba", duration_ms=3200)
+            except OSError as exc:
+                logger.warning("greeting_intro wav convert: {}", exc)
+        return path
     if mode == "track":
         configured = audio.greeting_intro_wav_path or str(WHISPERING_ICELAND_MP3)
         return resolve_intro_wav(base, configured)
+    if mode == "jingle":
+        variant = getattr(audio, "greeting_intro_variant", None) or "tesla"
+        return resolve_musicscreen_jingle(base, str(variant))
     configured = audio.greeting_intro_wav_path or str(INTRO_DEFAULT_WAV)
-    existing = resolve_intro_wav(base, configured)
-    if existing:
-        return existing
-    variant = getattr(audio, "greeting_intro_variant", None) or "sting_marimba"
-    variant_path = intro_variant_path(str(variant), base)
-    default_path = base / INTRO_DEFAULT_WAV
-    try:
-        duration_ms = int(float(getattr(audio, "greeting_intro_sec", 3.2) or 3.2) * 1000)
-        write_greeting_intro_wav(variant_path, variant=str(variant), duration_ms=duration_ms)
-        write_greeting_intro_wav(default_path, variant=str(variant), duration_ms=duration_ms)
-        return default_path if default_path.is_file() else variant_path
-    except OSError as exc:
-        logger.warning("greeting_intro: {}", exc)
-        return None
+    return resolve_intro_wav(base, configured)
 
 
 def blocked_message_text(settings: IncomingCallSettingsData) -> str:
@@ -140,24 +166,51 @@ def blocked_message_text(settings: IncomingCallSettingsData) -> str:
     return custom or DEFAULT_BLOCKED_TTS
 
 
+def refresh_modem_voice_assets(
+    config: Config,
+    settings: Optional[IncomingCallSettingsData] = None,
+) -> list[str]:
+    """
+    Regenere beep, blocked_short et jingles intro au format modem actif (config VSM).
+
+    @param config Configuration (base_path).
+    @param settings Settings optionnels (variante intro active).
+    @returns Chemins relatifs mis a jour.
+    """
+    base = project_base(config)
+    ensure_voice_tree(base)
+    updated: list[str] = []
+    profile = resolve_profile_from_config(config)
+
+    beep = base / BEEP_WAV
+    write_beep_wav_8k(beep, profile=profile)
+    updated.append(str(BEEP_WAV))
+
+    blocked = base / BLOCKED_WAV
+    write_beep_wav_8k(blocked, freq_hz=620, duration_ms=350, profile=profile)
+    updated.append(str(BLOCKED_WAV))
+
+    audio = settings.audio if settings else IncomingCallAudioConfig()
+    variant = str(getattr(audio, "greeting_intro_variant", None) or "tesla")
+    duration_ms = max(1500, int(float(getattr(audio, "greeting_intro_sec", 2.2) or 2.2) * 1000))
+
+    ivr_beep = base / "ivr_wav" / "voicemail_beep.wav"
+    ivr_beep.parent.mkdir(parents=True, exist_ok=True)
+    write_beep_wav_8k(ivr_beep, profile=profile)
+    updated.append("ivr_wav/voicemail_beep.wav")
+
+    logger.info("Assets voix modem regeneres: {}", len(updated))
+    return updated
+
+
 def ensure_default_voice_assets(config: Config) -> None:
     """
-    Cree les WAV par defaut (system/ + intros/default.wav).
+    Cree ou met a jour les WAV par defaut (system/ + intros/default.wav).
 
     @param config Configuration (base_path).
     """
-    base = project_base(config)
     try:
-        ensure_voice_tree(base)
-        beep = base / BEEP_WAV
-        if not resolve_beep_wav(base):
-            write_beep_wav_8k(beep)
-        blocked = base / BLOCKED_WAV
-        if not resolve_blocked_wav(base):
-            write_beep_wav_8k(blocked, freq_hz=620, duration_ms=350)
-        intro = base / INTRO_DEFAULT_WAV
-        if not intro.is_file():
-            write_greeting_intro_wav(intro, variant="sting_marimba", duration_ms=3200)
+        refresh_modem_voice_assets(config)
     except OSError as exc:
         logger.warning("ensure_default_voice_assets: {}", exc)
 
@@ -201,3 +254,53 @@ def beep_wav_path(config: Config, audio: IncomingCallAudioConfig) -> Optional[Pa
         ensure_default_voice_assets(config)
         return resolve_beep_wav(base, audio.record_beep_wav_path or str(BEEP_WAV))
     return None
+
+
+def append_record_beep_to_modem_wav(
+    config: Config,
+    audio: IncomingCallAudioConfig,
+    wav_path: Path,
+    *,
+    gap_ms: int = 500,
+) -> None:
+    """
+    Colle le bip d'enregistrement a la fin du WAV accueil.
+
+    @param config Configuration (base_path, profil modem).
+    @param audio Bloc audio incoming_call.
+    @param wav_path Fichier accueil modem a modifier sur place.
+    @param gap_ms Silence entre message et bip (defaut 500 ms).
+    """
+    if audio.record_beep == "none" or not wav_path.is_file():
+        return
+    profile = resolve_profile_from_config(config)
+    base = project_base(config)
+    beep = beep_wav_path(config, audio)
+    ivr_beep = base / "ivr_wav" / "voicemail_beep.wav"
+    if not beep or not beep.is_file():
+        ivr_beep.parent.mkdir(parents=True, exist_ok=True)
+        if not ivr_beep.is_file():
+            write_beep_wav_8k(ivr_beep, profile=profile)
+        beep = ivr_beep
+    if not beep.is_file():
+        return
+    from backend.voice.audio_utils import (
+        export_wav_8k_8bit,
+        load_audio_segment_modem,
+        trim_leading_trailing_silence,
+    )
+
+    main = load_audio_segment_modem(wav_path)
+    main = trim_leading_trailing_silence(main, padding_ms=0)
+    beep_seg = load_audio_segment_modem(beep)
+    beep_seg = trim_leading_trailing_silence(beep_seg, padding_ms=0)
+    if gap_ms > 0:
+        from pydub import AudioSegment
+
+        gap = AudioSegment.silent(duration=gap_ms, frame_rate=profile.sample_rate)
+        combined = main + gap + beep_seg
+    else:
+        combined = main + beep_seg
+    tmp = wav_path.with_suffix(".beep.tmp.wav")
+    export_wav_8k_8bit(combined, tmp, normalize=False, profile=profile)
+    tmp.replace(wav_path)

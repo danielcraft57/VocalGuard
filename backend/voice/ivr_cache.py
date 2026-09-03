@@ -1,5 +1,5 @@
 """
-Cache WAV 8 kHz pour l'IVR / repondeur (evite edge-tts + conversion a chaque appel).
+Cache WAV modem pour l'IVR / repondeur (evite edge-tts + conversion a chaque appel).
 """
 
 from __future__ import annotations
@@ -12,14 +12,28 @@ from typing import TYPE_CHECKING, Optional
 from loguru import logger
 
 from backend.voice.audio_utils import tts_source_to_modem_wav
+from backend.voice.modem_profile import resolve_profile_from_config
 
 if TYPE_CHECKING:
     from backend.core.config import Config
     from backend.voice.synthesis import VoiceSynthesis
 
 
-def ivr_content_hash(text: str, engine: str, voice: str, speech_rate: str = "+0%", speech_pitch: str = "+0Hz") -> str:
-    raw = f"v4-partitions\0{engine}\0{voice}\0{speech_rate}\0{speech_pitch}\0{text.strip()}"
+def ivr_content_hash(
+    text: str,
+    engine: str,
+    voice: str,
+    speech_rate: str = "+0%",
+    speech_pitch: str = "+0Hz",
+    voice_gain_db: float = 0.0,
+    *,
+    profile_sample_rate: int = 8000,
+    profile_sample_width: int = 1,
+) -> str:
+    raw = (
+        f"v6-{profile_sample_rate}-{profile_sample_width}\0"
+        f"{engine}\0{voice}\0{speech_rate}\0{speech_pitch}\0{voice_gain_db:.2f}\0{text.strip()}"
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -45,15 +59,22 @@ class IvrAudioCache:
     def _speech_pitch(self) -> str:
         return (getattr(self.config, "edge_tts_pitch", None) or "+0Hz").strip()
 
+    def _voice_gain_db(self) -> float:
+        return float(getattr(self.config, "edge_tts_voice_gain_db", -6.0) or -6.0)
+
     def _current_hash(self, text: str) -> str:
         engine = self.synthesis.engine
         voice = getattr(self.config, "edge_tts_voice", "") or ""
+        profile = resolve_profile_from_config(self.config)
         return ivr_content_hash(
             text,
             engine,
             voice,
             self._speech_rate(),
             self._speech_pitch(),
+            self._voice_gain_db(),
+            profile_sample_rate=profile.sample_rate,
+            profile_sample_width=profile.sample_width,
         )
 
     def is_fresh(self, basename: str, text: str) -> bool:
@@ -95,8 +116,14 @@ class IvrAudioCache:
             logger.warning("TTS echoue pour cache IVR {}", basename)
             return None
 
+        profile = resolve_profile_from_config(self.config)
         try:
-            tts_source_to_modem_wav(Path(temp), wav)
+            tts_source_to_modem_wav(
+                Path(temp),
+                wav,
+                profile=profile,
+                voice_gain_db=self._voice_gain_db(),
+            )
             self._meta_path(basename).write_text(
                 json.dumps(
                     {"hash": self._current_hash(text), "text": text.strip()},

@@ -89,7 +89,9 @@ Contenu boite typique : modem, cordon RJ-11, guide rapide, CD drivers / guides (
 ### Linux / Raspberry Pi (prod VocalGuard)
 
 - Apparait en general comme `/dev/ttyACM0` (ou similaire) via `cdc_acm`.
-- Baudrate applicatif VocalGuard : **115200** (`modem_baudrate` dans la config).
+- Baudrate applicatif VocalGuard : **230400** (`modem_baudrate`) pour le PCM 16-bit @ 11 025 Hz.
+- Firmware prod node14 : **1.2.23 Includes Voice** (deja flashe). Page support : https://www.usr.com/support/usr5637/ — flasher Linux `USRFlash_1.2.23.zip` si besoin, **pas** `USR5637Voice64bit.EXE` (driver Windows).
+- Alim : le modem tire jusqu'a 360 mA. Un sifflement / buzz vient souvent du port USB du Pi. Brancher sur un **hub USB alimente secteur**.
 - Pas besoin du CD Windows : le noyau gere le port serie AT.
 - Voir aussi [TELEPHONY_STACK.md](TELEPHONY_STACK.md) et [AUDIO_SETUP_RPI.md](AUDIO_SETUP_RPI.md).
 
@@ -287,7 +289,9 @@ Resume officiel (Table 230 du guide) :
 | 132 | IMA ADPCM | 8000 |
 | 133 | G.729 | 8000 |
 
-VocalGuard utilise **`AT+VSM=128,8000`** (PCM 8-bit mono 8 kHz) pour le USR5637.
+VocalGuard utilise **`AT+VSM=129,11025`** (PCM 16-bit LE mono 11 025 Hz) pour le USR5637.
+Rollback sans rebuild : `modem_voice_vsm: "128,8000"` + `modem_baudrate: 115200`.
+Ne pas utiliser `AT+VBS` / `AT+VSR` : ce n'est pas le jeu AT de ce modem.
 
 ### `+VSD` (silence)
 
@@ -387,11 +391,11 @@ ATI
 ```text
 AT+FCLASS=8
 AT+VSD=128,0
-AT+VSM=128,8000
+AT+VSM=129,11025
 AT+VLS=1
 AT+VTX
 CONNECT
-<octets PCM 8-bit 8 kHz>
+<octets PCM 16-bit LE 11025 Hz>
 <DLE fin TX>
 ATH
 ```
@@ -430,8 +434,8 @@ Stack runtime (daemon, ports, Pi, CID, modes) : [TELEPHONY_STACK.md](TELEPHONY_S
 | Entrant | surveillance `RING` + champs CID ; fenetre `cid_wait_sec` ; `ATA` / seize rapide `FCLASS=8` + `VLS=1` |
 | Sortant | `ATD<numero>;` |
 | DTMF | `AT+VTS=...` |
-| Playback | `+VSM=128,8000` (USR) puis `+VTX` ; PCM avec escape DLE (`0x10` double) |
-| Record / live | `+VRX` (PCM 8 kHz 8-bit) ; stop hangup / silence |
+| Playback | `+VSM=129,11025` (USR) puis `+VTX` ; PCM avec escape DLE (`0x10` double) |
+| Record / live | `+VRX` (PCM 11 025 Hz 16-bit) ; stop hangup / silence |
 | Hangup | sortir du stream transparent puis `ATH`, retour `+FCLASS=0` + `+VCID=1` |
 | Gains | `+VGR` / `+VGT` si `modem_voice_vgr` / `modem_voice_vgt` en config |
 

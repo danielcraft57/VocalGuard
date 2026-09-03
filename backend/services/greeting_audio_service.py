@@ -16,8 +16,10 @@ from loguru import logger
 
 from backend.core.config import Config
 from backend.core.incoming_call_audio import (
+    append_record_beep_to_modem_wav,
     greeting_intro_path,
     greeting_text,
+    resolve_intro_voice_bed_gain_db,
     sync_edge_tts_from_audio,
 )
 from backend.core.incoming_call_settings import (
@@ -30,9 +32,10 @@ from backend.voice.audio_utils import (
     combine_music_track_voice_overlay,
     default_bed_variant_for_jingle,
     export_listen_preview_wav,
+    export_raw_listen_preview,
     tts_source_to_modem_wav,
 )
-from backend.voice.ivr_cache import IvrAudioCache
+from backend.voice.musicscreen_jingles import is_musicscreen_jingle
 from backend.voice.synthesis import VoiceSynthesis
 
 if TYPE_CHECKING:
@@ -62,9 +65,13 @@ def greeting_modem_active_meta_path(config: Config) -> Path:
     return greeting_modem_active_wav_path(config).with_suffix(".meta.json")
 
 
+from backend.voice.modem_profile import USR_VOICE_PROFILE, resolve_profile_from_config
+
+
 def greeting_settings_signature(
     settings: IncomingCallSettingsData,
     greeting: str,
+    config: Optional[Config] = None,
 ) -> str:
     """
     Empreinte des parametres qui influencent le mix accueil modem.
@@ -73,9 +80,14 @@ def greeting_settings_signature(
     @param greeting Texte accueil TTS.
     @returns Hash court stable.
     """
+    profile = resolve_profile_from_config(config) if config is not None else USR_VOICE_PROFILE
     payload = {
         "greeting": " ".join((greeting or "").split()),
         "audio": settings.audio.model_dump(),
+        "modem_audio": {
+            "rate": profile.sample_rate,
+            "width": profile.sample_width,
+        },
     }
     raw = json.dumps(payload, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
@@ -100,7 +112,7 @@ def is_greeting_modem_active_fresh(
         return False
     try:
         data = json.loads(meta.read_text(encoding="utf-8"))
-        return data.get("signature") == greeting_settings_signature(settings, greeting)
+        return data.get("signature") == greeting_settings_signature(settings, greeting, config)
     except (OSError, json.JSONDecodeError, TypeError):
         return False
 
@@ -122,7 +134,7 @@ def _write_greeting_modem_active_meta(
     greeting_modem_active_meta_path(config).write_text(
         json.dumps(
             {
-                "signature": greeting_settings_signature(settings, greeting),
+                "signature": greeting_settings_signature(settings, greeting, config),
                 "text": greeting,
                 "regenerated_at": regenerated_at,
             },
@@ -194,7 +206,12 @@ async def _synthesize_voice_modem_wav(
     base = Path(config.base_path) if config.base_path else Path.cwd()
     out = base / "data" / "audio_previews" / "_preview_voice.wav"
     out.parent.mkdir(parents=True, exist_ok=True)
-    tts_source_to_modem_wav(Path(temp), out)
+    tts_source_to_modem_wav(
+        Path(temp),
+        out,
+        profile=resolve_profile_from_config(config),
+        voice_gain_db=float(getattr(config, "edge_tts_voice_gain_db", -6.0) or -6.0),
+    )
     return out
 
 
@@ -214,6 +231,7 @@ def _build_modem_greeting_wav_sync(
     @param out_modem Fichier de sortie modem 8 kHz.
     """
     audio = settings.audio
+    profile = resolve_profile_from_config(config)
     intro = greeting_intro_path(config, audio)
     intro_mode = str(getattr(audio, "greeting_intro_mode", "none") or "none")
 
@@ -235,20 +253,18 @@ def _build_modem_greeting_wav_sync(
             music_duck_db=track_duck_db if track_duck_db > 0.5 else None,
             voice_mix_gain_db=voice_gain,
         )
+        append_record_beep_to_modem_wav(config, audio, out_modem)
         return
 
     if intro_mode in ("jingle", "wav") and intro and intro.is_file():
         intro_ms = int(float(getattr(audio, "greeting_intro_sec", 2.2) or 2.2) * 1000)
         crossfade_ms = int(float(getattr(audio, "greeting_intro_crossfade_ms", 280) or 280))
-        bed_db = float(getattr(audio, "greeting_intro_voice_bed_db", -24.0) or -24.0)
-        if bed_db > -1.0:
-            bed_db = None
+        intro_variant = str(getattr(audio, "greeting_intro_variant", "tesla") or "tesla")
+        bed_db = resolve_intro_voice_bed_gain_db(audio, intro_variant)
         voice_gain = float(getattr(audio, "greeting_intro_voice_gain_db", 0.0) or 0.0)
-        intro_variant = str(getattr(audio, "greeting_intro_variant", "sting_marimba") or "sting_marimba")
-        bed_variant = (
-            getattr(audio, "greeting_intro_bed_variant", None)
-            or default_bed_variant_for_jingle(intro_variant)
-        )
+        bed_variant = getattr(audio, "greeting_intro_bed_variant", None)
+        if bed_variant is None and not is_musicscreen_jingle(intro_variant):
+            bed_variant = default_bed_variant_for_jingle(intro_variant)
         combine_intro_voice_crossfade(
             intro,
             voice_wav,
@@ -260,18 +276,48 @@ def _build_modem_greeting_wav_sync(
             voice_bed_gain_db=bed_db,
             voice_mix_gain_db=voice_gain,
             voice_bed_variant=str(bed_variant),
+            profile=profile,
         )
+        append_record_beep_to_modem_wav(config, audio, out_modem)
         return
 
     import shutil
 
     shutil.copy2(voice_wav, out_modem)
 
+    append_record_beep_to_modem_wav(config, audio, out_modem)
+
+
+def _build_intro_listen_preview_sync(
+    config: Config,
+    settings: IncomingCallSettingsData,
+    *,
+    out_base: Path,
+) -> Path:
+    """
+    Retourne l'intro source pour ecoute navigateur, sans pipeline modem.
+
+    @param config Configuration.
+    @param settings Settings effectifs.
+    @param out_base Chemin de sortie sans extension.
+    @returns Fichier audio (.mp3 ou .wav).
+    @raises RuntimeError Si intro absente.
+    """
+    audio = settings.audio
+    intro_mode = str(getattr(audio, "greeting_intro_mode", "none") or "none")
+    if intro_mode == "none":
+        raise RuntimeError("Aucune intro configuree")
+    intro = greeting_intro_path(config, audio)
+    if not intro or not intro.is_file():
+        raise RuntimeError("Intro musicale indisponible")
+    return export_raw_listen_preview(intro, out_base)
+
 
 async def build_greeting_listen_preview(
     config: Config,
     *,
     audio_override: Optional[dict[str, Any]] = None,
+    preview_mode: str = "full",
 ) -> Path:
     """
     Genere un WAV ecoute PC (44.1 kHz) de l'accueil selon les parametres.
@@ -293,10 +339,27 @@ async def build_greeting_listen_preview(
     preview_dir = base / "data" / "audio_previews"
     preview_dir.mkdir(parents=True, exist_ok=True)
     modem_tmp = preview_dir / "_preview_modem.wav"
-    listen_out = preview_dir / "greeting_listen_preview.wav"
+    listen_base = preview_dir / "greeting_listen_preview"
+    loop = asyncio.get_running_loop()
+
+    mode = (preview_mode or "full").strip().lower()
+    if mode == "voice":
+        voice_wav = await _synthesize_voice_modem_wav(config, synthesis, greeting)
+        listen_out = listen_base.with_suffix(".wav")
+        export_listen_preview_wav(voice_wav, listen_out, target_peak=None)
+        return listen_out
+    if mode == "intro":
+        return await loop.run_in_executor(
+            None,
+            lambda: _build_intro_listen_preview_sync(
+                config,
+                settings,
+                out_base=listen_base,
+            ),
+        )
 
     voice_wav = await _synthesize_voice_modem_wav(config, synthesis, greeting)
-    loop = asyncio.get_running_loop()
+    listen_out = listen_base.with_suffix(".wav")
     await loop.run_in_executor(
         None,
         lambda: _build_modem_greeting_wav_sync(
@@ -306,7 +369,7 @@ async def build_greeting_listen_preview(
             out_modem=modem_tmp,
         ),
     )
-    export_listen_preview_wav(modem_tmp, listen_out)
+    export_listen_preview_wav(modem_tmp, listen_out, target_peak=None)
     return listen_out
 
 

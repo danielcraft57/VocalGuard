@@ -1,11 +1,12 @@
 """
-Utilitaires audio pour IVR / modem (Conexant).
-Export WAV 8 kHz, mono, 8-bit pour compatibilité modem voix (callattendant, VocalGuard).
+Utilitaires audio pour IVR / modem.
+Export WAV modem : USR5637 = 11 025 Hz mono 16-bit ; Conexant = 8 kHz mono 8-bit.
 Lecture et conversion pour STT (16 kHz 16-bit).
 """
 
 import math
 import re
+import shutil
 import subprocess
 import wave
 from pathlib import Path
@@ -14,17 +15,31 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from pydub import AudioSegment
 
-MODEM_SAMPLE_RATE = 8000
-# Cible pic voix avant mix (dBFS approximatif via pydub max).
-MODEM_VOICE_PEAK_TARGET = 28000
-# Pic max apres mix musique+voix (evite saturation u8=127 sur le modem).
-MODEM_MIX_PEAK_TARGET = 18500
-MODEM_U8_PEAK_DEVIATION = 120
-# Filtre telephone + resampling haute qualite (ffmpeg soxr).
-_FFMPEG_TELEPHONY_FILTERS = (
-    "highpass=f=120,lowpass=f=3600,"
-    "aresample=resampler=soxr:osr=8000:precision=28:cheby=1"
+from backend.voice.modem_profile import (
+    CONEXANT_VOICE_PROFILE,
+    USR_VOICE_PROFILE,
+    ModemVoiceProfile,
 )
+
+MODEM_SAMPLE_RATE = USR_VOICE_PROFILE.sample_rate
+# Cible pic voix avant mix (dBFS approximatif via pydub max).
+MODEM_VOICE_PEAK_TARGET = 20000
+# Pic max apres mix musique+voix (evite saturation codec ligne PSTN).
+MODEM_MIX_PEAK_TARGET = 17000
+MODEM_U8_PEAK_DEVIATION = 120
+# Filtre ligne (bande voix PSTN) + resampling soxr vers le rate modem.
+_FFMPEG_TELEPHONY_FILTERS = (
+    "highpass=f=200,lowpass=f=3400,"
+    f"aresample=resampler=soxr:osr={MODEM_SAMPLE_RATE}:precision=28:cheby=1"
+)
+
+
+def _telephony_filters(sample_rate: int) -> str:
+    """Filtre ffmpeg ligne + resample soxr vers le rate modem."""
+    return (
+        "highpass=f=200,lowpass=f=3400,"
+        f"aresample=resampler=soxr:osr={int(sample_rate)}:precision=28:cheby=1"
+    )
 
 
 def _ffmpeg_available() -> bool:
@@ -51,21 +66,26 @@ def ffmpeg_convert_to_modem_wav(
     *,
     normalize: bool = True,
     extra_af: str = "",
+    profile: Optional[ModemVoiceProfile] = None,
 ) -> Path:
     """
-    Convertit un fichier audio en WAV modem 8 kHz mono 8-bit via ffmpeg (soxr + EQ telephone).
+    Convertit un fichier audio en WAV modem via ffmpeg (soxr + EQ telephone).
+
+    Defaut USR5637 : 11 025 Hz mono 16-bit. Conexant : 8 kHz mono 8-bit.
 
     @param input_path Source MP3/WAV/etc.
-    @param output_path Destination WAV u8.
+    @param output_path Destination WAV.
     @param normalize Applique une normalisation douce dynaudnorm.
     @param extra_af Filtres audio supplementaires (chaine ffmpeg).
+    @param profile Profil modem (defaut USR).
     @returns Chemin de sortie.
     @raises RuntimeError Si ffmpeg echoue.
     """
     if not _ffmpeg_available():
         raise RuntimeError("ffmpeg indisponible pour conversion modem HQ")
 
-    filters = _FFMPEG_TELEPHONY_FILTERS
+    voice = profile or USR_VOICE_PROFILE
+    filters = _telephony_filters(voice.sample_rate)
     if extra_af:
         filters = f"{filters},{extra_af}"
     if normalize:
@@ -81,13 +101,13 @@ def ffmpeg_convert_to_modem_wav(
         "-i",
         str(input_path),
         "-ar",
-        str(MODEM_SAMPLE_RATE),
+        str(voice.sample_rate),
         "-ac",
         "1",
         "-af",
         filters,
         "-c:a",
-        "pcm_u8",
+        voice.ffmpeg_codec,
         str(output_path),
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
@@ -129,23 +149,34 @@ def limit_segment_peak(segment: "AudioSegment", *, target_peak: int = MODEM_MIX_
     return segment.apply_gain(gain_db)
 
 
-def tts_source_to_modem_wav(source_path: Path, out_path: Path) -> Path:
+def tts_source_to_modem_wav(
+    source_path: Path,
+    out_path: Path,
+    *,
+    profile: Optional[ModemVoiceProfile] = None,
+    voice_gain_db: float = 0.0,
+) -> Path:
     """
-    Pipeline TTS -> WAV modem : trim leger puis conversion ffmpeg HQ.
+    Pipeline TTS -> WAV modem : trim, normalisation, conversion ffmpeg HQ.
 
     @param source_path MP3/WAV edge-tts.
-    @param out_path WAV 8 kHz 8-bit.
+    @param out_path WAV au format modem (USR 11 kHz s16 par defaut).
+    @param profile Profil modem (defaut USR).
+    @param voice_gain_db Gain supplementaire voix (dB, negatif = plus doux).
     @returns Chemin genere.
     """
     from pydub import AudioSegment
 
+    voice = profile or USR_VOICE_PROFILE
     segment = AudioSegment.from_file(str(source_path))
     segment = trim_leading_trailing_silence(
         segment,
-        silence_threshold=-48.0,
-        padding_ms=40,
+        silence_threshold=-50.0,
+        padding_ms=25,
     )
-    segment = normalize_segment_peak(segment)
+    segment = normalize_segment_peak(segment, target_peak=MODEM_VOICE_PEAK_TARGET)
+    if abs(voice_gain_db) > 0.05:
+        segment = segment.apply_gain(voice_gain_db)
 
     if _ffmpeg_available():
         import tempfile
@@ -154,7 +185,12 @@ def tts_source_to_modem_wav(source_path: Path, out_path: Path) -> Path:
             tmp_path = Path(tmp.name)
         try:
             segment.export(str(tmp_path), format="wav")
-            return ffmpeg_convert_to_modem_wav(tmp_path, out_path, normalize=False)
+            return ffmpeg_convert_to_modem_wav(
+                tmp_path,
+                out_path,
+                normalize=False,
+                profile=voice,
+            )
         finally:
             try:
                 tmp_path.unlink(missing_ok=True)
@@ -205,6 +241,14 @@ def estimated_jingle_melody_end_ms(variant: str, duration_ms: int) -> int:
     @param duration_ms Duree max de generation du WAV intro.
     @returns Duree effective en ms jusqu'a la fin de la melodie (+ courte queue).
     """
+    from backend.voice.musicscreen_jingles import (
+        estimated_musicscreen_intro_end_ms,
+        is_musicscreen_jingle,
+    )
+
+    if is_musicscreen_jingle(variant):
+        return estimated_musicscreen_intro_end_ms(variant, duration_ms)
+
     notes: list[tuple[float, float]] | None = None
     overlap = 0.80
     if variant in _STINGER_SCORES:
@@ -239,19 +283,48 @@ def trim_intro_for_voice_handoff(intro: "AudioSegment", *, tail_padding_ms: int 
     return intro
 
 
-def write_beep_wav_8k(out_path: Path, *, freq_hz: int = 1000, duration_ms: int = 500) -> None:
+def write_beep_wav_8k(
+    out_path: Path,
+    *,
+    freq_hz: int = 1000,
+    duration_ms: int = 500,
+    profile: Optional[ModemVoiceProfile] = None,
+) -> None:
     """
-    Genere un bip unique court (8 kHz, mono, 8-bit), style repondeur classique.
+    Genere un bip unique court au format modem (profil actif : 8 kHz u8 ou 11 kHz s16).
 
     @param out_path Fichier WAV de sortie.
     @param freq_hz Frequence du bip en hertz.
     @param duration_ms Duree du bip en millisecondes.
+    @param profile Profil modem cible (defaut USR 11 kHz s16).
     """
-    rate = 8000
+    voice = profile or USR_VOICE_PROFILE
+    rate = voice.sample_rate
     sample_count = max(1, int(rate * duration_ms / 1000))
-    samples = bytearray(sample_count)
-    amplitude = 126
-    fade = max(1, int(rate * 0.01))  # 10 ms fade in/out anti-clic
+    fade = max(1, int(rate * 0.01))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if voice.sample_width <= 1:
+        samples = bytearray(sample_count)
+        amplitude = 90
+        for i in range(sample_count):
+            t = i / rate
+            env = 1.0
+            if i < fade:
+                env = i / fade
+            elif i > sample_count - fade:
+                env = (sample_count - i) / fade
+            wave_val = math.sin(2.0 * math.pi * freq_hz * t) * env
+            samples[i] = max(0, min(255, 128 + int(amplitude * wave_val)))
+        with wave.open(str(out_path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(1)
+            wf.setframerate(rate)
+            wf.writeframes(bytes(samples))
+        return
+
+    samples = bytearray(sample_count * 2)
+    amplitude = 26000
     for i in range(sample_count):
         t = i / rate
         env = 1.0
@@ -260,12 +333,11 @@ def write_beep_wav_8k(out_path: Path, *, freq_hz: int = 1000, duration_ms: int =
         elif i > sample_count - fade:
             env = (sample_count - i) / fade
         wave_val = math.sin(2.0 * math.pi * freq_hz * t) * env
-        value = 128 + int(amplitude * wave_val)
-        samples[i] = max(0, min(255, value))
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+        value = max(-32768, min(32767, int(amplitude * wave_val)))
+        samples[i * 2 : i * 2 + 2] = value.to_bytes(2, "little", signed=True)
     with wave.open(str(out_path), "wb") as wf:
         wf.setnchannels(1)
-        wf.setsampwidth(1)
+        wf.setsampwidth(2)
         wf.setframerate(rate)
         wf.writeframes(bytes(samples))
 
@@ -1051,6 +1123,36 @@ def pcm_u8_chunk_peak(raw: bytes) -> int:
     return peak
 
 
+def pcm_s16le_chunk_peak(raw: bytes) -> int:
+    """
+    Pic d'amplitude d'un bloc PCM s16le (0 = silence).
+
+    @param raw Octets audio bruts du flux VRX.
+    @returns Valeur abs max (0-32767).
+    """
+    if not raw or len(raw) < 2:
+        return 0
+    peak = 0
+    for index in range(0, len(raw) - 1, 2):
+        sample = abs(int.from_bytes(raw[index : index + 2], "little", signed=True))
+        if sample > peak:
+            peak = sample
+    return peak
+
+
+def pcm_chunk_peak(raw: bytes, *, sample_width: int = 1) -> int:
+    """
+    Pic d'amplitude d'un bloc PCM modem (u8 ou s16le).
+
+    @param raw Octets VRX.
+    @param sample_width 1 = u8, 2 = s16le.
+    @returns Pic comparable au seuil du profil.
+    """
+    if sample_width >= 2:
+        return pcm_s16le_chunk_peak(raw)
+    return pcm_u8_chunk_peak(raw)
+
+
 def trim_leading_trailing_silence(
     segment: "AudioSegment",
     *,
@@ -1141,21 +1243,37 @@ def segment_to_modem_pcm_u8(segment: "AudioSegment", *, normalize: bool = True) 
 
 def wav_path_to_modem_pcm_u8(wav_path: Path, *, normalize: bool = True) -> bytes:
     """
-    Lit un fichier audio et retourne du PCM 8 kHz 8-bit pour lecture modem.
-
-    Les WAV deja au format modem (8 kHz mono u8) sont lus directement sans re-conversion.
+    Lit un fichier audio et retourne du PCM 8 kHz 8-bit (profil Conexant / fallback USR).
 
     @param wav_path Chemin vers le fichier.
     @param normalize Normalise le niveau audio si reconversion necessaire.
+    @returns Buffer PCM u8 pret pour VTX.
+    """
+    return wav_path_to_modem_pcm(wav_path, profile=CONEXANT_VOICE_PROFILE, normalize=normalize)
+
+
+def wav_path_to_modem_pcm(
+    wav_path: Path,
+    *,
+    profile: Optional[ModemVoiceProfile] = None,
+    normalize: bool = True,
+) -> bytes:
+    """
+    Lit un fichier audio et retourne le PCM brut attendu par VTX.
+
+    @param wav_path Chemin vers le fichier.
+    @param profile Profil modem (defaut USR 16-bit / 11 kHz).
+    @param normalize Normalise le niveau si reconversion.
     @returns Buffer PCM pret pour VTX.
     """
+    voice = profile or USR_VOICE_PROFILE
     with wave.open(str(wav_path), "rb") as wf:
         rate = wf.getframerate()
         channels = wf.getnchannels()
         width = wf.getsampwidth()
-        if rate == MODEM_SAMPLE_RATE and channels == 1 and width == 1:
+        if rate == voice.sample_rate and channels == 1 and width == voice.sample_width:
             raw = wf.readframes(wf.getnframes())
-            if normalize:
+            if normalize and voice.sample_width == 1:
                 return normalize_pcm_u8_buffer(raw)
             return raw
 
@@ -1165,7 +1283,7 @@ def wav_path_to_modem_pcm_u8(wav_path: Path, *, normalize: bool = True) -> bytes
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             tmp_out = Path(tmp.name)
         try:
-            ffmpeg_convert_to_modem_wav(wav_path, tmp_out, normalize=normalize)
+            ffmpeg_convert_to_modem_wav(wav_path, tmp_out, normalize=normalize, profile=voice)
             with wave.open(str(tmp_out), "rb") as wf:
                 return wf.readframes(wf.getnframes())
         finally:
@@ -1175,24 +1293,54 @@ def wav_path_to_modem_pcm_u8(wav_path: Path, *, normalize: bool = True) -> bytes
                 pass
 
     segment = load_audio_segment_modem(wav_path)
-    return segment_to_modem_pcm_u8(segment, normalize=normalize)
+    if voice.sample_width == 1:
+        return segment_to_modem_pcm_u8(segment, normalize=normalize)
+    segment = segment.set_channels(1).set_frame_rate(voice.sample_rate).set_sample_width(2)
+    if normalize:
+        peak = segment.max or 0
+        if peak > 0:
+            target = 26000.0
+            gain_db = 20.0 * math.log10(target / float(peak))
+            if abs(gain_db) > 0.05:
+                segment = segment.apply_gain(gain_db)
+    return segment.raw_data
 
 
-def export_wav_8k_8bit(segment: "AudioSegment", out_path: Path, *, normalize: bool = False) -> None:
+def export_wav_8k_8bit(
+    segment: "AudioSegment",
+    out_path: Path,
+    *,
+    normalize: bool = False,
+    profile: Optional[ModemVoiceProfile] = None,
+) -> None:
     """
-    Exporte un AudioSegment en WAV 8 kHz, mono, 8-bit non signé.
-    Format attendu par le modem Conexant (mode voix série) et IVR téléphone.
+    Exporte un AudioSegment en WAV modem (USR : 11 025 Hz mono 16-bit par defaut).
 
-    Utilise ffmpeg/soxr si disponible pour un resampling propre (meilleure qualite voix).
+    Le nom historique 8k/8bit est conserve pour les callers existants.
+    Si le segment est deja au format modem, ecriture directe (evite un 2e passage ffmpeg).
 
     Args:
         segment: Segment pydub (peut être 16-bit, autre rate).
         out_path: Fichier WAV de sortie.
-        normalize: Normalisation douce avant conversion 8-bit.
+        normalize: Normalisation douce avant export.
+        profile: Profil modem cible (defaut USR 11 kHz s16).
     """
+    voice = profile or USR_VOICE_PROFILE
     segment = segment.set_channels(1)
     if normalize:
         segment = normalize_segment_peak(segment)
+
+    if (
+        segment.frame_rate == voice.sample_rate
+        and segment.sample_width == voice.sample_width
+    ):
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(out_path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(voice.sample_width)
+            wf.setframerate(voice.sample_rate)
+            wf.writeframes(segment.raw_data)
+        return
 
     if _ffmpeg_available():
         import tempfile
@@ -1201,7 +1349,7 @@ def export_wav_8k_8bit(segment: "AudioSegment", out_path: Path, *, normalize: bo
             tmp_path = Path(tmp.name)
         try:
             segment.export(str(tmp_path), format="wav")
-            ffmpeg_convert_to_modem_wav(tmp_path, out_path, normalize=False)
+            ffmpeg_convert_to_modem_wav(tmp_path, out_path, normalize=False, profile=voice)
             return
         finally:
             try:
@@ -1209,19 +1357,37 @@ def export_wav_8k_8bit(segment: "AudioSegment", out_path: Path, *, normalize: bo
             except OSError:
                 pass
 
-    segment = segment.set_frame_rate(MODEM_SAMPLE_RATE)
-    raw = segment.raw_data
-    samples_8 = bytearray()
-    for i in range(0, len(raw), 2):
-        s16 = int.from_bytes(raw[i : i + 2], "little", signed=True)
-        u8 = int(round((s16 / 32768.0) * 127.0 + 128.0))
-        samples_8.append(max(0, min(255, u8)))
+    segment = segment.set_frame_rate(MODEM_SAMPLE_RATE).set_sample_width(2)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(out_path), "wb") as wf:
         wf.setnchannels(1)
-        wf.setsampwidth(1)
+        wf.setsampwidth(2)
         wf.setframerate(MODEM_SAMPLE_RATE)
-        wf.writeframes(bytes(samples_8))
+        wf.writeframes(segment.raw_data)
+
+
+def wav_matches_modem_profile(
+    wav_path: Path,
+    *,
+    profile: Optional[ModemVoiceProfile] = None,
+) -> bool:
+    """
+    True si le WAV correspond au profil modem attendu (rate, mono, sample width).
+
+    @param wav_path Fichier WAV a verifier.
+    @param profile Profil modem (defaut USR 11 kHz 16-bit).
+    @returns Etat de compatibilite.
+    """
+    voice = profile or USR_VOICE_PROFILE
+    try:
+        with wave.open(str(wav_path), "rb") as wf:
+            return (
+                wf.getframerate() == voice.sample_rate
+                and wf.getnchannels() == 1
+                and wf.getsampwidth() == voice.sample_width
+            )
+    except (OSError, wave.Error):
+        return False
 
 
 def export_listen_preview_wav(
@@ -1229,15 +1395,15 @@ def export_listen_preview_wav(
     out_path: Path,
     *,
     sample_rate: int = 44100,
-    target_peak: float = 30000.0,
+    target_peak: Optional[float] = 30000.0,
 ) -> Path:
     """
-    Exporte un WAV modem en version ecoute PC : 44.1 kHz, 16-bit, niveau fort.
+    Exporte un WAV modem en version ecoute PC (upsample 44.1 kHz).
 
     @param source_path WAV source (modem ou autre).
     @param out_path Fichier WAV de sortie pour ecoute locale.
     @param sample_rate Frequence cible (defaut 44100).
-    @param target_peak Pic amplitude 16-bit cible (~30000 = -1 dBFS).
+    @param target_peak Pic 16-bit cible ; None = garder le niveau ligne (apercu fidele).
     @returns Chemin du fichier genere.
     @raises ImportError Si pydub/ffmpeg manque.
     """
@@ -1246,8 +1412,7 @@ def export_listen_preview_wav(
 
     if _ffmpeg_available():
         filters = (
-            f"aresample=resampler=soxr:osr={sample_rate}:precision=28:cheby=1,"
-            f"volume=3dB"
+            f"aresample=resampler=soxr:osr={sample_rate}:precision=28:cheby=1"
         )
         cmd = [
             "ffmpeg",
@@ -1275,13 +1440,58 @@ def export_listen_preview_wav(
 
     segment = AudioSegment.from_file(str(source_path))
     segment = segment.set_channels(1).set_frame_rate(sample_rate).set_sample_width(2)
-    peak = segment.max or 0
-    if peak > 0:
-        gain_db = 20.0 * math.log10(target_peak / float(peak))
-        if abs(gain_db) > 0.05:
-            segment = segment.apply_gain(gain_db)
+    if target_peak is not None:
+        peak = segment.max or 0
+        if peak > 0:
+            gain_db = 20.0 * math.log10(target_peak / float(peak))
+            if abs(gain_db) > 0.05:
+                segment = segment.apply_gain(gain_db)
     segment.export(str(output_path), format="wav", parameters=["-ac", "1"])
     return output_path
+
+
+def export_raw_listen_preview(source_path: Path, out_base: Path) -> Path:
+    """
+    Prepare un fichier pour ecoute navigateur sans pipeline modem (pas de decoupe, gain ni resample).
+
+    Les MP3 sont copies tels quels. Les WAV sont re-exportes en PCM 16-bit a la frequence source.
+
+    @param source_path Fichier intro (MP3, WAV, etc.).
+    @param out_base Chemin de sortie sans extension (ex. greeting_listen_preview).
+    @returns Fichier genere (.mp3 ou .wav).
+    @raises FileNotFoundError Si la source est absente.
+    @raises ImportError Si pydub manque pour les formats non MP3.
+    """
+    source = Path(source_path)
+    if not source.is_file():
+        raise FileNotFoundError(f"Fichier intro introuvable: {source}")
+    out_base = Path(out_base)
+    out_base.parent.mkdir(parents=True, exist_ok=True)
+
+    if source.suffix.lower() == ".mp3":
+        dest = out_base.with_suffix(".mp3")
+        shutil.copy2(source, dest)
+        return dest
+
+    from pydub import AudioSegment
+
+    segment = AudioSegment.from_file(str(source))
+    dest = out_base.with_suffix(".wav")
+    segment.export(str(dest), format="wav")
+    return dest
+
+
+def listen_preview_response_meta(preview_path: Path) -> tuple[str, str]:
+    """
+    Deduit le type MIME et le nom de fichier pour un apercu ecoute.
+
+    @param preview_path Fichier audio genere.
+    @returns Tuple (media_type, filename).
+    """
+    suffix = preview_path.suffix.lower()
+    if suffix == ".mp3":
+        return "audio/mpeg", "greeting_preview.mp3"
+    return "audio/wav", "greeting_preview.wav"
 
 
 def combine_modem_wav_files(
@@ -1291,6 +1501,7 @@ def combine_modem_wav_files(
     gap_ms: int = 350,
     max_first_ms: Optional[int] = None,
     normalize: bool = True,
+    profile: Optional[ModemVoiceProfile] = None,
 ) -> Path:
     """
     Concatene plusieurs fichiers audio en un seul WAV 8 kHz 8-bit (lecture fluide modem).
@@ -1300,14 +1511,16 @@ def combine_modem_wav_files(
     @param gap_ms Silence entre les morceaux.
     @param max_first_ms Duree max du premier morceau (intro).
     @param normalize Normalise le niveau final.
+    @param profile Profil modem pour l'export (defaut USR).
     @returns Chemin du WAV genere.
     """
     from pydub import AudioSegment
 
+    voice = profile or USR_VOICE_PROFILE
     if not paths:
         raise ValueError("combine_modem_wav_files: liste vide")
     combined = AudioSegment.empty()
-    gap = AudioSegment.silent(duration=max(0, gap_ms), frame_rate=MODEM_SAMPLE_RATE)
+    gap = AudioSegment.silent(duration=max(0, gap_ms), frame_rate=voice.sample_rate)
     for index, path in enumerate(paths):
         if not path.is_file():
             continue
@@ -1319,7 +1532,7 @@ def combine_modem_wav_files(
         if len(combined) > 0 and len(piece) > 0:
             combined += gap
         combined += piece
-    export_wav_8k_8bit(combined, out_path, normalize=normalize)
+    export_wav_8k_8bit(combined, out_path, normalize=normalize, profile=voice)
     return out_path
 
 
@@ -1329,7 +1542,7 @@ def crossfade_audio_segments(
     *,
     crossfade_ms: int = 500,
     voice_bed_gain_db: Optional[float] = None,
-    voice_mix_gain_db: float = 5.0,
+    voice_mix_gain_db: float = 0.0,
     intro_duck_db: float = 6.0,
     voice_bed_variant: str = "bed_marimba_warm",
 ) -> "AudioSegment":
@@ -1378,6 +1591,92 @@ def crossfade_audio_segments(
         return head + cross_part + voice_with_bed
 
     return head + cross_part + voice_rest
+
+
+def _crossfade_musicscreen_jingle_voice(
+    full_intro: "AudioSegment",
+    voice: "AudioSegment",
+    *,
+    handoff_ms: int,
+    crossfade_ms: int,
+    voice_mix_gain_db: float = 0.0,
+    music_under_gain_db: Optional[float] = -24.0,
+) -> "AudioSegment":
+    """
+    Jingle MusicScreen : solo, fondu vers la voix, puis suite du jingle en fond attenue.
+
+    @param full_intro Jingle complet charge (modem rate).
+    @param voice Segment voix TTS.
+    @param handoff_ms Instant ou la voix commence a entrer (duree intro solo).
+    @param crossfade_ms Fondu jingle -> voix.
+    @param voice_mix_gain_db Gain supplementaire voix.
+    @param music_under_gain_db Attenuation jingle sous voix (dB negatif, None/0 = sans fond).
+    @returns Mix assemble.
+    """
+    from pydub import AudioSegment
+
+    if len(voice) <= 0:
+        return full_intro[: max(0, int(handoff_ms))]
+    if len(full_intro) <= 0:
+        return voice
+
+    solo_ms = min(max(80, int(handoff_ms)), len(full_intro))
+    cf = min(
+        max(80, int(crossfade_ms)),
+        solo_ms - 20,
+        len(voice) - 10,
+    )
+    if cf < 80:
+        cf = min(80, solo_ms, len(voice))
+
+    duck_db = 0.0
+    if music_under_gain_db is not None and float(music_under_gain_db) < -1.0:
+        duck_db = abs(float(music_under_gain_db))
+
+    head_end = max(0, solo_ms - cf)
+    head = full_intro[:head_end]
+    intro_tail = full_intro[head_end:solo_ms]
+
+    fade_in_ms = min(cf, max(100, cf // 2))
+    voice_in = voice[:cf].fade_in(fade_in_ms)
+    if voice_mix_gain_db:
+        voice_in = voice_in + float(voice_mix_gain_db)
+
+    if duck_db > 0:
+        cross_part = (intro_tail - (duck_db * 0.55)).overlay(voice_in)
+    else:
+        cross_part = intro_tail.fade_out(cf).overlay(voice_in)
+
+    voice_rest = voice[cf:]
+    if voice_mix_gain_db:
+        voice_rest = voice_rest + float(voice_mix_gain_db)
+    # Voix un peu plus presente sur le jingle attenue (lisibilite ligne etroite).
+    voice_over_bed_db = 2.5 if duck_db > 0 else 0.0
+
+    if duck_db > 0 and len(voice_rest) > 0:
+        music_cont = full_intro[solo_ms:]
+        if len(music_cont) > 0:
+            music_cont = music_cont - duck_db
+            if len(music_cont) >= len(voice_rest):
+                music_cont = music_cont[: len(voice_rest)]
+                fade_len = min(700, max(80, len(voice_rest) // 5))
+                if fade_len > 0 and len(music_cont) > fade_len:
+                    music_cont = music_cont[:-fade_len] + music_cont[-fade_len:].fade_out(fade_len)
+            else:
+                pad = AudioSegment.silent(
+                    len(voice_rest) - len(music_cont),
+                    frame_rate=music_cont.frame_rate,
+                )
+                music_cont = music_cont + pad
+            if voice_over_bed_db:
+                voice_rest = voice_rest + voice_over_bed_db
+            voice_block = music_cont.overlay(voice_rest)
+        else:
+            voice_block = voice_rest
+    else:
+        voice_block = voice_rest
+
+    return head + cross_part + voice_block
 
 
 def _segment_dbfs_safe(segment: "AudioSegment", default: float = -40.0) -> float:
@@ -1601,8 +1900,9 @@ def combine_intro_voice_crossfade(
     intro_variant: str = "sting_marimba",
     normalize: bool = True,
     voice_bed_gain_db: Optional[float] = None,
-    voice_mix_gain_db: float = 5.0,
+    voice_mix_gain_db: float = 0.0,
     voice_bed_variant: Optional[str] = None,
+    profile: Optional[ModemVoiceProfile] = None,
 ) -> Path:
     """
     Assemble intro + message vocal avec fondu (modem 8 kHz 8-bit).
@@ -1619,29 +1919,51 @@ def combine_intro_voice_crossfade(
     @param voice_bed_variant Partition fond compose (bed_*), auto si None.
     @returns Chemin WAV genere.
     """
-    bed_variant = voice_bed_variant or default_bed_variant_for_jingle(intro_variant)
-    intro = load_audio_segment_modem(intro_path)
+    from backend.voice.musicscreen_jingles import is_musicscreen_jingle
+
+    bed_variant = voice_bed_variant
+    if bed_variant is None and not is_musicscreen_jingle(intro_variant):
+        bed_variant = default_bed_variant_for_jingle(intro_variant)
+
+    full_intro = load_audio_segment_modem(intro_path)
+    full_intro = trim_intro_for_voice_handoff(full_intro)
     voice = load_audio_segment_modem(voice_path)
-    intro = trim_intro_for_voice_handoff(intro)
-    cap_ms = int(intro_max_ms or len(intro))
-    melody_end_ms = estimated_jingle_melody_end_ms(intro_variant, cap_ms)
-    handoff_ms = min(len(intro), melody_end_ms, cap_ms)
-    if handoff_ms > 80:
-        intro = intro[:handoff_ms]
+    voice = trim_leading_trailing_silence(voice, padding_ms=5, silence_threshold=-44.0)
+    voice = normalize_segment_peak(voice, target_peak=MODEM_VOICE_PEAK_TARGET)
 
-    voice = trim_leading_trailing_silence(voice, padding_ms=15, silence_threshold=-48.0)
-    voice = normalize_segment_peak(voice)
+    cap_ms = int(intro_max_ms or len(full_intro))
+    effective_cf = int(crossfade_ms)
 
-    effective_cf = min(int(crossfade_ms), max(120, handoff_ms // 3), len(intro) - 20, len(voice))
-    combined = crossfade_audio_segments(
-        intro,
-        voice,
-        crossfade_ms=effective_cf,
-        voice_bed_gain_db=voice_bed_gain_db,
-        voice_mix_gain_db=voice_mix_gain_db,
-        voice_bed_variant=bed_variant,
-    )
-    export_wav_8k_8bit(combined, out_path, normalize=False)
+    if is_musicscreen_jingle(intro_variant):
+        solo_ms = min(len(full_intro), cap_ms)
+        combined = _crossfade_musicscreen_jingle_voice(
+            full_intro,
+            voice,
+            handoff_ms=solo_ms,
+            crossfade_ms=effective_cf,
+            voice_mix_gain_db=voice_mix_gain_db,
+            music_under_gain_db=voice_bed_gain_db,
+        )
+    else:
+        intro = full_intro
+        melody_end_ms = estimated_jingle_melody_end_ms(intro_variant, cap_ms)
+        handoff_ms = min(len(intro), melody_end_ms, cap_ms)
+        if handoff_ms > 80:
+            intro = intro[:handoff_ms]
+        effective_cf = min(
+            effective_cf, max(120, handoff_ms // 3), len(intro) - 20, len(voice)
+        )
+        combined = crossfade_audio_segments(
+            intro,
+            voice,
+            crossfade_ms=effective_cf,
+            voice_bed_gain_db=voice_bed_gain_db,
+            voice_mix_gain_db=voice_mix_gain_db,
+            voice_bed_variant=bed_variant,
+        )
+    combined = trim_leading_trailing_silence(combined, padding_ms=5, silence_threshold=-42.0)
+    combined = limit_segment_peak(combined)
+    export_wav_8k_8bit(combined, out_path, normalize=False, profile=profile)
     return out_path
 
 
@@ -1729,6 +2051,78 @@ def pcm_s16le_16k_mono_to_u8_8k(data: bytes) -> bytes:
     return bytes(out)
 
 
+def resample_s16le_mono(data: bytes, src_rate: int, dst_rate: int) -> bytes:
+    """
+    Reechantillonne du PCM s16le mono par interpolation lineaire.
+
+    @param data Buffer source.
+    @param src_rate Frequence source.
+    @param dst_rate Frequence cible.
+    @returns Buffer s16le a dst_rate.
+    """
+    if not data or src_rate <= 0 or dst_rate <= 0:
+        return b""
+    if src_rate == dst_rate:
+        return data
+    import array
+
+    n = len(data) // 2
+    if n <= 0:
+        return b""
+    samples = array.array("h")
+    samples.frombytes(data[: n * 2])
+    if n == 1:
+        out_n = max(1, int(round(dst_rate / src_rate)))
+        return (samples[0].to_bytes(2, "little", signed=True)) * out_n
+    out_n = max(1, int(round(n * dst_rate / src_rate)))
+    out = array.array("h")
+    last = n - 1
+    for index in range(out_n):
+        pos = index * last / (out_n - 1) if out_n > 1 else 0.0
+        i0 = int(pos)
+        frac = pos - i0
+        i1 = i0 + 1 if i0 < last else last
+        value = int(samples[i0] * (1.0 - frac) + samples[i1] * frac)
+        if value < -32768:
+            value = -32768
+        elif value > 32767:
+            value = 32767
+        out.append(value)
+    return out.tobytes()
+
+
+def pcm_modem_to_s16le_16k(data: bytes, profile: Optional[ModemVoiceProfile] = None) -> bytes:
+    """
+    PCM modem (u8 8 kHz ou s16 11 025 Hz) -> s16le 16 kHz pour WS / STT.
+
+    @param data Octets VRX.
+    @param profile Profil actif.
+    @returns PCM 16 kHz 16-bit LE.
+    """
+    voice = profile or USR_VOICE_PROFILE
+    if not data:
+        return b""
+    if voice.sample_width == 1:
+        return pcm_u8_8k_to_s16le_16k(data)
+    return resample_s16le_mono(data, voice.sample_rate, 16000)
+
+
+def pcm_s16le_16k_to_modem(data: bytes, profile: Optional[ModemVoiceProfile] = None) -> bytes:
+    """
+    Micro navigateur s16le 16 kHz -> PCM modem (VTX).
+
+    @param data Octets micro.
+    @param profile Profil actif.
+    @returns PCM pret pour VTX.
+    """
+    voice = profile or USR_VOICE_PROFILE
+    if not data:
+        return b""
+    if voice.sample_width == 1:
+        return pcm_s16le_16k_mono_to_u8_8k(data)
+    return resample_s16le_mono(data, 16000, voice.sample_rate)
+
+
 def pcm_s16le_rms(data: bytes) -> float:
     """
     RMS d'un buffer PCM s16le mono (valeur 0..32767 environ).
@@ -1767,4 +2161,48 @@ def write_stereo_u8_8k_wav(path: Path, line_track: bytes, mic_track: bytes) -> N
         wf.setnchannels(2)
         wf.setsampwidth(1)
         wf.setframerate(8000)
+        wf.writeframes(bytes(stereo))
+
+
+def write_stereo_modem_wav(
+    path: Path,
+    line_track: bytes,
+    mic_track: bytes,
+    *,
+    profile: Optional[ModemVoiceProfile] = None,
+) -> None:
+    """
+    WAV stereo au format du profil modem : gauche = ligne, droite = micro.
+
+    @param path Fichier de sortie.
+    @param line_track PCM VRX.
+    @param mic_track PCM VTX.
+    @param profile Profil actif (silence 0 si s16, 128 si u8).
+    """
+    voice = profile or USR_VOICE_PROFILE
+    if voice.sample_width <= 1:
+        write_stereo_u8_8k_wav(path, line_track, mic_track)
+        return
+    width = 2
+    n = max(len(line_track), len(mic_track))
+    n -= n % width
+    if n <= 0:
+        return
+    silence = b"\x00\x00"
+    def _pad(track: bytes) -> bytes:
+        if len(track) >= n:
+            return track[:n]
+        return track + silence * ((n - len(track)) // width)
+
+    line = _pad(line_track)
+    mic = _pad(mic_track)
+    stereo = bytearray(n * 2)
+    for index in range(0, n, width):
+        stereo[index * 2 : index * 2 + 2] = line[index : index + 2]
+        stereo[index * 2 + 2 : index * 2 + 4] = mic[index : index + 2]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(path), "wb") as wf:
+        wf.setnchannels(2)
+        wf.setsampwidth(2)
+        wf.setframerate(voice.sample_rate)
         wf.writeframes(bytes(stereo))

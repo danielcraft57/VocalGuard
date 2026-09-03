@@ -1,0 +1,28 @@
+Arborescence resources/voice/
+===========================
+
+system/
+  beep.wav              — bip enregistrement messagerie
+  blocked_short.wav     — son appel bloque
+
+intros/
+  default.wav           — jingle actif en prod (copie de la variante choisie)
+  pad_warm.wav          — variantes generees (pad_*, sfr_*)
+
+lab/                    — previews locales (regenere par scripts, non versionne)
+  jingles/              — intros seules (*_SIMUL.wav = ecoute PC)
+  greetings/            — voix TTS seules (feminin, debit, pitch varies)
+  sequences/            — intro + fondu musique->voix + message
+  beds/                 — fonds musicaux composes sous la voix (bed_*)
+  INDEX.txt             — liste des fichiers et legende
+
+Partitions detaillees : resources/voice/PARTITIONS.txt
+
+Scripts :
+  python scripts/preview_greeting_lab.py
+  .\\scripts\\preview_greeting_lab.ps1
+
+Legacy (encore resolus si presents) :
+  resources/voice/beep.wav
+  resources/voice/greeting_intro.wav
+  resources/voice/previews/

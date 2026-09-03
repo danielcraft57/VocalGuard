@@ -247,7 +247,7 @@ class CallService:
             "end_time": datetime.utcnow()
         }
         
-        if duration:
+        if duration is not None:
             update_data["duration"] = duration
         
         call = self.call_repo.update(call_id, **update_data)
@@ -457,9 +457,33 @@ class CallService:
     async def set_voicemail_transcription(
         self, voicemail_id: int, transcription: str
     ) -> Optional[Voicemail]:
-        """Met a jour la transcription STT d un message vocal."""
+        """
+        Met a jour la transcription STT d un message vocal.
+
+        @param voicemail_id Identifiant du message.
+        @param transcription Texte reconnu.
+        @returns Message mis a jour ou None si introuvable.
+        """
         text = (transcription or "").strip()
         if not text:
             return self.voicemail_repo.get_by_id(voicemail_id)
-        return self.voicemail_repo.update(voicemail_id, transcription=text)
+        vm = self.voicemail_repo.update(voicemail_id, transcription=text)
+        if vm is None:
+            return None
+        await event_bus.publish(
+            Event(
+                event_type=EventType.VOICEMAIL_TRANSCRIBED,
+                timestamp=datetime.utcnow(),
+                data={
+                    "voicemail_id": vm.id,
+                    "call_id": vm.call_id,
+                    "phone_number": vm.phone_number,
+                    "caller_name": vm.caller_name,
+                    "transcription": text,
+                    "duration": vm.duration,
+                },
+                source="CallService",
+            )
+        )
+        return vm
 

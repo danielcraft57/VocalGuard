@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Accordion,
@@ -21,14 +21,23 @@ import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import MusicNoteIcon from "@mui/icons-material/MusicNote";
 import RecordVoiceOverIcon from "@mui/icons-material/RecordVoiceOver";
-import SettingsVoiceIcon from "@mui/icons-material/SettingsVoice";
+import CallEndIcon from "@mui/icons-material/CallEnd";
 import { AppLayout } from "../../../components/AppLayout";
+import { VgAudioPresetChips } from "../../../components/mui/VgAudioPresetChips";
 import { VgAudioSourcePicker } from "../../../components/mui/VgAudioSourcePicker";
 import { VgGreetingPreviewPanel } from "../../../components/mui/VgGreetingPreviewPanel";
+import { VgJingleListenButton } from "../../../components/mui/VgJingleListenButton";
 import { VgPageHeader } from "../../../components/mui/VgPageHeader";
 import { VgSaveBar } from "../../../components/mui/VgSaveBar";
 import { VgSettingsSection } from "../../../components/mui/VgSettingsSection";
 import { useIncomingCallConfig } from "../../../hooks/useIncomingCallConfig";
+import {
+  fetchGreetingJingles,
+  fetchIncomingAudioPresets,
+  type AudioPresetOption,
+  type GreetingJingleOption,
+  type IncomingAudioPresetsCatalog
+} from "../../../services/settingsApi";
 
 type GreetingIntroMode = "none" | "jingle" | "wav" | "track";
 
@@ -39,6 +48,7 @@ type AudioBlock = {
   greeting_intro_mode?: GreetingIntroMode;
   greeting_intro_variant?: string;
   greeting_intro_crossfade_ms?: number;
+  greeting_intro_voice_gain_db?: number;
   greeting_intro_voice_bed_db?: number;
   greeting_intro_bed_variant?: string | null;
   greeting_intro_wav_path?: string | null;
@@ -53,6 +63,7 @@ type AudioBlock = {
   edge_tts_rate?: string;
   edge_tts_voice?: string;
   edge_tts_pitch?: string;
+  tts_voice_gain_db?: number;
 };
 
 const EDGE_VOICES = [
@@ -66,12 +77,60 @@ const EDGE_VOICES = [
 ];
 
 const DEFAULT_GREETING_HINT =
-  "Bonjour, Monsieur Daniel est absent. Merci de laisser un message apres le bip.";
+  "Bonjour. Vous etes bien chez Daniel Craft, de Loic Daniel. Merci de laisser votre message apres le bip.";
 
 /**
  * Parametres messages vocaux : intro musicale, accueil TTS, apercu, bloque, bip.
  */
 export default function IncomingAudioSettingsPage() {
+  const [jingles, setJingles] = useState<GreetingJingleOption[]>([]);
+  const [jinglesLoading, setJinglesLoading] = useState(true);
+  const [audioPresets, setAudioPresets] = useState<IncomingAudioPresetsCatalog>({
+    voice: [],
+    intro: [],
+    outro: []
+  });
+  const [presetsLoading, setPresetsLoading] = useState(true);
+  const [voicePresetId, setVoicePresetId] = useState<string | null>(null);
+  const [introPresetId, setIntroPresetId] = useState<string | null>(null);
+  const [outroPresetId, setOutroPresetId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const rows = await fetchGreetingJingles();
+        if (!cancelled) setJingles(rows);
+      } catch {
+        if (!cancelled) setJingles([]);
+      } finally {
+        if (!cancelled) setJinglesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const catalog = await fetchIncomingAudioPresets();
+        if (!cancelled) setAudioPresets(catalog);
+      } catch {
+        if (!cancelled) {
+          setAudioPresets({ voice: [], intro: [], outro: [] });
+        }
+      } finally {
+        if (!cancelled) setPresetsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const {
     config,
     loading,
@@ -95,6 +154,16 @@ export default function IncomingAudioSettingsPage() {
     [audio, config, patchField]
   );
 
+  const applyAudioPreset = useCallback(
+    (preset: AudioPresetOption, track: "voice" | "intro" | "outro") => {
+      patchAudio(preset.values as Partial<AudioBlock>);
+      if (track === "voice") setVoicePresetId(preset.id);
+      if (track === "intro") setIntroPresetId(preset.id);
+      if (track === "outro") setOutroPresetId(preset.id);
+    },
+    [patchAudio]
+  );
+
   const rateNum = useMemo(() => {
     const raw = audio.edge_tts_rate || "+0%";
     const n = parseInt(raw.replace("%", "").replace("+", ""), 10);
@@ -107,8 +176,10 @@ export default function IncomingAudioSettingsPage() {
     return Number.isFinite(n) ? n : 7;
   }, [audio.edge_tts_pitch]);
 
+  const voiceGainDb = audio.tts_voice_gain_db ?? -6;
+
   const introMode = audio.greeting_intro_mode || "jingle";
-  const bedDb = audio.greeting_intro_voice_bed_db ?? -24;
+  const bedDb = audio.greeting_intro_voice_bed_db ?? -18;
 
   return (
     <AppLayout title="Messages et audio" hidePageHeader>
@@ -140,6 +211,14 @@ export default function IncomingAudioSettingsPage() {
               onSaveBeforeRegenerate={save}
             />
 
+            <VgAudioPresetChips
+              title="Prereglage voix"
+              presets={audioPresets.voice}
+              loading={presetsLoading}
+              activePresetId={voicePresetId}
+              onApply={(preset) => applyAudioPreset(preset, "voice")}
+            />
+
             <Box
               sx={{
                 display: "grid",
@@ -148,7 +227,7 @@ export default function IncomingAudioSettingsPage() {
                 mt: 2
               }}
             >
-              <FormControl size="small" fullWidth>
+              <FormControl size="small" fullWidth sx={{ gridColumn: { md: "1 / -1" } }}>
                 <InputLabel id="edge-voice">Voix</InputLabel>
                 <Select
                   labelId="edge-voice"
@@ -163,6 +242,24 @@ export default function IncomingAudioSettingsPage() {
                   ))}
                 </Select>
               </FormControl>
+
+              <Stack spacing={1}>
+                <Typography variant="caption" color="text.secondary">
+                  Volume voix : {voiceGainDb > 0 ? `+${voiceGainDb}` : voiceGainDb} dB
+                </Typography>
+                <Slider
+                  size="small"
+                  value={voiceGainDb}
+                  min={-18}
+                  max={9}
+                  step={1}
+                  valueLabelDisplay="auto"
+                  valueLabelFormat={(v) => `${v > 0 ? "+" : ""}${v} dB`}
+                  onChange={(_, v) => {
+                    patchAudio({ tts_voice_gain_db: v as number });
+                  }}
+                />
+              </Stack>
 
               <Stack spacing={1}>
                 <Typography variant="caption" color="text.secondary">
@@ -230,6 +327,14 @@ export default function IncomingAudioSettingsPage() {
               </Stack>
             </AccordionSummary>
             <AccordionDetails>
+              <VgAudioPresetChips
+                title="Prereglage intro"
+                presets={audioPresets.intro}
+                loading={presetsLoading}
+                activePresetId={introPresetId}
+                onApply={(preset) => applyAudioPreset(preset, "intro")}
+              />
+
               <FormControl size="small" fullWidth sx={{ mb: 2 }}>
                 <InputLabel id="intro-mode">Type d&apos;intro</InputLabel>
                 <Select
@@ -240,7 +345,7 @@ export default function IncomingAudioSettingsPage() {
                     patchAudio({ greeting_intro_mode: e.target.value as GreetingIntroMode })
                   }
                 >
-                  <MenuItem value="jingle">Jingle messagerie (recommande)</MenuItem>
+                  <MenuItem value="jingle">Jingle MusicScreen (libre de droit)</MenuItem>
                   <MenuItem value="track">Piste musicale (debut + annonce par-dessus)</MenuItem>
                   <MenuItem value="wav">Fichier WAV personnalise</MenuItem>
                   <MenuItem value="none">Aucune intro</MenuItem>
@@ -339,37 +444,82 @@ export default function IncomingAudioSettingsPage() {
                     <>
                       <Stack>
                         <Typography variant="caption" color="text.secondary">
-                          Fond sous voix : {bedDb} dB
+                          Voix sur jingle : +{audio.greeting_intro_voice_gain_db ?? 0} dB
                         </Typography>
                         <Slider
                           size="small"
-                          value={bedDb}
-                          min={-30}
-                          max={0}
+                          value={audio.greeting_intro_voice_gain_db ?? 0}
+                          min={0}
+                          max={12}
                           step={1}
                           onChange={(_, v) =>
-                            patchAudio({ greeting_intro_voice_bed_db: v as number })
+                            patchAudio({ greeting_intro_voice_gain_db: v as number })
                           }
                         />
                       </Stack>
                       {introMode === "jingle" ? (
-                        <FormControl size="small" fullWidth>
-                          <InputLabel id="intro-variant">Jingle</InputLabel>
-                          <Select
-                            labelId="intro-variant"
-                            label="Jingle"
-                            value={audio.greeting_intro_variant || "sting_marimba"}
-                            onChange={(e) =>
-                              patchAudio({ greeting_intro_variant: e.target.value })
+                        <Stack>
+                          <Typography variant="caption" color="text.secondary">
+                            Jingle sous la voix : {bedDb} dB {bedDb >= -1 ? "(desactive)" : ""}
+                          </Typography>
+                          <Slider
+                            size="small"
+                            value={bedDb}
+                            min={-30}
+                            max={0}
+                            step={1}
+                            onChange={(_, v) =>
+                              patchAudio({ greeting_intro_voice_bed_db: v as number })
                             }
-                          >
-                            <MenuItem value="sting_marimba">Marimba chaleureux</MenuItem>
-                            <MenuItem value="sting_corporate">Corporate lumineux</MenuItem>
-                            <MenuItem value="sting_startup">Startup electronique</MenuItem>
-                            <MenuItem value="sting_acoustic">Acoustique positif</MenuItem>
-                            <MenuItem value="sting_mini">Mini stinger court</MenuItem>
-                          </Select>
-                        </FormControl>
+                          />
+                        </Stack>
+                      ) : (
+                        <Stack>
+                          <Typography variant="caption" color="text.secondary">
+                            Fond sous voix : {bedDb} dB {bedDb >= -1 ? "(desactive)" : ""}
+                          </Typography>
+                          <Slider
+                            size="small"
+                            value={bedDb}
+                            min={-30}
+                            max={0}
+                            step={1}
+                            onChange={(_, v) =>
+                              patchAudio({ greeting_intro_voice_bed_db: v as number })
+                            }
+                          />
+                        </Stack>
+                      )}
+                      {introMode === "jingle" ? (
+                        <Stack
+                          direction="row"
+                          spacing={1}
+                          sx={{ alignItems: "flex-start", gridColumn: { sm: "1 / -1" } }}
+                        >
+                          <FormControl size="small" sx={{ flex: 1, minWidth: 0 }}>
+                            <InputLabel id="intro-variant">Jingle MusicScreen</InputLabel>
+                            <Select
+                              labelId="intro-variant"
+                              label="Jingle MusicScreen"
+                              value={audio.greeting_intro_variant || "tesla"}
+                              onChange={(e) =>
+                                patchAudio({ greeting_intro_variant: e.target.value })
+                              }
+                              disabled={jinglesLoading}
+                            >
+                              {jingles.map((j) => (
+                                <MenuItem key={j.id} value={j.id}>
+                                  {j.label}
+                                  {j.duration_sec ? ` (${j.duration_sec} s)` : ""}
+                                </MenuItem>
+                              ))}
+                            </Select>
+                          </FormControl>
+                          <VgJingleListenButton
+                            jingleId={audio.greeting_intro_variant || "tesla"}
+                            disabled={jinglesLoading}
+                          />
+                        </Stack>
                       ) : (
                         <TextField
                           size="small"
@@ -391,16 +541,24 @@ export default function IncomingAudioSettingsPage() {
           <Accordion disableGutters elevation={0} sx={{ border: 1, borderColor: "divider", borderRadius: 1, "&:before": { display: "none" } }}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
               <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-                <SettingsVoiceIcon color="action" fontSize="small" />
+                <CallEndIcon color="action" fontSize="small" />
                 <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
-                  Messages secondaires
+                  Outro et fin d&apos;appel
                 </Typography>
                 <Typography variant="caption" color="text.secondary">
-                  Bloque, bip
+                  Bip, bloque, messages de fin
                 </Typography>
               </Stack>
             </AccordionSummary>
             <AccordionDetails>
+              <VgAudioPresetChips
+                title="Prereglage outro"
+                presets={audioPresets.outro}
+                loading={presetsLoading}
+                activePresetId={outroPresetId}
+                onApply={(preset) => applyAudioPreset(preset, "outro")}
+              />
+
               <Stack spacing={3}>
                 <Box>
                   <Typography variant="subtitle2" gutterBottom>

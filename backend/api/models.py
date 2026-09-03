@@ -657,6 +657,10 @@ class GreetingPreviewRequest(BaseModel):
         None,
         description="Patch audio du formulaire (meme si non encore sauvegarde).",
     )
+    preview_mode: str = Field(
+        default="full",
+        description="full = mix complet, voice = TTS seul, intro = fichier jingle source brut.",
+    )
 
 
 class GreetingAudioStatusResponse(BaseModel):

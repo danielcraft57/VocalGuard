@@ -134,7 +134,8 @@ switch ($Mode) {
         if (-not $tok -and $FetchTokenFromRemote) {
             $tok = Get-RemoteInternalToken -Remote "${RemoteUser}@${RemoteHost}" -Dir $RemoteDir
             if ($tok) {
-                Write-Host "Token lu sur le serveur ($RemoteDir/.env) pour le POST interne." -ForegroundColor DarkGray
+                $envOnRemote = Join-Path $RemoteDir ".env"
+                Write-Host "Token lu sur le serveur ($envOnRemote) pour le POST interne." -ForegroundColor DarkGray
             }
         }
         if (-not $tok) {

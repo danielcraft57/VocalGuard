@@ -20,10 +20,10 @@ from loguru import logger
 from backend.core.modem_handler import _vrx_buffer_has_hangup_marker
 from backend.voice.audio_utils import (
     has_alsa_capture_devices,
-    pcm_s16le_16k_mono_to_u8_8k,
+    pcm_modem_to_s16le_16k,
+    pcm_s16le_16k_to_modem,
     pcm_s16le_rms,
-    pcm_u8_8k_to_s16le_16k,
-    write_stereo_u8_8k_wav,
+    write_stereo_modem_wav,
 )
 
 from sqlalchemy.orm import Session
@@ -268,21 +268,27 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
     alsa_raw = bytearray()
     serial_line_track = bytearray()
     serial_mic_track = bytearray()
+    voice_profile = modem.voice_profile
     _SILENCE_U8 = 128
+
+    def _silence_bytes(n: int) -> bytes:
+        if voice_profile.sample_width >= 2:
+            return b"\x00" * n
+        return bytes([_SILENCE_U8]) * n
 
     def _append_line_chunk(chunk: bytes) -> None:
         n = len(chunk)
         if n <= 0:
             return
         serial_line_track.extend(chunk)
-        serial_mic_track.extend(bytes([_SILENCE_U8]) * n)
+        serial_mic_track.extend(_silence_bytes(n))
 
-    def _append_mic_uplink(u8: bytes) -> None:
-        n = len(u8)
+    def _append_mic_uplink(pcm: bytes) -> None:
+        n = len(pcm)
         if n <= 0:
             return
-        serial_line_track.extend(bytes([_SILENCE_U8]) * n)
-        serial_mic_track.extend(u8)
+        serial_line_track.extend(_silence_bytes(n))
+        serial_mic_track.extend(pcm)
 
     async def _save_serial_stereo_wav() -> None:
         nonlocal wav_rel
@@ -293,7 +299,12 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
         ts = int(time.time())
         wav_rel = f"recordings/call_out_{session.call_id}_{ts}.wav"
         wav_path = base / wav_rel
-        write_stereo_u8_8k_wav(wav_path, bytes(serial_line_track), bytes(serial_mic_track))
+        write_stereo_modem_wav(
+            wav_path,
+            bytes(serial_line_track),
+            bytes(serial_mic_track),
+            profile=voice_profile,
+        )
         await call_service.set_audio_file(session.call_id, wav_rel)
         await _publish_log(
             session.call_id,
@@ -459,7 +470,7 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
                                 break
                             _append_line_chunk(chunk)
                             line_bytes += len(chunk)
-                            pcm16 = pcm_u8_8k_to_s16le_16k(chunk)
+                            pcm16 = pcm_modem_to_s16le_16k(chunk, voice_profile)
                             await session_broadcast_pcm(session, pcm16)
                             stt_buffer.extend(pcm16)
                             # Ne jamais await Vosk ici : ca gelait la lecture VRX.
@@ -470,7 +481,7 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
                         else:
                             empty_reads += 1
                             # Apres audio, silence modem prolonge = ligne souvent morte.
-                            if line_bytes > 16000 and empty_reads >= 40:
+                            if line_bytes > (voice_profile.bytes_per_sec * 2) and empty_reads >= 40:
                                 end_reason = "remote_hangup"
                                 await _publish_log(
                                     session.call_id,
@@ -520,10 +531,10 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
                                     while mic_acc and not session.stop_event.is_set() and not modem._voice_abort:
                                         take = bytes(mic_acc[:MIC_SLICE_BYTES])
                                         del mic_acc[: min(len(mic_acc), MIC_SLICE_BYTES)]
-                                        u8 = pcm_s16le_16k_mono_to_u8_8k(take)
-                                        if u8:
-                                            _append_mic_uplink(u8)
-                                            if not await modem.write_outgoing_vtx_u8(u8):
+                                        uplink = pcm_s16le_16k_to_modem(take, voice_profile)
+                                        if uplink:
+                                            _append_mic_uplink(uplink)
+                                            if not await modem.write_outgoing_vtx_u8(uplink):
                                                 break
                     else:
                         # Pendant VTX : envoyer au fil de l'eau, fermer apres silence.
@@ -540,10 +551,10 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
                                 silence_ms += slice_ms
                             else:
                                 silence_ms = 0.0
-                            u8 = pcm_s16le_16k_mono_to_u8_8k(piece)
-                            if u8:
-                                _append_mic_uplink(u8)
-                                if not await modem.write_outgoing_vtx_u8(u8):
+                            uplink = pcm_s16le_16k_to_modem(piece, voice_profile)
+                            if uplink:
+                                _append_mic_uplink(uplink)
+                                if not await modem.write_outgoing_vtx_u8(uplink):
                                     silence_ms = HANGOVER_SILENCE_MS
                                     break
                             if silence_ms >= HANGOVER_SILENCE_MS:
@@ -584,11 +595,11 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
                     if not session.stop_event.is_set() and not modem._voice_abort:
                         await _drain_mic_queue()
                         if mic_acc:
-                            u8_tail = pcm_s16le_16k_mono_to_u8_8k(bytes(mic_acc))
+                            tail = pcm_s16le_16k_to_modem(bytes(mic_acc), voice_profile)
                             mic_acc.clear()
-                            if u8_tail:
-                                _append_mic_uplink(u8_tail)
-                                await modem.write_outgoing_vtx_u8(u8_tail)
+                            if tail:
+                                _append_mic_uplink(tail)
+                                await modem.write_outgoing_vtx_u8(tail)
                     else:
                         mic_acc.clear()
                     await modem.end_outgoing_vtx_reopen_vrx()

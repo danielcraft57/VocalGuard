@@ -10,6 +10,7 @@ import {
   TextField,
   Typography
 } from "@mui/material";
+import { VgTtsTextField } from "./VgTtsTextField";
 
 export type AudioSourceKind = "tts" | "wav";
 
@@ -65,7 +66,15 @@ export function VgAudioSourcePicker({
           onChange={(e) => onWavPathChange(e.target.value)}
           placeholder="resources/voice/beep.wav"
           disabled={disabled}
-          helperText="Ex. resources/voice/blocked_short.wav — 8 kHz mono recommande"
+          helperText="Ex. resources/voice/blocked_short.wav — format modem (11 kHz 16-bit USR / 8 kHz 8-bit Conexant)"
+        />
+      ) : ttsMultiline ? (
+        <VgTtsTextField
+          label="Texte TTS"
+          value={ttsText}
+          onChange={onTtsTextChange}
+          placeholder={ttsPlaceholder}
+          disabled={disabled}
         />
       ) : (
         <TextField
@@ -75,10 +84,7 @@ export function VgAudioSourcePicker({
           value={ttsText}
           onChange={(e) => onTtsTextChange(e.target.value)}
           disabled={disabled}
-          multiline={ttsMultiline}
-          minRows={ttsMultiline ? 3 : 1}
           placeholder={ttsPlaceholder}
-          helperText={ttsPlaceholder ? "Balises <break time=\"400ms\"/> supportees (Edge TTS)" : undefined}
         />
       )}
     </Stack>

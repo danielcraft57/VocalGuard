@@ -11,7 +11,11 @@ from backend.core.incoming_call_audio import (
     resolve_resource_path,
 )
 from backend.core.incoming_call_settings import load_incoming_call_settings
-from backend.voice.audio_utils import write_beep_wav_8k, write_greeting_jingle_wav_8k
+from backend.voice.audio_utils import (
+    MODEM_SAMPLE_RATE,
+    write_beep_wav_8k,
+    write_greeting_jingle_wav_8k,
+)
 
 
 def test_greeting_text_override():
@@ -28,14 +32,22 @@ def test_blocked_message_default():
 
 
 def test_ensure_voice_assets(tmp_path, monkeypatch):
+    import wave
+
     monkeypatch.chdir(tmp_path)
     config = Config()
     config.base_path = tmp_path
     ensure_default_voice_assets(config)
     beep = tmp_path / "resources" / "voice" / "system" / "beep.wav"
     assert beep.is_file()
-    intro = tmp_path / "resources" / "voice" / "intros" / "default.wav"
-    assert intro.is_file()
+    with wave.open(str(beep), "rb") as wf:
+        assert wf.getframerate() == MODEM_SAMPLE_RATE
+        assert wf.getsampwidth() == 2
+    blocked = tmp_path / "resources" / "voice" / "system" / "blocked_short.wav"
+    assert blocked.is_file()
+    with wave.open(str(blocked), "rb") as wf:
+        assert wf.getframerate() == MODEM_SAMPLE_RATE
+        assert wf.getsampwidth() == 2
     assert resolve_resource_path(config, "resources/voice/system/beep.wav") == beep.resolve()
 
 
@@ -68,15 +80,18 @@ def test_combine_modem_wav_files(tmp_path):
     assert out.stat().st_size > 1000
 
 
-def test_greeting_intro_jingle(tmp_path):
+def test_greeting_intro_jingle():
+    """Mode jingle : resout un MP3 MusicScreen du depot."""
+    repo_root = Path(__file__).resolve().parents[2]
     config = Config()
-    config.base_path = tmp_path
+    config.base_path = repo_root
     settings = load_incoming_call_settings(config)
     settings.audio.greeting_intro_mode = "jingle"
-    settings.audio.greeting_intro_variant = "sting_marimba"
+    settings.audio.greeting_intro_variant = "tesla"
     path = greeting_intro_path(config, settings.audio)
     assert path is not None
     assert path.is_file()
+    assert path.suffix.lower() == ".mp3"
     assert path.stat().st_size > 1000
 
 
@@ -151,13 +166,14 @@ def test_normalize_pcm_u8_buffer_boosts_quiet_signal():
     assert boosted_peak > quiet_peak
 
 
-def test_greeting_default_has_pauses():
+def test_greeting_default_natural_text():
     config = Config()
     settings = load_incoming_call_settings(config)
     settings.audio.greeting_tts_text = None
     config.voicemail_greeting = ""
     text = greeting_text(config, settings)
-    assert "break time" in text
+    assert "Bonjour" in text
+    assert "break" not in text.lower()
 
 
 def test_write_telecom_intro(tmp_path):

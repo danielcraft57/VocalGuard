@@ -11,6 +11,43 @@ from loguru import logger
 from backend.core.config import Config
 
 
+def _edge_voice_lang(voice: str) -> str:
+    """
+    Extrait la locale BCP-47 depuis un identifiant edge-tts.
+
+    @param voice Identifiant voix (ex. fr-FR-DeniseNeural).
+    @returns Locale pour l'enveloppe SSML.
+    """
+    parts = (voice or "fr-FR").split("-")
+    if len(parts) >= 2:
+        return f"{parts[0]}-{parts[1]}"
+    return "fr-FR"
+
+
+def _wrap_edge_ssml_if_needed(text: str, voice: str) -> str:
+    """
+    Enveloppe le texte dans <speak> si des balises SSML sont presentes.
+
+    @param text Texte brut ou fragment SSML.
+    @param voice Identifiant voix edge-tts (pour xml:lang).
+    @returns Texte pret pour edge_tts.Communicate.
+    """
+    speak_text = (text or "").strip()
+    if not speak_text:
+        return speak_text
+    lower = speak_text.lower()
+    if "<speak" in lower:
+        return speak_text
+    markers = ("<break", "<emphasis", "<prosody", "<say-as", "<phoneme", "<sub", "<voice")
+    if any(marker in lower for marker in markers):
+        lang = _edge_voice_lang(voice)
+        return (
+            '<speak version="1.0" xmlns="http://www.w3.org/2001/10/synthesis" '
+            f'xml:lang="{lang}">{speak_text}</speak>'
+        )
+    return speak_text
+
+
 class VoiceSynthesis:
     """Gère la synthèse vocale"""
     
@@ -167,8 +204,9 @@ class VoiceSynthesis:
             speech_pitch = pitch or getattr(self.config, "edge_tts_pitch", None) or "+0Hz"
             if not save_to_file:
                 save_to_file = self.cache_dir / f"temp_{hash(text)}.mp3"
+            speak_text = _wrap_edge_ssml_if_needed(text, voice)
             communicate = edge_tts.Communicate(
-                text,
+                speak_text,
                 voice,
                 rate=speech_rate,
                 pitch=speech_pitch,

@@ -4,11 +4,12 @@ Gestionnaire de modem pour la communication téléphonique.
 Supporte deux façons de jouer un WAV vers la ligne :
 - ALSA (aplay) : le modem expose une carte son, on joue sur ce device.
 - Mode voix série (comme callattendant) : commandes AT+FCLASS=8, AT+VTX puis envoi
-  des trames PCM 8-bit 8 kHz sur le port série ; le modem envoie l'audio sur la ligne.
+  des trames PCM (USR : 16-bit 11 kHz ; Conexant : 8-bit 8 kHz) sur le port série.
   Voir https://github.com/emxsys/callattendant (modem USR 5637 / Conexant).
 """
 
 import asyncio
+import concurrent.futures
 import errno
 import threading
 import time
@@ -16,21 +17,29 @@ import wave
 import re
 from functools import partial
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import serial
 from loguru import logger
 
 from backend.core.phone_cid import normalize_cid_value
-from backend.voice.audio_utils import pcm_u8_chunk_peak, wav_path_to_modem_pcm_u8
+from backend.voice.audio_utils import pcm_chunk_peak, wav_matches_modem_profile, wav_path_to_modem_pcm
+from backend.voice.modem_profile import (
+    CONEXANT_VOICE_PROFILE,
+    USR_FALLBACK_PROFILE,
+    USR_VOICE_PROFILE,
+    ModemVoiceProfile,
+    resolve_voice_profile,
+)
 
 # Mode voix (callattendant) : commandes AT pour jouer vers la ligne
 # Voir https://github.com/emxsys/callattendant (Bruce Schubert / emxsys)
 _VOICE_MODE = "AT+FCLASS=8"
 _VSD_DISABLE_USR = "AT+VSD=128,0"       # desactive detection silence (USR 5637)
 _VSD_DISABLE_CONEXANT = "AT+VSD=0,0"   # desactive detection silence (Zoom 3095 / Conexant)
-_VOICE_COMPRESSION_USR = "AT+VSM=128,8000"       # 8-bit linear, 8 kHz (USR 5637)
-_VOICE_COMPRESSION_CONEXANT = "AT+VSM=1,8000,0,0"  # 8-bit PCM, 8 kHz (Zoom 3095 / Conexant)
+_VOICE_COMPRESSION_USR = USR_VOICE_PROFILE.vsm_command
+_VOICE_COMPRESSION_USR_FALLBACK = USR_FALLBACK_PROFILE.vsm_command
+_VOICE_COMPRESSION_CONEXANT = CONEXANT_VOICE_PROFILE.vsm_command
 _TAD_OFF_HOOK = "AT+VLS=1"
 _VOICE_TX = "AT+VTX"
 _VOICE_RX = "AT+VRX"
@@ -38,14 +47,52 @@ _DLE = 0x10
 _DTE_END_VOICE_TX = (chr(16) + chr(3)).encode()  # DLE ETX (USR)
 _DTE_END_VOICE_TX_CONEXANT = (chr(16) * 3 + chr(3)).encode()   # DLE DLE DLE ETX (Conexant)
 _DTE_END_VOICE_RX_CONEXANT = (chr(16) * 3 + chr(33)).encode()   # DLE DLE DLE ! (Conexant)
-_VRX_SAMPLE_RATE = 8000
-_VRX_BYTES_PER_SEC = 8000  # 8 kHz, 8-bit mono
+_VRX_SAMPLE_RATE = USR_VOICE_PROFILE.sample_rate
+_VRX_BYTES_PER_SEC = USR_VOICE_PROFILE.bytes_per_sec
 _EXPECTED_FIRMWARE_HINT = "1.2.23"
 # Perception de ligne (preemption) : poll serie et attente reponse modem au RING.
 _MODEM_FAST_POLL_SEC = 0.005
 _MONITOR_SERIAL_TIMEOUT_SEC = 0.005
 _PREEMPT_AT_TIMEOUT_ATA_SEC = 0.40
 _PREEMPT_AT_TIMEOUT_VOICE_SEC = 0.18
+
+
+def _firmware_indicates_usr5637(firmware_ati3: Optional[str]) -> bool:
+    """
+    True si ATI3 correspond a un USR5637 (meme si ATI mentionne Conexant chipset).
+
+    @param firmware_ati3 Reponse brute ATI3.
+    @returns True pour U.S. Robotics / USR5637.
+    """
+    fw = (firmware_ati3 or "").upper()
+    return any(token in fw for token in ("ROBOTICS", "USR", "5637", "56K FAX"))
+
+
+def _detect_is_conexant_zoom(
+    response_ati: bytes,
+    response_ati0: bytes,
+    firmware_ati3: Optional[str],
+) -> bool:
+    """
+    Distingue Zoom/Conexant pur du USR5637 (chipset Conexant mais VSM USR).
+
+    @param response_ati Reponses ATI / ATI0.
+    @param response_ati0 Reponse ATI0.
+    @param firmware_ati3 Firmware ATI3.
+    @returns True uniquement pour modems style Zoom 3095 (VSM 1,8000,0,0).
+    """
+    if _firmware_indicates_usr5637(firmware_ati3):
+        return False
+    combined = (response_ati or b"") + (response_ati0 or b"")
+    upper = combined.upper()
+    return bool(
+        combined
+        and (
+            b"CONEXANT" in upper
+            or b"ZOOM" in upper
+            or b"3095" in upper
+        )
+    )
 
 
 def extract_incoming_dtmf_digit(line_str: str) -> Optional[str]:
@@ -83,8 +130,8 @@ def _escape_dle_pcm(data: bytes) -> bytes:
     return bytes(out)
 
 
-# Delai minimum apres ouverture VRX avant detection raccrochage (bip + marge ligne).
-_VRX_MIN_HANGUP_GRACE_SEC = 2.0
+# Delai minimum apres ouverture VRX avant detection raccrochage (settle ligne, pas 2s).
+_VRX_MIN_HANGUP_GRACE_SEC = 0.4
 
 
 def _vrx_text_has_hangup_marker(blob: bytes) -> bool:
@@ -109,8 +156,8 @@ def _vrx_dle_control_has_hangup_marker(blob: bytes) -> bool:
     """
     Marqueurs DLE V.253 (buffer controle uniquement, pas du PCM brut).
 
-    USR5637 : DLE-h = combine local raccroche, DLE-s = silence / fin presumee,
-    DLE-E / DLE ETX = fin de session voix.
+    USR5637 : DLE-h = raccrochage, DLE-E / DLE ETX = fin de session voix.
+    DLE-s (silence modem) n'est PAS un raccrochage : ca coupe les messages trop tot.
 
     @param blob Suite de paires DLE+code extraites du flux VRX.
     @returns True si fin de session voix / raccrochage.
@@ -122,13 +169,8 @@ def _vrx_dle_control_has_hangup_marker(blob: bytes) -> bool:
         or b"\x10\x10\x10\x03" in blob
         or b"\x10\x03" in blob
         or b"\x10!" in blob
-        or b"\x10s" in blob
-        or b"\x10S" in blob
         or b"\x10h" in blob
         or b"\x10H" in blob
-        or b"\x10b" in blob
-        or b"\x10d" in blob
-        or b"\x10e" in blob
     )
 
 
@@ -187,6 +229,86 @@ class _VrxHangupScanner:
         return False
 
 
+class _VrxDisconnectToneScanner:
+    """
+    Detecte 4 bips operateur en fin d'appel, pas de la parole.
+
+    Arme seulement apres un vrai silence, puis compte des bursts COURTS et
+    reguliers. Un son long (syllabe / phrase) reinitialise le compteur.
+    """
+
+    def __init__(
+        self,
+        *,
+        threshold: int,
+        min_beeps: int = 4,
+        sample_rate: int = 8000,
+        min_pre_silence_sec: float = 0.45,
+        min_burst_sec: float = 0.05,
+        max_burst_sec: float = 0.38,
+        min_gap_sec: float = 0.07,
+        max_gap_sec: float = 0.55,
+    ) -> None:
+        self._threshold = max(1, int(threshold))
+        self._min_beeps = max(2, int(min_beeps))
+        self._sample_rate = max(1000, int(sample_rate))
+        self._min_pre_silence_sec = min_pre_silence_sec
+        self._min_burst_sec = min_burst_sec
+        self._max_burst_sec = max_burst_sec
+        self._min_gap_sec = min_gap_sec
+        self._max_gap_sec = max_gap_sec
+        self._armed = False
+        self._beeps = 0
+        self._loud_sec = 0.0
+        self._quiet_sec = 0.0
+        self._gap_sec = 0.0
+
+    def feed(self, raw: bytes, *, sample_width: int) -> bool:
+        """
+        Ingere un bloc VRX et cherche une cadence type 4 bips.
+
+        @param raw Octets PCM du flux VRX.
+        @param sample_width 1 = u8, 2 = s16le.
+        @returns True si 4 bips courts consecutifs apres silence.
+        """
+        if not raw:
+            return False
+        n_samples = len(raw) // max(1, int(sample_width))
+        dur = n_samples / float(self._sample_rate)
+        if dur <= 0:
+            return False
+        peak = pcm_chunk_peak(raw, sample_width=sample_width)
+        loud = peak >= self._threshold
+        if loud:
+            self._quiet_sec = 0.0
+            self._loud_sec += dur
+            if self._loud_sec > self._max_burst_sec:
+                self._beeps = 0
+                self._armed = False
+                self._gap_sec = 0.0
+            return False
+        if self._loud_sec > 0:
+            burst = self._loud_sec
+            gap = self._gap_sec
+            self._loud_sec = 0.0
+            self._gap_sec = 0.0
+            short_ok = self._min_burst_sec <= burst <= self._max_burst_sec
+            gap_ok = self._beeps == 0 or (self._min_gap_sec <= gap <= self._max_gap_sec)
+            if self._armed and short_ok and gap_ok:
+                self._beeps += 1
+                if self._beeps >= self._min_beeps:
+                    return True
+            else:
+                self._beeps = 0
+        self._quiet_sec += dur
+        self._gap_sec += dur
+        if self._quiet_sec >= self._min_pre_silence_sec:
+            self._armed = True
+        if self._beeps > 0 and self._gap_sec > self._max_gap_sec:
+            self._beeps = 0
+        return False
+
+
 # Alias et helpers exposés pour tests sans matériel (scripts/modem_lab/tests/test_modem_handler_smoke.py).
 _vrx_stream_contains_hangup_marker = _vrx_buffer_has_hangup_marker
 
@@ -226,6 +348,8 @@ class ModemHandler:
         self.serial_connection: Optional[serial.Serial] = None
         self.is_initialized = False
         self._is_conexant = False  # True si modem Conexant (Zoom 3095, etc.)
+        self.preferred_vsm: Optional[str] = None
+        self.voice_profile: ModemVoiceProfile = USR_VOICE_PROFILE
         self.on_incoming_call: Optional[callable] = None  # Callback pour les appels entrants
         self._serial_io_lock = asyncio.Lock()
         self._serial_sync_lock = threading.RLock()
@@ -272,13 +396,44 @@ class ModemHandler:
         self._early_greeting_pending: bool = False
         # Raison du dernier arret VRX (hangup_marker, silence, timeout, ...).
         self.last_vrx_stop_reason: Optional[str] = None
+        self.last_vrx_heard_speech: bool = False
+        self._vtx_event_scanner: Optional[_VrxHangupScanner] = None
         # Secondes max apres RING avant VLS=1 (laisse passer NMBR= ETSI).
         self.instant_seize_cid_grace_sec: float = 0.35
         # Attente DTMF entrant (gate anti-robots).
         self._dtmf_wait_expected: Optional[str] = None
         self._dtmf_last_digit: Optional[str] = None
         self._dtmf_event: Optional[asyncio.Event] = None
-    
+        self._modem_sync_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="modem_sync",
+        )
+
+    async def run_modem_sync(self, fn, *args, timeout: float = 3.0):
+        """
+        Execute une operation serie synchrone sur un seul thread dedie.
+
+        Evite la saturation du pool asyncio par des ATH/VRX bloques en parallele.
+
+        @param fn Callable synchrone (methode modem).
+        @param args Arguments positionnels pour fn.
+        @param timeout Delai max secondes.
+        @returns Valeur retournee par fn.
+        @raises asyncio.TimeoutError Si l'operation depasse timeout (reset port en secours).
+        """
+        loop = asyncio.get_running_loop()
+        if args:
+            call = partial(fn, *args)
+        else:
+            call = fn
+        fut = loop.run_in_executor(self._modem_sync_executor, call)
+        try:
+            return await asyncio.wait_for(fut, timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.warning("[MODEM] run_modem_sync timeout ({:.1f}s) — reset port", timeout)
+            threading.Thread(target=self._force_serial_reset_sync, daemon=True).start()
+            raise
+
     async def detect_modem(self) -> Optional[str]:
         """
         Détecte automatiquement le port du modem
@@ -384,19 +539,32 @@ class ModemHandler:
                         _EXPECTED_FIRMWARE_HINT,
                     )
             combined = (response_ati or b"") + (response_ati0 or b"")
-            self._is_conexant = bool(
-                combined
-                and (
-                    b"Conexant" in combined
-                    or b"CONEXANT" in combined
-                    or b"5601" in combined
-                    or b"56000" in combined
-                )
+            self._is_conexant = _detect_is_conexant_zoom(
+                response_ati or b"",
+                response_ati0 or b"",
+                self.firmware_ati3,
             )
             if self._is_conexant:
-                logger.info("Modem Conexant/USR detecte (mode voix serie disponible)")
+                logger.info("Modem Conexant/Zoom detecte (mode voix serie 8 kHz u8)")
+            elif _firmware_indicates_usr5637(self.firmware_ati3):
+                logger.info("Modem USR5637 detecte (mode voix serie 11 kHz s16)")
             else:
-                logger.info("Modem detecte (type non identifie). Reponses ATI: {}", combined.decode("utf-8", errors="ignore").strip() or "(vide)")
+                logger.info(
+                    "Modem detecte (type non identifie). Reponses ATI: {}",
+                    combined.decode("utf-8", errors="ignore").strip() or "(vide)",
+                )
+            self.voice_profile = resolve_voice_profile(
+                is_conexant=self._is_conexant,
+                vsm_spec=self.preferred_vsm,
+            )
+            logger.info(
+                "Profil voix modem: {} ({}, {} Hz, {}-bit, {})",
+                self.voice_profile.name,
+                self.voice_profile.vsm_command,
+                self.voice_profile.sample_rate,
+                self.voice_profile.sample_width * 8,
+                self.voice_profile.ffmpeg_codec,
+            )
 
             self.is_initialized = True
             self.last_error = None
@@ -423,53 +591,122 @@ class ModemHandler:
                 pass
             self.serial_connection = None
 
-    async def reconnect(self) -> bool:
+    def _close_serial_unsafe(self) -> None:
+        """Ferme le port sans verrou (debloque un thread sync bloque en lecture)."""
+        conn = self.serial_connection
+        self.serial_connection = None
+        if conn:
+            try:
+                if conn.is_open:
+                    conn.close()
+            except (OSError, serial.SerialException):
+                pass
+
+    def _force_serial_reset_sync(self) -> None:
+        """
+        Coupe le port serie sans ATH (debloque un hangup sync ou thread orphelin).
+
+        @returns None
+        """
+        self._voice_abort = True
+        self._vtx_active = False
+        self._close_serial_unsafe()
+        self._reset_voice_session_flags()
+        self.log_voice_session("force_serial_reset")
+
+    def _fast_cleanup_after_remote_hangup_sync(self) -> bool:
+        """
+        Nettoyage court quand l'appelant a deja raccroche (evite ATH bloque sur PCM).
+
+        @returns True si le port est pret pour la surveillance RING.
+        """
+        self._voice_abort = True
+        self.log_voice_session("fast_cleanup_debut")
+        if not self.serial_connection or not self.serial_connection.is_open:
+            self._reset_voice_session_flags()
+            self.log_voice_session("fast_cleanup_ok", port=0)
+            return True
+        try:
+            if self._vtx_active:
+                end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
+                self.serial_connection.write(end_seq)
+                self.serial_connection.flush()
+                time.sleep(0.05)
+                self._vtx_active = False
+            self._flush_serial_rx_sync(max_sec=0.15)
+            ok = self._send_command_sync("AT+FCLASS=0", timeout=1.0)
+            self._send_command_sync("AT+VCID=1", timeout=1.0)
+            self._reset_voice_session_flags()
+            self.log_voice_session("fast_cleanup_ok", fclass=int(ok))
+            return ok
+        except (OSError, serial.SerialException) as exc:
+            logger.warning("[MODEM] fast_cleanup: {}", exc)
+            self._close_serial_unsafe()
+            self._reset_voice_session_flags()
+            return False
+
+    async def reconnect(self, *, attempts: int = 6) -> bool:
         """
         Ferme et rouvre le port série après une erreur I/O (EIO).
         Réapplique les commandes AT minimales (AT, ATE0, AT+VCID=1).
         Retourne True si la reconnexion a réussi.
+
+        @param attempts Nombre de tentatives (reset USB peut prendre quelques secondes).
         """
         from pathlib import Path
 
-        async with self._serial_io_lock:
-            self._close_serial()
-        try:
-            await asyncio.sleep(0.5)
-            # Apres reset USB le noeud peut passer de ttyACM0 a ttyACM1.
-            port = self.port
-            if not port or not Path(port).exists():
-                detected = await self.detect_modem()
-                if not detected:
-                    logger.warning("Modem reconnexion: aucun port serie trouve")
-                    return False
-                logger.info("Modem reconnexion: port mis a jour {} -> {}", port, detected)
-                self.port = detected
-                port = detected
-            async with self._serial_io_lock:
-                self.serial_connection = serial.Serial(
-                    port,
-                    self.baudrate,
-                    timeout=1,
-                    write_timeout=1,
-                )
-            await asyncio.sleep(0.8)
-            await self.send_command("AT", _retry=False)
-            await self.send_command("ATE0", _retry=False)
-            await self.send_command("AT+FCLASS=0", _retry=False)
-            await self.send_command("AT+VCID=1", _retry=False)
-            try:
-                async with self._serial_io_lock:
-                    if self.serial_connection and self.serial_connection.is_open:
-                        self.serial_connection.timeout = 0.05
-            except (OSError, serial.SerialException):
-                pass
-            logger.info("Modem reconnexion reussie sur {}", self.port)
-            return True
-        except Exception as e:
-            logger.warning("Modem reconnexion echouee: {}", e)
+        last_error: Optional[Exception] = None
+        for attempt in range(max(1, attempts)):
             async with self._serial_io_lock:
                 self._close_serial()
-            return False
+            try:
+                await asyncio.sleep(0.4 + 0.35 * attempt)
+                port = self.port
+                if not port or not Path(port).exists():
+                    detected = await self.detect_modem()
+                    if not detected:
+                        logger.warning(
+                            "Modem reconnexion: aucun port serie (tentative {}/{})",
+                            attempt + 1,
+                            attempts,
+                        )
+                        continue
+                    logger.info("Modem reconnexion: port mis a jour {} -> {}", port, detected)
+                    self.port = detected
+                    port = detected
+                async with self._serial_io_lock:
+                    self.serial_connection = serial.Serial(
+                        port,
+                        self.baudrate,
+                        timeout=1,
+                        write_timeout=1,
+                    )
+                await asyncio.sleep(0.6)
+                await self.send_command("AT", _retry=False)
+                await self.send_command("ATE0", _retry=False)
+                await self.send_command("AT+FCLASS=0", _retry=False)
+                await self.send_command("AT+VCID=1", _retry=False)
+                try:
+                    async with self._serial_io_lock:
+                        if self.serial_connection and self.serial_connection.is_open:
+                            self.serial_connection.timeout = 0.05
+                except (OSError, serial.SerialException):
+                    pass
+                logger.info("Modem reconnexion reussie sur {}", self.port)
+                return True
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "Modem reconnexion echouee (tentative {}/{}): {}",
+                    attempt + 1,
+                    attempts,
+                    e,
+                )
+                async with self._serial_io_lock:
+                    self._close_serial()
+        if last_error:
+            logger.warning("Modem reconnexion abandonnee: {}", last_error)
+        return False
     
     async def send_command(self, command: str, timeout: float = 2.0, _retry: bool = True) -> bytes:
         """
@@ -578,6 +815,10 @@ class ModemHandler:
             "last_error": self.last_error,
             "vtx_active": bool(self._vtx_active),
             "outgoing_owns_serial": bool(self._outgoing_owns_serial),
+            "voice_vsm": self.voice_profile.vsm_command,
+            "voice_sample_rate": self.voice_profile.sample_rate,
+            "voice_sample_width": self.voice_profile.sample_width,
+            "modem_baudrate": self.baudrate,
         }
 
     def _flush_serial_rx_sync(self, max_sec: float = 0.12) -> None:
@@ -614,11 +855,7 @@ class ModemHandler:
             vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
             self._send_command_sync(vsd)
             self._apply_voice_gains_sync()
-            if self._is_conexant:
-                if not self._send_command_sync(_VOICE_COMPRESSION_USR):
-                    self._send_command_sync(_VOICE_COMPRESSION_CONEXANT)
-            else:
-                self._send_command_sync(_VOICE_COMPRESSION_USR)
+            self._apply_vsm_sync()
             self._voice_line_ready = True
         except Exception as exc:
             logger.debug("configure_voice_after_seize: {}", exc)
@@ -631,7 +868,7 @@ class ModemHandler:
         """
         loop = asyncio.get_event_loop()
         async with self._serial_io_lock:
-            await loop.run_in_executor(None, self._prepare_voice_line_after_seize_sync)
+            await self.run_modem_sync(self._prepare_voice_line_after_seize_sync, timeout=5.0)
 
     def _prepare_voice_line_after_seize_sync(self) -> None:
         """Version synchrone de ``prepare_voice_line_after_seize`` (sous lock)."""
@@ -645,9 +882,36 @@ class ModemHandler:
         if self.voice_vgt is not None:
             self._send_command_sync(f"AT+VGT={int(self.voice_vgt)}")
 
+    def _apply_vsm_sync(self) -> bool:
+        """
+        Envoie AT+VSM du profil actif, avec fallback USR 8 kHz / 8-bit.
+
+        @returns True si une commande VSM a ete acceptee.
+        """
+        cmd = self.voice_profile.vsm_command
+        if self._send_command_sync(cmd):
+            return True
+        if self._is_conexant:
+            ok = self._send_command_sync(_VOICE_COMPRESSION_CONEXANT)
+            if ok:
+                self.voice_profile = CONEXANT_VOICE_PROFILE
+            return ok
+        if cmd != _VOICE_COMPRESSION_USR_FALLBACK and self._send_command_sync(
+            _VOICE_COMPRESSION_USR_FALLBACK
+        ):
+            logger.warning(
+                "VSM {} refuse, fallback {}",
+                cmd,
+                _VOICE_COMPRESSION_USR_FALLBACK,
+            )
+            self.voice_profile = USR_FALLBACK_PROFILE
+            return True
+        logger.warning("VSM echoue: {}", cmd)
+        return False
+
     def _peek_serial_interrupt_sync(self) -> bool:
         """
-        Lit le buffer serie pendant VTX : hangup / pickup parallele.
+        Lit le buffer serie pendant VTX : hangup distant (pas les RING).
 
         @returns True si il faut couper le playback.
         """
@@ -658,12 +922,22 @@ class ModemHandler:
         try:
             if self.serial_connection.in_waiting <= 0:
                 return False
-            blob = self.serial_connection.read(self.serial_connection.in_waiting)
+            blob = self.serial_connection.read(min(self.serial_connection.in_waiting, 512))
         except (OSError, serial.SerialException):
             return False
         if not blob:
             return False
-        # Sonneries suivantes (ligne FR) : pas un raccrochage.
+        return self._blob_means_vtx_hangup(blob)
+
+    def _blob_means_vtx_hangup(self, blob: bytes) -> bool:
+        """
+        True si des octets RX pendant VTX indiquent un raccrochage (pas un RING).
+
+        @param blob Donnees lues sur le port pendant l'accueil.
+        @returns True pour couper VTX.
+        """
+        if not blob:
+            return False
         upper = blob.upper()
         if b"RING" in upper:
             ring_only = upper.replace(b"RING", b"").replace(b"\r", b"").replace(b"\n", b"").strip()
@@ -672,16 +946,47 @@ class ModemHandler:
             blob = re.sub(rb"RING[\r\n]*", b"", blob, flags=re.IGNORECASE)
             if not blob.strip():
                 return False
-        if _vrx_buffer_has_hangup_marker(blob) or _serial_buffer_shows_remote_pickup(blob):
-            logger.info("Playback interrompu (evenement ligne pendant VTX)")
+        scanner = self._vtx_event_scanner
+        if scanner is None:
+            scanner = _VrxHangupScanner()
+            self._vtx_event_scanner = scanner
+        if scanner.feed(blob) or _vrx_text_has_hangup_marker(blob):
+            logger.info("Playback interrompu (raccrochage pendant VTX)")
             self._playback_interrupted = True
+            self.last_vrx_stop_reason = "hangup_marker"
             return True
-        # DLE + h / H = local hangup (tel parallele) sur beaucoup de firmwares V.253
-        if b"\x10h" in blob or b"\x10H" in blob:
-            logger.info("Playback interrompu (DLE hook local pendant VTX)")
+        if _serial_buffer_shows_remote_pickup(blob):
+            logger.info("Playback interrompu (decroche parallele pendant VTX)")
             self._playback_interrupted = True
             return True
         return False
+
+    def _drain_rx_check_hangup_sync(self) -> bool:
+        """
+        Vide le RX apres VTX et detecte un raccrochage arrive pendant l'accueil.
+
+        @returns True si raccrochage distant vu dans le reliquat serie.
+        """
+        if not self.serial_connection or not self.serial_connection.is_open:
+            return bool(self._playback_interrupted)
+        leftover = b""
+        try:
+            deadline = time.monotonic() + 0.25
+            while time.monotonic() < deadline:
+                pending = 0
+                try:
+                    pending = self.serial_connection.in_waiting
+                except (OSError, serial.SerialException):
+                    break
+                if pending <= 0:
+                    time.sleep(0.02)
+                    continue
+                leftover += self.serial_connection.read(min(pending, 1024))
+        except (OSError, serial.SerialException):
+            leftover = b""
+        if leftover and self._blob_means_vtx_hangup(leftover):
+            return True
+        return bool(self._playback_interrupted)
 
     async def answer_call(self, fast_voice_seize: bool = False) -> Tuple[bool, Optional[str], Optional[str]]:
         """
@@ -750,8 +1055,9 @@ class ModemHandler:
             logger.info("Decrochage rapide entrant (ATA + mode voix)")
             loop = asyncio.get_event_loop()
             async with self._serial_io_lock:
-                ok = await loop.run_in_executor(
-                    None, lambda: self._voice_seize_sync_unlocked(fast=True)
+                ok = await self.run_modem_sync(
+                    lambda: self._voice_seize_sync_unlocked(fast=True),
+                    timeout=6.0,
                 )
             self._incoming_seize_ok = bool(ok)
             if not ok:
@@ -769,23 +1075,42 @@ class ModemHandler:
     async def hangup(self) -> bool:
         """
         Raccroche l'appel. Sort d'abord du mode voix transparent si besoin, sinon ATH
-        lit du PCM et rate. En cas d'erreur I/O, tente une reconnexion puis renvoie ATH.
+        lit du PCM et rate. Timeout court + reset port si blocage.
         """
+        self.log_voice_session("hangup_debut")
+        self._voice_abort = True
+        loop = asyncio.get_event_loop()
+        acquired = False
         try:
-            loop = asyncio.get_event_loop()
-            async with self._serial_io_lock:
-                ok = await loop.run_in_executor(None, self._force_hangup_sync)
-            return ok
+            try:
+                await asyncio.wait_for(self._serial_io_lock.acquire(), timeout=2.0)
+                acquired = True
+            except asyncio.TimeoutError:
+                logger.warning("[MODEM] hangup: verrou serie occupe — reset port")
+                await self.run_modem_sync(self._force_serial_reset_sync, timeout=1.0)
+                self.log_voice_session("hangup_fin", ok=0, lock_timeout=1)
+                return False
+            try:
+                ok = await self.run_modem_sync(self._force_hangup_sync, timeout=4.0)
+                self.log_voice_session("hangup_fin", ok=int(bool(ok)))
+                return bool(ok)
+            except asyncio.TimeoutError:
+                logger.warning("[MODEM] hangup sync timeout — reset port")
+                self.log_voice_session("hangup_fin", ok=0, sync_timeout=1)
+                return False
+            finally:
+                if acquired:
+                    self._serial_io_lock.release()
         except (OSError, serial.SerialException, RuntimeError) as e:
             if getattr(e, "errno", None) == errno.EIO or isinstance(e, serial.SerialException):
                 logger.warning("EIO au raccrochage, reconnexion puis nouvel essai ATH")
+                try:
+                    await self.run_modem_sync(self._force_serial_reset_sync, timeout=1.0)
+                except Exception:
+                    pass
                 if await self.reconnect():
-                    try:
-                        loop = asyncio.get_event_loop()
-                        async with self._serial_io_lock:
-                            return await loop.run_in_executor(None, self._force_hangup_sync)
-                    except Exception:
-                        pass
+                    self.log_voice_session("hangup_fin", ok=0, reconnected=1)
+                    return False
             logger.error("Erreur lors du raccrochage: {}", e)
             return False
         except Exception as e:
@@ -799,81 +1124,101 @@ class ModemHandler:
         @returns True si OK vu dans la reponse.
         """
         self._voice_abort = True
-        if not self.serial_connection or not self.serial_connection.is_open:
-            return False
-        try:
-            if self._vtx_active:
+        self.log_voice_session("force_ath_debut")
+        with self._serial_sync_lock:
+            if not self.serial_connection or not self.serial_connection.is_open:
+                return False
+            try:
+                if self._vtx_active:
+                    try:
+                        end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
+                        self.serial_connection.write(end_seq)
+                        self.serial_connection.flush()
+                        time.sleep(0.08)
+                    except (OSError, serial.SerialException):
+                        pass
+                    self._vtx_active = False
+                self._vrx_transparent_close_sync()
                 try:
-                    end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
-                    self.serial_connection.write(end_seq)
-                    self.serial_connection.flush()
-                    time.sleep(0.08)
+                    if self._vrx_saved_timeout is not None:
+                        self.serial_connection.timeout = self._vrx_saved_timeout
                 except (OSError, serial.SerialException):
                     pass
-                self._vtx_active = False
-            self._vrx_transparent_close_sync()
-            try:
-                if self._vrx_saved_timeout is not None:
-                    self.serial_connection.timeout = self._vrx_saved_timeout
-            except (OSError, serial.SerialException):
-                pass
-            self._vrx_saved_timeout = None
-            self._flush_serial_rx_sync(max_sec=0.35)
-            time.sleep(0.08)
+                self._vrx_saved_timeout = None
+                self._flush_serial_rx_sync(max_sec=0.55)
+                time.sleep(0.1)
 
-            def _ath_once() -> bytes:
-                self.serial_connection.write(b"ATH\r\n")
-                self.serial_connection.flush()
-                deadline = time.monotonic() + 2.5
-                buf = b""
-                while time.monotonic() < deadline:
-                    if self.serial_connection.in_waiting > 0:
-                        buf += self.serial_connection.read(self.serial_connection.in_waiting)
-                        if b"OK" in buf or b"ERROR" in buf:
-                            break
-                    time.sleep(0.05)
-                return buf
+                def _ath_once() -> bytes:
+                    self.serial_connection.write(b"ATH\r\n")
+                    self.serial_connection.flush()
+                    deadline = time.monotonic() + 2.0
+                    buf = b""
+                    max_buf = 1536
+                    while time.monotonic() < deadline:
+                        if self.serial_connection.in_waiting > 0:
+                            buf += self.serial_connection.read(
+                                min(512, self.serial_connection.in_waiting)
+                            )
+                            if b"OK" in buf or b"ERROR" in buf:
+                                break
+                            if len(buf) >= max_buf:
+                                break
+                        time.sleep(0.05)
+                    return buf
 
-            resp = _ath_once()
-            if b"OK" in resp:
+                resp = _ath_once()
+                if b"OK" in resp:
+                    try:
+                        self._send_command_sync("AT+FCLASS=0")
+                        self._send_command_sync("AT+VCID=1")
+                    except Exception:
+                        pass
+                    self._reset_voice_session_flags()
+                    self.log_voice_session("force_ath_ok", essai=1)
+                    return True
+                logger.warning(
+                    "ATH reponse suspecte ({} o), abandon rapide",
+                    len(resp),
+                )
+                try:
+                    self._send_command_sync("AT+FCLASS=0", timeout=1.0)
+                    self._send_command_sync("AT+VCID=1", timeout=1.0)
+                except Exception:
+                    pass
+                self._reset_voice_session_flags()
+                self.log_voice_session("force_ath_fin", ok=0, essai=1, resp_len=len(resp))
+                return False
+            except Exception as e:
+                logger.warning("[MODEM] force_hangup: {}", e)
                 try:
                     self._send_command_sync("AT+FCLASS=0")
                     self._send_command_sync("AT+VCID=1")
                 except Exception:
                     pass
                 self._reset_voice_session_flags()
-                return True
-            # Reponse polluee par du PCM : re-drain + 2e ATH.
-            logger.warning(
-                "ATH reponse suspecte ({} o), nouvel essai apres drain",
-                len(resp),
-            )
+                return False
+
+    def _abort_voice_session_sync(self) -> None:
+        """
+        Coupe VTX/VRX transparent avant ATH (raccrochage UI / release).
+
+        Evite de laisser le modem en flux PCM binaire qui bloque les commandes AT.
+        """
+        self._voice_abort = True
+        self._playback_interrupted = True
+        if not self.serial_connection or not self.serial_connection.is_open:
+            return
+        try:
+            if self._vtx_active:
+                end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
+                self.serial_connection.write(end_seq)
+                self.serial_connection.flush()
+                time.sleep(0.06)
+                self._vtx_active = False
             self._vrx_transparent_close_sync()
-            time.sleep(0.15)
-            try:
-                while self.serial_connection.in_waiting > 0:
-                    self.serial_connection.read(min(4096, self.serial_connection.in_waiting))
-            except (OSError, serial.SerialException):
-                pass
-            resp2 = _ath_once()
-            ok = b"OK" in resp2
-            # Remettre le modem en veille data + CID (evite de rester bloque en voix).
-            try:
-                self._send_command_sync("AT+FCLASS=0")
-                self._send_command_sync("AT+VCID=1")
-            except Exception:
-                pass
-            self._reset_voice_session_flags()
-            return ok
-        except Exception as e:
-            logger.warning("force_hangup: {}", e)
-            try:
-                self._send_command_sync("AT+FCLASS=0")
-                self._send_command_sync("AT+VCID=1")
-            except Exception:
-                pass
-            self._reset_voice_session_flags()
-            return False
+            self._flush_serial_rx_sync(max_sec=0.25)
+        except (OSError, serial.SerialException) as exc:
+            logger.warning("_abort_voice_session_sync: {}", exc)
 
     def _reset_voice_session_flags(self) -> None:
         """Remet a zero les flags voix entre deux appels."""
@@ -881,6 +1226,45 @@ class ModemHandler:
         self._playback_interrupted = False
         self._voice_line_ready = False
         self._vtx_ignore_interrupt_until = 0.0
+
+    def voice_session_diag(self) -> dict[str, Any]:
+        """
+        Etat voix modem pour logs [MODEM] / [APPEL].
+
+        @returns Dictionnaire serialisable (entiers / chaines courtes).
+        """
+        return {
+            "vtx": int(self._vtx_active),
+            "seize": int(self._incoming_line_seized),
+            "seize_ok": int(self._incoming_seize_ok),
+            "line_ready": int(self._voice_line_ready),
+            "greeting_played": int(self._greeting_played_on_seize),
+            "abort": int(self._voice_abort),
+            "outgoing": int(self._outgoing_owns_serial),
+            "early_pending": int(self._early_greeting_pending),
+            "vrx_reason": self.last_vrx_stop_reason or "-",
+        }
+
+    def log_voice_session(self, tag: str, *, level: str = "info", **extra: Any) -> None:
+        """
+        Journalise l'etat voix courant (grep [MODEM]).
+
+        @param tag Etiquette courte (ex. hangup_debut, VTX_fin).
+        @param level Niveau loguru (info, warning, ...).
+        @param extra Paires cle=valeur supplementaires.
+        """
+        diag = self.voice_session_diag()
+        parts = [
+            f"tag={tag}",
+            f"vtx={diag['vtx']}",
+            f"seize={diag['seize']}/{diag['seize_ok']}",
+            f"line={diag['line_ready']}",
+            f"abort={diag['abort']}",
+            f"vrx_stop={diag['vrx_reason']}",
+        ]
+        for key, value in extra.items():
+            parts.append(f"{key}={value}")
+        getattr(logger, level)("[MODEM] {}", " ".join(parts))
 
     @staticmethod
     def _normalize_phone_for_command(phone_number: str) -> str:
@@ -1030,7 +1414,7 @@ class ModemHandler:
     def _play_wav_serial_impl(self, wav_path: Path, already_in_voice_mode: bool = False) -> bool:
         """
         Joue un WAV vers la ligne via le mode voix (port série).
-        WAV attendu : 8 kHz, mono, 8-bit ou 16-bit (converti en 8-bit).
+        WAV converti au profil actif (USR 16-bit / 11 kHz ou Conexant 8-bit / 8 kHz).
         Si already_in_voice_mode=True (ex. apres answer_call en mode voix), on ne renvoie pas
         FCLASS=8 ni VLS=1 pour eviter de faire raccrocher le modem.
         """
@@ -1039,31 +1423,33 @@ class ModemHandler:
             return False
         try:
             try:
-                pcm_u8 = wav_path_to_modem_pcm_u8(wav_path, normalize=True)
+                pcm = wav_path_to_modem_pcm(
+                    wav_path,
+                    profile=self.voice_profile,
+                    normalize=not wav_matches_modem_profile(wav_path, profile=self.voice_profile),
+                )
             except Exception as conv_exc:
                 logger.warning("Conversion WAV modem echouee ({}), lecture brute", conv_exc)
-                pcm_u8 = b""
+                pcm = b""
                 with wave.open(str(wav_path), "rb") as wf:
                     nch, sampwidth, framerate = wf.getnchannels(), wf.getsampwidth(), wf.getframerate()
                     logger.info("WAV: {} Hz, {} canaux, {} bit", framerate, nch, sampwidth * 8)
-                    if framerate != 8000:
-                        logger.warning("WAV non 8 kHz ({} Hz), le modem peut mal jouer", framerate)
                     raw = wf.readframes(wf.getnframes())
-                    if sampwidth == 2:
-                        pcm_u8 = bytearray()
-                        for i in range(0, len(raw), 2):
-                            sample = int.from_bytes(raw[i : i + 2], "little", signed=True)
-                            pcm_u8.append(max(0, min(255, (sample >> 8) + 128)))
-                        pcm_u8 = bytes(pcm_u8)
-                    elif sampwidth == 1:
-                        pcm_u8 = raw
-            if not pcm_u8:
+                    if sampwidth == self.voice_profile.sample_width and nch == 1:
+                        pcm = raw
+            if not pcm:
                 logger.warning("play_wav_serial: aucun echantillon audio")
                 return False
-            peak_u8 = max((abs(b - 128) for b in pcm_u8), default=0)
-            logger.info("play_wav_serial: peak PCM u8={} (fichier {})", peak_u8, wav_path.name)
-            if peak_u8 < 8:
-                logger.warning("play_wav_serial: niveau tres faible (peak u8={})", peak_u8)
+            peak = pcm_chunk_peak(pcm, sample_width=self.voice_profile.sample_width)
+            logger.info(
+                "play_wav_serial: peak PCM={} width={} (fichier {})",
+                peak,
+                self.voice_profile.sample_width,
+                wav_path.name,
+            )
+            min_peak = 8 if self.voice_profile.sample_width == 1 else 400
+            if peak < min_peak:
+                logger.warning("play_wav_serial: niveau tres faible (peak={})", peak)
             voice_ready = bool(already_in_voice_mode and self._voice_line_ready)
             if not already_in_voice_mode:
                 if not self._send_command_sync(_VOICE_MODE):
@@ -1073,18 +1459,8 @@ class ModemHandler:
                 vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
                 self._send_command_sync(vsd)
                 self._apply_voice_gains_sync()
-                if self._is_conexant:
-                    vsm_ok = self._send_command_sync(_VOICE_COMPRESSION_USR)
-                    if not vsm_ok:
-                        vsm_ok = self._send_command_sync(_VOICE_COMPRESSION_CONEXANT)
-                        if not vsm_ok:
-                            logger.warning(
-                                "play_wav_serial: VSM USR et Conexant ont echoue, on tente quand meme VTX"
-                            )
-                else:
-                    vsm_ok = self._send_command_sync(_VOICE_COMPRESSION_USR)
-                    if not vsm_ok:
-                        logger.warning("play_wav_serial: AT+VSM=128,8000 a echoue, on tente quand meme VTX")
+                if not self._apply_vsm_sync():
+                    logger.warning("play_wav_serial: VSM a echoue, on tente quand meme VTX")
                 self._voice_line_ready = True
             if not already_in_voice_mode:
                 if not self._send_command_sync(_TAD_OFF_HOOK):
@@ -1099,24 +1475,34 @@ class ModemHandler:
                 return False
             self._vtx_active = True
             self._playback_interrupted = False
-            # Accueil long : ignorer RING / bruit RX pendant le debut du VTX.
-            greet_sec = max(0.0, len(pcm_u8) / float(_VRX_SAMPLE_RATE))
-            self._vtx_ignore_interrupt_until = time.monotonic() + min(8.0, max(1.5, greet_sec * 0.35))
+            self._vtx_event_scanner = _VrxHangupScanner()
+            # Court delai pour ignorer un RING residuel, PAS tout l'accueil :
+            # sinon un raccrochage pendant l'annonce n'est jamais vu.
+            self._vtx_ignore_interrupt_until = time.monotonic() + 0.4
             self._flush_serial_rx_sync()
-            logger.info("Lecture WAV vers ligne (VTX), {} octets PCM 8 kHz", len(pcm_u8))
-            if not self._vtx_write_pcm_paced_monotonic_sync(pcm_u8):
+            logger.info(
+                "Lecture WAV vers ligne (VTX), {} octets PCM {} Hz {}-bit",
+                len(pcm),
+                self.voice_profile.sample_rate,
+                self.voice_profile.sample_width * 8,
+            )
+            if not self._vtx_write_pcm_paced_monotonic_sync(pcm):
                 self._playback_interrupted = True
             end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
             self.serial_connection.write(end_seq)
             self.serial_connection.flush()
             self._vtx_active = False
-            time.sleep(0.12)
-            try:
-                while self.serial_connection.in_waiting > 0:
-                    self.serial_connection.read(self.serial_connection.in_waiting)
-            except (OSError, serial.SerialException):
-                pass
-            return not self._playback_interrupted
+            time.sleep(0.08)
+            if self._drain_rx_check_hangup_sync():
+                self._playback_interrupted = True
+            interrupted = bool(self._playback_interrupted)
+            self.log_voice_session(
+                "VTX_fin",
+                fichier=wav_path.name,
+                octets=len(pcm),
+                interrupted=int(interrupted),
+            )
+            return not interrupted
         except Exception as e:
             self._vtx_active = False
             logger.exception("Erreur lecture WAV via serie: {}", e)
@@ -1180,6 +1566,8 @@ class ModemHandler:
         if not self._is_conexant:
             logger.warning("record_wav_serial: modem non Conexant, VRX non garanti")
         self.last_vrx_stop_reason = None
+        self.last_vrx_heard_speech = False
+        vrx_opened = False
         try:
             if not already_in_voice_mode:
                 if not self._send_command_sync(_VOICE_MODE):
@@ -1189,19 +1577,8 @@ class ModemHandler:
             # provoque des resets USB ACM sur le hub Pi. Les marqueurs DLE suffisent.
             vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
             self._send_command_sync(vsd)
-            vsm_ok = False
-            if self._is_conexant:
-                vsm_ok = self._send_command_sync(_VOICE_COMPRESSION_USR)
-                if not vsm_ok:
-                    vsm_ok = self._send_command_sync(_VOICE_COMPRESSION_CONEXANT)
-                    if not vsm_ok:
-                        logger.warning(
-                            "record_wav_serial: VSM USR et Conexant ont echoue, on tente quand meme VRX"
-                        )
-            else:
-                vsm_ok = self._send_command_sync(_VOICE_COMPRESSION_USR)
-                if not vsm_ok:
-                    logger.warning("record_wav_serial: AT+VSM=128,8000 a echoue, on tente quand meme VRX")
+            if not self._apply_vsm_sync():
+                logger.warning("record_wav_serial: VSM a echoue, on tente quand meme VRX")
             if not already_in_voice_mode:
                 if not self._send_command_sync(_TAD_OFF_HOOK):
                     logger.warning("record_wav_serial: AT+VLS=1 a echoue")
@@ -1209,6 +1586,7 @@ class ModemHandler:
             if not self._send_command_sync(_VOICE_RX, expect="CONNECT", timeout=10.0):
                 logger.warning("record_wav_serial: AT+VRX (CONNECT) a echoue")
                 return False
+            vrx_opened = True
             if stop_on_remote_hangup or silence_timeout_sec > 0:
                 details = []
                 if stop_on_remote_hangup:
@@ -1225,18 +1603,33 @@ class ModemHandler:
             chunks = []
             deadline = time.monotonic() + duration_sec
             carrier_initial = self._serial_carrier_cd_sync() if stop_on_remote_hangup else None
+            effective_silence_threshold = self.voice_profile.silence_threshold_from_u8(
+                max(8, int(silence_threshold))
+            )
             hangup_scanner = _VrxHangupScanner()
+            tone_threshold = max(
+                effective_silence_threshold * 3,
+                48 if self.voice_profile.sample_width <= 1 else 9000,
+            )
+            disconnect_scanner = _VrxDisconnectToneScanner(
+                threshold=tone_threshold,
+                sample_rate=self.voice_profile.sample_rate,
+            )
             silence_started: Optional[float] = None
+            heard_speech = False
             min_record_before_silence = 0.8
+            no_speech_hangup_sec = max(6.0, float(silence_timeout_sec) + 2.0)
             min_record_before_hangup = _VRX_MIN_HANGUP_GRACE_SEC
-            # Seuil un peu bas : apres raccrochage la ligne est souvent un souffle faible.
-            effective_silence_threshold = max(8, int(silence_threshold))
             record_started = time.monotonic()
             old_timeout = self.serial_connection.timeout
             self.serial_connection.timeout = 0.2
             io_error = False
             try:
                 while time.monotonic() < deadline:
+                    if self._voice_abort:
+                        logger.info("Enregistrement VRX interrompu (voice_abort)")
+                        self.last_vrx_stop_reason = "voice_abort"
+                        break
                     if not self.serial_connection or not self.serial_connection.is_open:
                         logger.warning("Enregistrement VRX interrompu: port serie ferme")
                         break
@@ -1260,20 +1653,40 @@ class ModemHandler:
                                     )
                                     self.last_vrx_stop_reason = "hangup_marker"
                                     break
+                                if disconnect_scanner.feed(
+                                    raw, sample_width=self.voice_profile.sample_width
+                                ):
+                                    logger.info(
+                                        "Enregistrement VRX interrompu: tonalite operateur (bips fin)"
+                                    )
+                                    self.last_vrx_stop_reason = "disconnect_tones"
+                                    break
                             if silence_timeout_sec > 0:
                                 elapsed = time.monotonic() - record_started
-                                if elapsed >= min_record_before_silence:
-                                    if pcm_u8_chunk_peak(raw) >= effective_silence_threshold:
-                                        silence_started = None
-                                    elif silence_started is None:
-                                        silence_started = time.monotonic()
-                                    elif time.monotonic() - silence_started >= silence_timeout_sec:
-                                        logger.info(
-                                            "Enregistrement VRX interrompu: silence {} s apres la parole",
-                                            silence_timeout_sec,
-                                        )
-                                        self.last_vrx_stop_reason = "silence"
-                                        break
+                                peak = pcm_chunk_peak(
+                                    raw, sample_width=self.voice_profile.sample_width
+                                )
+                                if peak >= effective_silence_threshold:
+                                    heard_speech = True
+                                    silence_started = None
+                                elif heard_speech:
+                                    if elapsed >= min_record_before_silence:
+                                        if silence_started is None:
+                                            silence_started = time.monotonic()
+                                        elif time.monotonic() - silence_started >= silence_timeout_sec:
+                                            logger.info(
+                                                "Enregistrement VRX interrompu: silence {} s apres la parole",
+                                                silence_timeout_sec,
+                                            )
+                                            self.last_vrx_stop_reason = "silence"
+                                            break
+                                elif elapsed >= no_speech_hangup_sec:
+                                    logger.info(
+                                        "Enregistrement VRX interrompu: aucun message apres {} s",
+                                        no_speech_hangup_sec,
+                                    )
+                                    self.last_vrx_stop_reason = "silence"
+                                    break
                         else:
                             time.sleep(0.02)
                     except (OSError, serial.SerialException) as e:
@@ -1303,15 +1716,31 @@ class ModemHandler:
             out_path.parent.mkdir(parents=True, exist_ok=True)
             with wave.open(str(out_path), "wb") as wf:
                 wf.setnchannels(1)
-                wf.setsampwidth(1)  # 8-bit
-                wf.setframerate(_VRX_SAMPLE_RATE)
+                wf.setsampwidth(self.voice_profile.sample_width)
+                wf.setframerate(self.voice_profile.sample_rate)
                 wf.writeframes(data)
+            elapsed = time.monotonic() - record_started
+            self.last_vrx_heard_speech = bool(heard_speech)
+            self.log_voice_session(
+                "VRX_fin",
+                fichier=out_path.name,
+                octets=len(data),
+                duree_s=f"{elapsed:.1f}",
+                raison=self.last_vrx_stop_reason or "ok",
+            )
             logger.info("Enregistrement VRX sauve: {} ({} octets)", out_path.name, len(data))
             self._flush_serial_rx_sync(max_sec=0.25)
+            vrx_opened = False
             return True
         except Exception as e:
             logger.exception("Erreur enregistrement VRX via serie: {}", e)
             return False
+        finally:
+            if vrx_opened:
+                try:
+                    self._vrx_transparent_close_sync()
+                except Exception:
+                    pass
 
     def _vrx_transparent_close_sync(self) -> None:
         """Sort du flux transparent AT+VRX (donnees PCM) sans quitter le mode voix."""
@@ -1328,7 +1757,7 @@ class ModemHandler:
             pass
 
     def _vrx_stream_open_sync(self, already_in_voice_mode: bool) -> bool:
-        """Passe en mode voix et ouvre AT+VRX (flux PCM 8 kHz 8-bit)."""
+        """Passe en mode voix et ouvre AT+VRX (flux PCM du profil actif)."""
         if not self.serial_connection or not self.serial_connection.is_open:
             logger.warning("vrx_stream_open: modem non connecte")
             return False
@@ -1339,11 +1768,7 @@ class ModemHandler:
                     return False
             vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
             self._send_command_sync(vsd)
-            if self._is_conexant:
-                if not self._send_command_sync(_VOICE_COMPRESSION_USR):
-                    self._send_command_sync(_VOICE_COMPRESSION_CONEXANT)
-            else:
-                self._send_command_sync(_VOICE_COMPRESSION_USR)
+            self._apply_vsm_sync()
             if not already_in_voice_mode:
                 if not self._send_command_sync(_TAD_OFF_HOOK):
                     logger.warning("vrx_stream_open: AT+VLS=1 a echoue")
@@ -1378,15 +1803,11 @@ class ModemHandler:
         self._vrx_saved_timeout = None
 
     def _apply_voice_pcm_params_sync(self) -> None:
-        """Configure VSD / VSM / gains pour PCM 8-bit 8 kHz (avant VTX ou VRX)."""
+        """Configure VSD / VSM / gains pour le PCM du profil actif (avant VTX ou VRX)."""
         vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
         self._send_command_sync(vsd)
         self._apply_voice_gains_sync()
-        if self._is_conexant:
-            if not self._send_command_sync(_VOICE_COMPRESSION_USR):
-                self._send_command_sync(_VOICE_COMPRESSION_CONEXANT)
-        else:
-            self._send_command_sync(_VOICE_COMPRESSION_USR)
+        self._apply_vsm_sync()
 
     def _vtx_begin_sync(self) -> bool:
         """
@@ -1432,8 +1853,8 @@ class ModemHandler:
         if not self._vtx_active or not self.serial_connection or not self.serial_connection.is_open:
             return False
         try:
-            chunk = 320
-            rate = float(_VRX_SAMPLE_RATE)
+            chunk = self.voice_profile.vtx_chunk_bytes
+            rate = float(self.voice_profile.bytes_per_sec)
             next_deadline = time.monotonic()
             for offset in range(0, len(u8_pcm), chunk):
                 if self._voice_abort:
@@ -1513,13 +1934,29 @@ class ModemHandler:
         """
         True si le dernier enregistrement VRX s'est arrete pour raccrochage distant.
 
-        @returns True apres marqueur DLE / perte DCD / erreur I/O pendant VRX.
+        @returns True apres marqueur DLE / perte DCD / bips operateur / erreur I/O pendant VRX.
         """
         return self.last_vrx_stop_reason in (
             "hangup_marker",
             "hangup_dcd",
             "port_closed",
             "io_error",
+            "disconnect_tones",
+        )
+
+    def caller_line_finished(self) -> bool:
+        """
+        True si l'appelant a probablement quitte la ligne (y compris silence prolonge).
+
+        @returns True pour couper le message de fin et eviter un ATH long.
+        """
+        return self.last_vrx_stop_reason in (
+            "hangup_marker",
+            "hangup_dcd",
+            "port_closed",
+            "io_error",
+            "disconnect_tones",
+            "silence",
         )
 
     async def play_wav_via_serial(
@@ -1532,8 +1969,11 @@ class ModemHandler:
         """
         loop = asyncio.get_event_loop()
         async with self._serial_io_lock:
-            return await loop.run_in_executor(
-                None, self._play_wav_serial_impl, wav_path, already_in_voice_mode
+            return await self.run_modem_sync(
+                self._play_wav_serial_impl,
+                wav_path,
+                already_in_voice_mode,
+                timeout=120.0,
             )
 
     async def record_wav_via_serial(
@@ -1555,8 +1995,7 @@ class ModemHandler:
         """
         loop = asyncio.get_event_loop()
         async with self._serial_io_lock:
-            return await loop.run_in_executor(
-                None,
+            return await self.run_modem_sync(
                 partial(
                     self._record_wav_serial_impl,
                     duration_sec,
@@ -1565,25 +2004,27 @@ class ModemHandler:
                     stop_on_remote_hangup,
                     silence_timeout_sec,
                 ),
+                timeout=max(15.0, float(duration_sec) + 12.0),
             )
 
     async def start_outgoing_vrx_stream(self, already_in_voice_mode: bool = False) -> bool:
         """Ouvre le flux VRX pour une session sortante (streaming vers WebSocket)."""
-        loop = asyncio.get_event_loop()
         async with self._serial_io_lock:
-            return await loop.run_in_executor(None, self._vrx_stream_open_sync, already_in_voice_mode)
+            return await self.run_modem_sync(
+                self._vrx_stream_open_sync,
+                already_in_voice_mode,
+                timeout=12.0,
+            )
 
     async def end_outgoing_vrx_stream(self) -> None:
         """Ferme le flux VRX (avant ATH)."""
-        loop = asyncio.get_event_loop()
         async with self._serial_io_lock:
-            await loop.run_in_executor(None, self._vrx_stream_finalize_sync)
+            await self.run_modem_sync(self._vrx_stream_finalize_sync, timeout=5.0)
 
     async def read_outgoing_vrx_chunk(self, nbytes: int = 2048) -> bytes:
         """Lit des octets PCM 8-bit depuis le flux VRX (lock court)."""
-        loop = asyncio.get_event_loop()
         async with self._serial_io_lock:
-            return await loop.run_in_executor(None, self._serial_read_fixed, nbytes)
+            return await self.run_modem_sync(self._serial_read_fixed, nbytes, timeout=2.0)
 
     def _serial_read_fixed(self, nbytes: int) -> bytes:
         if not self.serial_connection or not self.serial_connection.is_open:
@@ -1597,9 +2038,8 @@ class ModemHandler:
         """Envoie une rafale micro vers la ligne (VTX) puis reprend VRX."""
         if not u8_pcm:
             return True
-        loop = asyncio.get_event_loop()
         async with self._serial_io_lock:
-            return await loop.run_in_executor(None, self._half_duplex_uplink_sync, u8_pcm)
+            return await self.run_modem_sync(self._half_duplex_uplink_sync, u8_pcm, timeout=8.0)
 
     async def begin_outgoing_vtx(self) -> bool:
         """
@@ -1607,9 +2047,8 @@ class ModemHandler:
 
         @returns True si VTX pret.
         """
-        loop = asyncio.get_event_loop()
         async with self._serial_io_lock:
-            return await loop.run_in_executor(None, self._vtx_begin_sync)
+            return await self.run_modem_sync(self._vtx_begin_sync, timeout=8.0)
 
     async def write_outgoing_vtx_u8(self, u8_pcm: bytes) -> bool:
         """
@@ -1620,9 +2059,8 @@ class ModemHandler:
         """
         if not u8_pcm:
             return True
-        loop = asyncio.get_event_loop()
         async with self._serial_io_lock:
-            return await loop.run_in_executor(None, self._vtx_write_paced_sync, u8_pcm)
+            return await self.run_modem_sync(self._vtx_write_paced_sync, u8_pcm, timeout=8.0)
 
     async def end_outgoing_vtx_reopen_vrx(self) -> bool:
         """
@@ -1630,9 +2068,8 @@ class ModemHandler:
 
         @returns True si VRX repris.
         """
-        loop = asyncio.get_event_loop()
         async with self._serial_io_lock:
-            return await loop.run_in_executor(None, self._vtx_end_reopen_vrx_sync)
+            return await self.run_modem_sync(self._vtx_end_reopen_vrx_sync, timeout=8.0)
 
     @staticmethod
     def _is_serial_io_fault(exc: BaseException) -> bool:
@@ -1734,6 +2171,16 @@ class ModemHandler:
                 if data:
                     eio_since_reconnect = 0
                     buffer += data
+                    # Un flux VRX orphelin (PCM) n'a pas de CRLF : ne pas tourner en boucle
+                    # sur l'event loop sinon /health et le relais WS meurent.
+                    if len(buffer) > 4096 and b"\r\n" not in buffer[:4096]:
+                        logger.warning(
+                            "[MODEM] flux serie sans commande AT ({} o) — purge PCM orphelin",
+                            len(buffer),
+                        )
+                        buffer = b""
+                        await asyncio.sleep(0.05)
+                        continue
                     while b"\r\n" in buffer:
                         line, buffer = buffer.split(b"\r\n", 1)
                         line = line.strip()
@@ -1753,14 +2200,15 @@ class ModemHandler:
                                         and self.early_greeting_enabled
                                         and not self._greeting_played_on_seize
                                     ):
-                                        loop = asyncio.get_event_loop()
                                         self._early_greeting_pending = True
-                                        played = await loop.run_in_executor(
-                                            None, self._play_early_greeting_sync
+                                        played = await self.run_modem_sync(
+                                            self._play_early_greeting_sync,
+                                            timeout=45.0,
                                         )
                                         self._greeting_played_on_seize = bool(played)
                                         self._early_greeting_pending = False
                             await self._process_modem_line(line)
+                    await asyncio.sleep(0)
                 else:
                     await asyncio.sleep(0.05)
             except (OSError, serial.SerialException) as e:
@@ -1975,6 +2423,8 @@ class ModemHandler:
 
     def clear_incoming_seize(self) -> None:
         """Reset flags seize (fin d'appel / hangup)."""
+        had_seize = bool(self._incoming_line_seized or self._incoming_seize_ok or self._voice_line_ready)
+        self.log_voice_session("clear_seize", had=int(had_seize))
         self._incoming_line_seized = False
         self._incoming_seize_ok = False
         self._voice_line_ready = False

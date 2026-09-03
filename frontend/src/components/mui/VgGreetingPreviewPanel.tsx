@@ -15,14 +15,17 @@ import {
 } from "@mui/material";
 import GraphicEqIcon from "@mui/icons-material/GraphicEq";
 import HeadphonesIcon from "@mui/icons-material/Headphones";
+import MusicNoteIcon from "@mui/icons-material/MusicNote";
 import PauseIcon from "@mui/icons-material/Pause";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
+import RecordVoiceOverIcon from "@mui/icons-material/RecordVoiceOver";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import {
   fetchGreetingAudioStatus,
   previewGreetingAudio,
   regenerateGreetingAudio,
-  type GreetingAudioStatus
+  type GreetingAudioStatus,
+  type GreetingPreviewMode
 } from "../../services/settingsApi";
 
 export type VgGreetingPreviewPanelProps = {
@@ -76,12 +79,12 @@ export function VgGreetingPreviewPanel({
     return () => revokeObjectUrl();
   }, [loadStatus, revokeObjectUrl]);
 
-  const handlePreview = async () => {
+  const handlePreview = async (mode: GreetingPreviewMode = "full") => {
     setError(null);
     setSuccess(null);
     setPreviewLoading(true);
     try {
-      const blob = await previewGreetingAudio(audio);
+      const blob = await previewGreetingAudio(audio, mode);
       revokeObjectUrl();
       const url = URL.createObjectURL(blob);
       objectUrlRef.current = url;
@@ -91,7 +94,12 @@ export function VgGreetingPreviewPanel({
         await el.play();
         setPlaying(true);
       }
-      setSuccess("Apercu genere — lecture en cours");
+      const labels: Record<GreetingPreviewMode, string> = {
+        full: "Mix complet",
+        voice: "Voix seule",
+        intro: "Intro seule"
+      };
+      setSuccess(`Apercu ${labels[mode]} — lecture en cours`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Echec de l'apercu audio");
     } finally {
@@ -128,7 +136,7 @@ export function VgGreetingPreviewPanel({
   const togglePlay = async () => {
     const el = audioRef.current;
     if (!el || !el.src) {
-      await handlePreview();
+      await handlePreview("full");
       return;
     }
     if (playing) {
@@ -184,7 +192,7 @@ export function VgGreetingPreviewPanel({
       {busy ? <LinearProgress sx={{ mt: 1.5, borderRadius: 1 }} /> : null}
 
       <Stack direction="row" spacing={1} sx={{ mt: 1.5, flexWrap: "wrap" }} useFlexGap>
-        <Tooltip title="Generer et ecouter (qualite ecoute PC)">
+        <Tooltip title="Mix intro + voix au format ligne (11 kHz, bande telephone)">
           <span>
             <Button
               variant="contained"
@@ -197,9 +205,37 @@ export function VgGreetingPreviewPanel({
                 )
               }
               disabled={busy}
-              onClick={() => void handlePreview()}
+              onClick={() => void handlePreview("full")}
             >
-              Ecouter l&apos;apercu
+              Mix complet
+            </Button>
+          </span>
+        </Tooltip>
+
+        <Tooltip title="TTS seul avec volume, debit et hauteur actuels">
+          <span>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<RecordVoiceOverIcon />}
+              disabled={busy}
+              onClick={() => void handlePreview("voice")}
+            >
+              Voix seule
+            </Button>
+          </span>
+        </Tooltip>
+
+        <Tooltip title="Fichier MP3 source (hifi). Au telephone : bande 300-3400 Hz, 11 kHz.">
+          <span>
+            <Button
+              variant="outlined"
+              size="small"
+              startIcon={<MusicNoteIcon />}
+              disabled={busy}
+              onClick={() => void handlePreview("intro")}
+            >
+              Intro seule
             </Button>
           </span>
         </Tooltip>

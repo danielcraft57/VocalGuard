@@ -53,7 +53,9 @@ class Config(BaseSettings):
     
     # Modem
     modem_port: Optional[str] = Field(default=None)  # Auto-détection si None
-    modem_baudrate: int = Field(default=115200)
+    modem_baudrate: int = Field(default=230400)
+    # USR5637 : 129,11025 (16-bit / 11 kHz). Rollback : 128,8000.
+    modem_voice_vsm: Optional[str] = Field(default="129,11025")
 
     # Processus telephony dedie (modem + WebSocket audio sortant) — voir systemd vocalguard-telephony.service
     use_telephony_daemon: bool = Field(default=False)
@@ -70,6 +72,7 @@ class Config(BaseSettings):
     edge_tts_voice: Optional[str] = Field(default="fr-FR-HenriNeural")  # pour edgetts
     edge_tts_rate: str = Field(default="+0%")  # vitesse IVR edge-tts
     edge_tts_pitch: str = Field(default="+2Hz")  # hauteur edge-tts (ex. +2Hz)
+    edge_tts_voice_gain_db: float = Field(default=-6.0)  # niveau voix TTS (dB)
     
     # Whisper
     whisper_model: str = Field(default="base")
@@ -77,6 +80,10 @@ class Config(BaseSettings):
     
     # VOSK
     vosk_model_path: Optional[str] = Field(default=None)
+
+    # Service STT distant (ex. node15.lan:8100) — messages vocaux batch.
+    stt_service_url: Optional[str] = Field(default=None)
+    stt_internal_token: Optional[str] = Field(default=None)
     
     # Appels
     rings_before_answer: int = Field(default=0)
@@ -214,6 +221,10 @@ class Config(BaseSettings):
             self.voice_synthesis_engine = os.environ.get("VOICE_SYNTHESIS_ENGINE", "").strip().lower()
         if os.environ.get("VOSK_MODEL_PATH"):
             self.vosk_model_path = os.environ.get("VOSK_MODEL_PATH", "").strip() or None
+        if os.environ.get("STT_SERVICE_URL"):
+            self.stt_service_url = os.environ.get("STT_SERVICE_URL", "").strip().rstrip("/") or None
+        if os.environ.get("STT_INTERNAL_TOKEN"):
+            self.stt_internal_token = os.environ.get("STT_INTERNAL_TOKEN", "").strip() or None
         if os.environ.get("MODEM_PORT"):
             self.modem_port = os.environ.get("MODEM_PORT", "").strip() or None
         if os.environ.get("USE_TELEPHONY_DAEMON"):
@@ -243,6 +254,8 @@ class Config(BaseSettings):
                 self.modem_baudrate = int(os.environ.get("MODEM_BAUDRATE", "").strip())
             except ValueError:
                 pass
+        if os.environ.get("MODEM_VOICE_VSM"):
+            self.modem_voice_vsm = os.environ.get("MODEM_VOICE_VSM", "").strip() or None
         if os.environ.get("CID_WAIT_SEC"):
             try:
                 self.cid_wait_sec = float(os.environ.get("CID_WAIT_SEC", "").strip())

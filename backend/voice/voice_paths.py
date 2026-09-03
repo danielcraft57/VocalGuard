@@ -3,7 +3,8 @@ Chemins standardises pour les assets audio VocalGuard (modem / repondeur).
 
 Structure :
   resources/voice/system/   — bip, message bloque (fichiers fixes)
-  resources/voice/intros/   — jingles d'accueil (variantes + default.wav actif)
+  resources/voice/intros/   — intro accueil mixee (default.wav actif)
+  resources/voice/jingles/ — bibliotheque MusicScreen (MP3)
   resources/voice/lab/      — previews locales generees (jingles, voix, sequences)
 """
 
@@ -17,6 +18,7 @@ SYSTEM_DIR = VOICE_ROOT / "system"
 INTROS_DIR = VOICE_ROOT / "intros"
 MUSIC_DIR = VOICE_ROOT / "music"
 LAB_DIR = VOICE_ROOT / "lab"
+JINGLES_DIR = VOICE_ROOT / "jingles"
 LAB_JINGLES_DIR = LAB_DIR / "jingles"
 LAB_GREETINGS_DIR = LAB_DIR / "greetings"
 LAB_SEQUENCES_DIR = LAB_DIR / "sequences"
@@ -54,7 +56,7 @@ def ensure_voice_tree(config_base: Optional[Path] = None) -> Path:
     """
     base = config_base if config_base else Path.cwd()
     root = base / VOICE_ROOT
-    for rel in (SYSTEM_DIR, INTROS_DIR, LAB_JINGLES_DIR, LAB_GREETINGS_DIR, LAB_SEQUENCES_DIR, LAB_BEDS_DIR):
+    for rel in (SYSTEM_DIR, INTROS_DIR, JINGLES_DIR, LAB_JINGLES_DIR, LAB_GREETINGS_DIR, LAB_SEQUENCES_DIR, LAB_BEDS_DIR):
         (base / rel).mkdir(parents=True, exist_ok=True)
     return root
 

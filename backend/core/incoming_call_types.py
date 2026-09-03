@@ -73,25 +73,31 @@ class IncomingCallAudioConfig(BaseModel):
   blocked_tts_text: Optional[str] = None
   record_beep: RecordBeepMode = "wav"
   record_beep_wav_path: Optional[str] = "resources/voice/system/beep.wav"
-  edge_tts_rate: str = "+0%"
-  edge_tts_voice: str = "fr-FR-VivienneMultilingualNeural"
-  edge_tts_pitch: str = "+7Hz"
+  edge_tts_rate: str = "-4%"
+  edge_tts_voice: str = "fr-FR-DeniseNeural"
+  edge_tts_pitch: str = "+3Hz"
+  tts_voice_gain_db: float = Field(
+      default=-6.0,
+      ge=-18.0,
+      le=9.0,
+      description="Niveau voix TTS apres normalisation modem (dB, negatif = plus doux).",
+  )
   greeting_intro_mode: GreetingIntroMode = "jingle"
-  greeting_intro_variant: str = "sting_marimba"
+  greeting_intro_variant: str = "tesla"
   greeting_intro_wav_path: Optional[str] = "resources/voice/intros/default.wav"
   greeting_intro_sec: float = Field(default=2.2, ge=0.0, le=20.0)
-  greeting_intro_crossfade_ms: int = Field(default=280, ge=100, le=2000)
+  greeting_intro_crossfade_ms: int = Field(default=380, ge=100, le=2000)
   greeting_intro_voice_gain_db: float = Field(
-      default=5.0,
+      default=0.0,
       ge=0.0,
       le=12.0,
       description="Gain supplementaire voix d'accueil sur le jingle (dB).",
   )
   greeting_intro_voice_bed_db: float = Field(
-      default=-24.0,
+      default=-18.0,
       ge=-40.0,
       le=0.0,
-      description="Niveau du fond musical sous la voix (dB, 0=desactive).",
+      description="Attenuation du jingle MusicScreen sous la voix (dB, 0=voix seule apres fondu).",
   )
   greeting_intro_bed_variant: Optional[str] = None
   greeting_intro_track_duck_db: float = Field(
@@ -107,7 +113,8 @@ class IncomingCallAudioConfig(BaseModel):
       description="Point de depart dans la piste musicale (secondes).",
   )
   greeting_tts_text: Optional[str] = (
-      "Bonjour, Monsieur Daniel est absent. Merci de laisser un message apres le bip."
+      "Bonjour. Vous êtes bien chez Daniel Craft, de Loïc Daniel. "
+      "Merci de laisser votre message après le bip."
   )
 
 

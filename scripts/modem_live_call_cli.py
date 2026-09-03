@@ -28,11 +28,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.core.config import Config
 from backend.core.modem_handler import ModemHandler
+from backend.voice.audio_utils import pcm_modem_to_s16le_16k, pcm_s16le_16k_to_modem
 
 
-RATE = 8000
+RATE = 16000
 CHANNELS = 1
-FRAMES_PER_BUFFER = 160  # 20 ms a 8 kHz
+FRAMES_PER_BUFFER = 320  # 20 ms a 16 kHz
 DTMF_FREQS = {
     "1": (697, 1209),
     "2": (697, 1336),
@@ -340,9 +341,9 @@ class LiveAudioBridge:
                 pending.extend(data)
                 if len(pending) < burst_bytes_target:
                     continue
-                u8 = s16le_to_u8_pcm(bytes(pending))
+                uplink = pcm_s16le_16k_to_modem(bytes(pending), self.modem.voice_profile)
                 pending.clear()
-                await self.modem.half_duplex_send_uplink_u8(u8)
+                await self.modem.half_duplex_send_uplink_u8(uplink)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -354,7 +355,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Appel modem USB interactif")
     parser.add_argument("--number", required=True, help="Numero a appeler (ex: 0612345678)")
     parser.add_argument("--port", default=None, help="Port modem (ex: COM4). Auto-detect si vide.")
-    parser.add_argument("--baudrate", type=int, default=115200, help="Baudrate modem (defaut: 115200)")
+    parser.add_argument("--baudrate", type=int, default=230400, help="Baudrate modem (defaut: 230400 USR)")
     parser.add_argument("--input-device", type=int, default=None, help="Index device micro PyAudio")
     parser.add_argument("--output-device", type=int, default=None, help="Index device haut-parleur PyAudio")
     parser.add_argument(

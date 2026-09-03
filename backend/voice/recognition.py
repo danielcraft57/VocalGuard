@@ -28,11 +28,32 @@ class VoiceRecognition:
         self.vosk_model = None
         self.vosk_recognizer = None
         self._out_stream_recs: dict[str, object] = {}
-    
+        self._remote_stt_available = False
+
+    def is_available(self) -> bool:
+        """
+        Indique si la transcription est possible (local ou service distant).
+
+        @returns True si Whisper, Vosk local ou STT distant est pret.
+        """
+        return self.engine in ("whisper", "vosk") or self._remote_stt_available
+
     async def initialize(self):
         """Initialise le moteur de reconnaissance vocale"""
         logger.info(f"Initialisation de la reconnaissance vocale ({self.engine})...")
-        
+
+        if self.config.stt_service_url:
+            from backend.voice.stt_remote import check_stt_service_health
+
+            self._remote_stt_available = await check_stt_service_health(self.config.stt_service_url)
+            if self._remote_stt_available:
+                logger.info("STT distant disponible: {}", self.config.stt_service_url)
+            else:
+                logger.warning(
+                    "STT distant configure ({}) mais injoignable ou modele non charge.",
+                    self.config.stt_service_url,
+                )
+
         # gtts est un moteur de synthèse (texte -> parole), pas de reconnaissance
         if self.engine == "gtts":
             logger.warning(
@@ -52,14 +73,23 @@ class VoiceRecognition:
         if self.engine == "vosk":
             ok = await self._init_vosk()
             if not ok:
-                logger.warning(
-                    "VOSK indisponible (modèle non trouvé). "
-                    "Appels sans transcription. Télécharger un modèle: https://alphacephei.com/vosk/models "
-                    "ou définir VOSK_MODEL_PATH dans .env"
-                )
-                self.engine = None
+                if self._remote_stt_available:
+                    logger.warning(
+                        "VOSK local indisponible ; transcription batch via STT distant uniquement."
+                    )
+                    self.engine = None
+                else:
+                    logger.warning(
+                        "VOSK indisponible (modèle non trouvé). "
+                        "Appels sans transcription. Télécharger un modèle: https://alphacephei.com/vosk/models "
+                        "ou définir VOSK_MODEL_PATH dans .env"
+                    )
+                    self.engine = None
         if self.engine not in ("whisper", "vosk"):
             if self.engine is None:
+                if self._remote_stt_available:
+                    logger.info("Reconnaissance vocale via service distant uniquement")
+                    return
                 logger.info("Reconnaissance vocale désactivée (aucun moteur disponible)")
                 return
             raise ValueError(
@@ -93,6 +123,14 @@ class VoiceRecognition:
             from vosk import Model, KaldiRecognizer
 
             model_path = self.config.vosk_model_path
+            if model_path:
+                candidate = Path(model_path)
+                if not candidate.is_absolute():
+                    base = Path(self.config.base_path) if self.config.base_path else Path.cwd()
+                    resolved = (base / model_path).resolve()
+                    model_path = str(resolved) if resolved.exists() else None
+                elif not candidate.exists():
+                    model_path = None
             if not model_path:
                 common_paths = [
                     Path.home() / "vosk-models" / f"vosk-model-{self.config.voice_language}",
@@ -132,6 +170,20 @@ class VoiceRecognition:
         """
         if not audio_data:
             return ""
+
+        if self.config.stt_service_url:
+            try:
+                from backend.voice.stt_remote import transcribe_pcm_remote
+
+                return await transcribe_pcm_remote(
+                    self.config.stt_service_url,
+                    audio_data,
+                    sample_rate=sample_rate,
+                    token=self.config.stt_internal_token,
+                )
+            except Exception as e:
+                logger.warning("STT distant echoue, fallback local: {}", e)
+
         if self.engine is None:
             return ""
 

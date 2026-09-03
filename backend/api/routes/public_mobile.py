@@ -37,8 +37,36 @@ from backend.database.models import ApiPublicToken, Call, Caller, MobilePairingS
 from backend.services.pairing_time import is_pairing_expired, utc_now_naive
 from backend.repositories.caller_repository import CallerRepository
 from backend.services.block_service import BlockService
+from backend.voice.audio_utils import export_listen_preview_wav
 
 router = APIRouter(prefix="/public", tags=["public-mobile"])
+
+# Fenetre de re-sync messages vocaux (transcription STT arrive souvent apres le 1er delta).
+_VM_DELTA_LOOKBACK_HOURS = 72
+
+
+def _mobile_voicemail_audio_path(source: Path) -> Path:
+    """
+    WAV 16-bit lisible sur mobile (expo-av ne gere pas bien le 8 kHz 8-bit modem).
+
+    @param source Fichier WAV modem stocke.
+    @returns Chemin WAV 16 kHz 16-bit (cache a cote du source).
+    """
+    cache_dir = source.parent / ".mobile_preview"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cached = cache_dir / f"{source.stem}_16k.wav"
+    try:
+        src_mtime = source.stat().st_mtime
+    except OSError:
+        src_mtime = 0.0
+    if cached.is_file():
+        try:
+            if cached.stat().st_mtime >= src_mtime:
+                return cached
+        except OSError:
+            pass
+    export_listen_preview_wav(source, cached, sample_rate=16000)
+    return cached
 
 
 def _normalize_fr_phone(raw: str) -> Optional[str]:
@@ -94,7 +122,11 @@ async def public_voicemail_audio(
     path = _resolve_voicemail_audio(config, vm.audio_file)
     if not path:
         raise HTTPException(status_code=404, detail="Fichier audio introuvable.")
-    return FileResponse(str(path), media_type="audio/wav", filename=path.name)
+    try:
+        playable = _mobile_voicemail_audio_path(path)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Conversion audio mobile echouee.") from exc
+    return FileResponse(str(playable), media_type="audio/wav", filename=f"vm_{voicemail_id}.wav")
 
 
 @router.put("/voicemails/{voicemail_id}/read")
@@ -160,9 +192,11 @@ async def public_sync_delta(
     )
     vms: List[Voicemail] = []
     if bool(getattr(token, "can_read_voicemails", False)):
+        # Toujours renvoyer les messages des 72 dernieres heures pour capter les transcriptions STT tardives.
+        vm_since = datetime.utcnow() - timedelta(hours=_VM_DELTA_LOOKBACK_HOURS)
         vms = (
             db.query(Voicemail)
-            .filter(Voicemail.created_at >= since_dt)
+            .filter(Voicemail.created_at >= vm_since)
             .order_by(Voicemail.created_at.desc())
             .limit(500)
             .all()

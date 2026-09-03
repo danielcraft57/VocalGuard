@@ -128,6 +128,9 @@ Voir aussi `backend/telephony_daemon/README.md`.
 
 - **CID manquant** : verifier service Caller ID operateur ; firmware `ATI3` (hint 1.2.23) dans `GET :8090/health` ; `AT+PCW=0` + `AT+VCID=1` au boot ; augmenter `cid_wait_sec` ; lire `last_cid_raw` (O/P = masque, pas un bug).
 - **OK apres ATD != connecte** : en voix, `OK` = composition acceptee ; l'etat "en ligne" attend un connect / reponse ulterieure.
+- **Format voix USR** : `AT+VSM=129,11025` + baud **230400** (PCM 16-bit). Rollback : `MODEM_VOICE_VSM=128,8000` et `MODEM_BAUDRATE=115200`. Pas de `AT+VBS` / `AT+VSR`.
+- **Firmware** : prod = `U.S. Robotics 56K FAX USB V1.2.23`. Support : https://www.usr.com/support/usr5637/ (flasher Linux, pas l'EXE Voice Windows).
+- **Hub USB** : preferer un hub alimente secteur (360 mA bus-powered, buzz / resets ACM sinon).
 - **DLE escape** : les octets PCM `0x10` sont doubles avant VTX (sinon session V.253 cassee).
 - **Telephone parallele** : si le fixe decroche pendant l'accueil, le playback VTX s'interrompt (DLE hook / marqueurs) et le repondeur s'arrete.
 - **Pastille UI** : `GET /api/v1/telephony/status` (modem OK/KO, firmware, dernier CID).

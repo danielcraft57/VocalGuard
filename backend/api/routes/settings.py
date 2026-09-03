@@ -4,6 +4,7 @@ Routes API pour exposer la configuration metier au frontend.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
@@ -12,6 +13,7 @@ from fastapi.responses import FileResponse
 from loguru import logger
 
 from backend.api.dependencies import get_config
+from backend.core.config import Config
 from backend.api.models import (
     GreetingAudioStatusResponse,
     GreetingPreviewRequest,
@@ -21,12 +23,14 @@ from backend.api.models import (
     SettingsResponse,
     TelephonyStatusResponse,
 )
-from backend.core.config import Config
+from backend.voice.musicscreen_jingles import list_musicscreen_jingles, musicscreen_jingle_path
+from backend.voice.audio_presets import list_audio_presets
 from backend.core.incoming_call_settings import (
     apply_incoming_call_settings,
     load_incoming_call_settings,
     patch_incoming_call_settings,
 )
+from backend.voice.audio_utils import listen_preview_response_meta
 from backend.services.greeting_audio_service import (
     build_greeting_listen_preview,
     get_greeting_cache_status,
@@ -259,6 +263,49 @@ def _local_call_manager(request: Request):
     return getattr(request.app.state, "call_manager", None)
 
 
+@router.get("/settings/incoming-call/jingles")
+async def get_incoming_call_jingles() -> list[dict[str, Any]]:
+    """
+    Liste les jingles MusicScreen disponibles pour l'intro messagerie.
+
+    @returns Catalogue id / label / duree.
+    """
+    return list_musicscreen_jingles()
+
+
+@router.get("/settings/incoming-call/jingles/{jingle_id}/listen")
+async def get_jingle_listen(
+    jingle_id: str,
+    config: Config = Depends(get_config),
+) -> FileResponse:
+    """
+    Sert le MP3 MusicScreen original pour ecoute navigateur (sans mix ni conversion).
+
+    @param jingle_id Identifiant catalogue (ex. tesla).
+    @returns Fichier audio MPEG.
+    """
+    base = Path(config.base_path) if config.base_path else Path.cwd()
+    path = musicscreen_jingle_path(base, jingle_id)
+    if not path or not path.is_file():
+        raise HTTPException(status_code=404, detail="Jingle introuvable")
+    return FileResponse(
+        path,
+        media_type="audio/mpeg",
+        filename=path.name,
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
+
+
+@router.get("/settings/incoming-call/audio-presets")
+async def get_incoming_call_audio_presets() -> dict[str, list[dict[str, Any]]]:
+    """
+    Prereglages Voix, Intro et Outro pour la page messages vocaux.
+
+    @returns Dictionnaire voice / intro / outro avec patch de champs audio.
+    """
+    return list_audio_presets()
+
+
 @router.get(
     "/settings/incoming-call/greeting/status",
     response_model=GreetingAudioStatusResponse,
@@ -314,24 +361,28 @@ async def post_greeting_audio_preview(
             raise HTTPException(status_code=r.status_code, detail=r.text[:400])
         from fastapi.responses import Response
 
+        content_type = r.headers.get("content-type", "audio/wav")
+        ext = ".mp3" if "mpeg" in content_type else ".wav"
         return Response(
             content=r.content,
-            media_type=r.headers.get("content-type", "audio/wav"),
-            headers={"Content-Disposition": 'inline; filename="greeting_preview.wav"'},
+            media_type=content_type,
+            headers={"Content-Disposition": f'inline; filename="greeting_preview{ext}"'},
         )
 
     try:
-        wav_path = await build_greeting_listen_preview(
+        preview_path = await build_greeting_listen_preview(
             config,
             audio_override=body.audio,
+            preview_mode=body.preview_mode,
         )
     except Exception as exc:
         logger.exception("Apercu accueil echoue: {}", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    media_type, filename = listen_preview_response_meta(preview_path)
     return FileResponse(
-        wav_path,
-        media_type="audio/wav",
-        filename="greeting_preview.wav",
+        preview_path,
+        media_type=media_type,
+        filename=filename,
         headers={"Cache-Control": "no-store"},
     )
 
@@ -417,6 +468,19 @@ async def put_incoming_line_mode(
         save_incoming_line_mode(config)
         return SettingsResponse(**data)
     return _apply_live(request, config, body.mode)
+
+
+@router.post("/telephony/force-release")
+async def post_telephony_force_release(request: Request) -> dict[str, Any]:
+    """
+    Libere un appel bloque (etat in_call) et force le raccrochage modem.
+
+    @returns Resume liberation (released_call_id, hangup_ok, in_call).
+    """
+    cm = getattr(request.app.state, "call_manager", None)
+    if cm is None:
+        raise HTTPException(status_code=503, detail="Call manager indisponible")
+    return await cm.release_active_call(reason="api_force_release", complete=True)
 
 
 @router.get("/telephony/status", response_model=TelephonyStatusResponse)

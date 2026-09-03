@@ -15,7 +15,7 @@
 
 - Python 3.9 ou supérieur (3.11+ recommandé pour VOSK)
 - pip (gestionnaire de paquets Python)
-- ffmpeg (pour le traitement audio et, optionnellement, la conversion WAV IVR 8 kHz)
+- ffmpeg (pour le traitement audio et la conversion WAV IVR modem : 11 025 Hz 16-bit USR)
 - PortAudio (pour la capture micro : `sounddevice` sous Linux utilise `portaudio19-dev`)
 
 ## Installation

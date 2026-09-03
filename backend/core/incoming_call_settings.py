@@ -23,6 +23,26 @@ from backend.core.incoming_call_types import (
     ResolvedProfileDecision,
 )
 from backend.core.incoming_line_mode import resolve_incoming_line_mode
+
+
+class _SsmlSafeYamlDumper(yaml.SafeDumper):
+    """Dumper YAML qui quote les chaines contenant des balises SSML."""
+
+
+def _yaml_represent_str(dumper: yaml.SafeDumper, data: str) -> yaml.nodes.ScalarNode:
+    """
+    Quote les textes TTS avec balises pour eviter la casse des guillemets en YAML.
+
+    @param dumper Instance PyYAML.
+    @param data Chaine a serialiser.
+    @returns Noeud scalaire YAML.
+    """
+    if "<" in data and ">" in data:
+        return dumper.represent_scalar("tag:yaml.org,2002:str", data, style='"')
+    return dumper.represent_scalar("tag:yaml.org,2002:str", data)
+
+
+_SsmlSafeYamlDumper.add_representer(str, _yaml_represent_str)
 from backend.core.incoming_call_audio import sync_edge_tts_from_audio
 
 
@@ -184,7 +204,14 @@ def save_incoming_call_settings(config: Config, settings: IncomingCallSettingsDa
   settings.active_preset = resolve_incoming_line_mode(config)  # type: ignore[assignment]
   payload = settings.model_dump(mode="json")
   with open(path, "w", encoding="utf-8") as f:
-    yaml.safe_dump(payload, f, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    yaml.dump(
+        payload,
+        f,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+        Dumper=_SsmlSafeYamlDumper,
+    )
   logger.info("incoming_call_settings sauvegarde: {}", path)
 
 

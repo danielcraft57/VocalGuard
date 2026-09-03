@@ -1,0 +1,359 @@
+[
+  {
+    "id": "tesla",
+    "label": "Tesla",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/Tesla-Jingle.mp3",
+    "duration_sec": 14,
+    "filename": "Tesla-Jingle.mp3"
+  },
+  {
+    "id": "keywoo",
+    "label": "Keywoo",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/Keywoo-Jingle.mp3",
+    "duration_sec": 23,
+    "filename": "Keywoo-Jingle.mp3"
+  },
+  {
+    "id": "high",
+    "label": "High",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/High-Jingle.mp3",
+    "duration_sec": 17,
+    "filename": "High-Jingle.mp3"
+  },
+  {
+    "id": "madonne",
+    "label": "Madonne",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/Madonne-Jingle.mp3",
+    "duration_sec": 21,
+    "filename": "Madonne-Jingle.mp3"
+  },
+  {
+    "id": "electronika",
+    "label": "Electronika",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/Electronika-Jingle.mp3",
+    "duration_sec": 14,
+    "filename": "Electronika-Jingle.mp3"
+  },
+  {
+    "id": "gange",
+    "label": "Gange",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/Gange-Jingle.mp3",
+    "duration_sec": 14,
+    "filename": "Gange-Jingle.mp3"
+  },
+  {
+    "id": "milky_way",
+    "label": "Milky Way",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/Milky-Way-Jingle.mp3",
+    "duration_sec": 13,
+    "filename": "Milky-Way-Jingle.mp3"
+  },
+  {
+    "id": "leya",
+    "label": "Leya",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/Leya-Jingle.mp3",
+    "duration_sec": 25,
+    "filename": "Leya-Jingle.mp3"
+  },
+  {
+    "id": "waymalo",
+    "label": "Waymalo",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/Waymalo-Jingle.mp3",
+    "duration_sec": 20,
+    "filename": "Waymalo-Jingle.mp3"
+  },
+  {
+    "id": "bongoland",
+    "label": "Bongoland",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/Bongoland-Jingle.mp3",
+    "duration_sec": 14,
+    "filename": "Bongoland-Jingle.mp3"
+  },
+  {
+    "id": "girl_in_blue",
+    "label": "Girl In Blue",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/Girl-In-Blue-Jingle.mp3",
+    "duration_sec": 24,
+    "filename": "Girl-In-Blue-Jingle.mp3"
+  },
+  {
+    "id": "babel",
+    "label": "Babel",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/Babel-Jingle.mp3",
+    "duration_sec": 17,
+    "filename": "Babel-Jingle.mp3"
+  },
+  {
+    "id": "jinglea",
+    "label": "JingleA",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleA.mp3",
+    "duration_sec": 11,
+    "filename": "JingleA.mp3"
+  },
+  {
+    "id": "jinglea2",
+    "label": "JingleA2",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleA2.mp3",
+    "duration_sec": 11,
+    "filename": "JingleA2.mp3"
+  },
+  {
+    "id": "jinglea3",
+    "label": "JingleA3",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleA3.mp3",
+    "duration_sec": 11,
+    "filename": "JingleA3.mp3"
+  },
+  {
+    "id": "jingleb",
+    "label": "JingleB",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleB.mp3",
+    "duration_sec": 8,
+    "filename": "JingleB.mp3"
+  },
+  {
+    "id": "jingleb2",
+    "label": "JingleB2",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleB2.mp3",
+    "duration_sec": 8,
+    "filename": "JingleB2.mp3"
+  },
+  {
+    "id": "jinglec",
+    "label": "JingleC",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleC.mp3",
+    "duration_sec": 9,
+    "filename": "JingleC.mp3"
+  },
+  {
+    "id": "jinglec2",
+    "label": "JingleC2",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleC2.mp3",
+    "duration_sec": 10,
+    "filename": "JingleC2.mp3"
+  },
+  {
+    "id": "jingled",
+    "label": "JingleD",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleD.mp3",
+    "duration_sec": 9,
+    "filename": "JingleD.mp3"
+  },
+  {
+    "id": "jingled2",
+    "label": "JingleD2",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleD2.mp3",
+    "duration_sec": 9,
+    "filename": "JingleD2.mp3"
+  },
+  {
+    "id": "jinglee",
+    "label": "JingleE",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleE.mp3",
+    "duration_sec": 10,
+    "filename": "JingleE.mp3"
+  },
+  {
+    "id": "jinglee2",
+    "label": "JingleE2",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleE2.mp3",
+    "duration_sec": 10,
+    "filename": "JingleE2.mp3"
+  },
+  {
+    "id": "jinglee3",
+    "label": "JingleE3",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleE3.mp3",
+    "duration_sec": 10,
+    "filename": "JingleE3.mp3"
+  },
+  {
+    "id": "jingleg",
+    "label": "JingleG",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleG.mp3",
+    "duration_sec": 9,
+    "filename": "JingleG.mp3"
+  },
+  {
+    "id": "jinglego",
+    "label": "JingleGO",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleGO.mp3",
+    "duration_sec": 9,
+    "filename": "JingleGO.mp3"
+  },
+  {
+    "id": "jingleh",
+    "label": "JingleH",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleH.mp3",
+    "duration_sec": 10,
+    "filename": "JingleH.mp3"
+  },
+  {
+    "id": "jingleh2",
+    "label": "JingleH2",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleH2.mp3",
+    "duration_sec": 10,
+    "filename": "JingleH2.mp3"
+  },
+  {
+    "id": "jinglej",
+    "label": "JingleJ",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleJ.mp3",
+    "duration_sec": 12,
+    "filename": "JingleJ.mp3"
+  },
+  {
+    "id": "jinglek",
+    "label": "JingleK",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleK.mp3",
+    "duration_sec": 11,
+    "filename": "JingleK.mp3"
+  },
+  {
+    "id": "jinglel",
+    "label": "JingleL",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleL.mp3",
+    "duration_sec": 11,
+    "filename": "JingleL.mp3"
+  },
+  {
+    "id": "jinglem",
+    "label": "JingleM",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleM.mp3",
+    "duration_sec": 9,
+    "filename": "JingleM.mp3"
+  },
+  {
+    "id": "jinglen",
+    "label": "JingleN",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleN.mp3",
+    "duration_sec": 12,
+    "filename": "JingleN.mp3"
+  },
+  {
+    "id": "jingleo",
+    "label": "JingleO",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleO.mp3",
+    "duration_sec": 10,
+    "filename": "JingleO.mp3"
+  },
+  {
+    "id": "jinglep",
+    "label": "JingleP",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleP.mp3",
+    "duration_sec": 10,
+    "filename": "JingleP.mp3"
+  },
+  {
+    "id": "jingleq",
+    "label": "JingleQ",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleQ.mp3",
+    "duration_sec": 10,
+    "filename": "JingleQ.mp3"
+  },
+  {
+    "id": "jingleq2",
+    "label": "JingleQ2",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleQ2.mp3",
+    "duration_sec": 10,
+    "filename": "JingleQ2.mp3"
+  },
+  {
+    "id": "jingler",
+    "label": "JingleR",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleR.mp3",
+    "duration_sec": 9,
+    "filename": "JingleR.mp3"
+  },
+  {
+    "id": "jingler2",
+    "label": "JingleR2",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/JingleR2.mp3",
+    "duration_sec": 9,
+    "filename": "JingleR2.mp3"
+  },
+  {
+    "id": "top_horaire2",
+    "label": "Top-Horaire2",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/Top-Horaire2.mp3",
+    "duration_sec": 12,
+    "filename": "Top-Horaire2.mp3"
+  },
+  {
+    "id": "infos_racro",
+    "label": "infos-racro",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/infos-racro.mp3",
+    "duration_sec": 3,
+    "filename": "infos-racro.mp3"
+  },
+  {
+    "id": "interculturel2",
+    "label": "interculturel2",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/interculturel2.mp3",
+    "duration_sec": 39,
+    "filename": "interculturel2.mp3"
+  },
+  {
+    "id": "jinglefin",
+    "label": "jinglefin",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/jinglefin.mp3",
+    "duration_sec": 12,
+    "filename": "jinglefin.mp3"
+  },
+  {
+    "id": "jinglez",
+    "label": "Jinglez",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/Jinglez.mp3",
+    "duration_sec": 12,
+    "filename": "Jinglez.mp3"
+  },
+  {
+    "id": "meteo_decro",
+    "label": "meteo-decro",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/meteo-decro.mp3",
+    "duration_sec": 3,
+    "filename": "meteo-decro.mp3"
+  },
+  {
+    "id": "meteo_decro2",
+    "label": "meteo-decro2",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/meteo-decro2.mp3",
+    "duration_sec": 3,
+    "filename": "meteo-decro2.mp3"
+  },
+  {
+    "id": "meteo_jingle",
+    "label": "meteo-jingle",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/meteo-jingle.mp3",
+    "duration_sec": 9,
+    "filename": "meteo-jingle.mp3"
+  },
+  {
+    "id": "sport_jingle3",
+    "label": "sport-jingle3",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/sport-jingle3.mp3",
+    "duration_sec": 8,
+    "filename": "sport-jingle3.mp3"
+  },
+  {
+    "id": "sport_jingle6",
+    "label": "sport-jingle6",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/sport-jingle6.mp3",
+    "duration_sec": 8,
+    "filename": "sport-jingle6.mp3"
+  },
+  {
+    "id": "traffic_jingle2_01",
+    "label": "traffic-jingle2-01",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/traffic-jingle2-01.mp3",
+    "duration_sec": 7,
+    "filename": "traffic-jingle2-01.mp3"
+  },
+  {
+    "id": "traffic_racro2",
+    "label": "traffic-racro2",
+    "url": "https://www.musicscreen.be/mp3gallery/content/songs/MP3/Jingles/traffic-racro2.mp3",
+    "duration_sec": 2,
+    "filename": "traffic-racro2.mp3"
+  }
+]

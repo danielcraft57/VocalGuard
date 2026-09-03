@@ -47,6 +47,28 @@ export type IncomingCallConfigPatch = Partial<
   >
 >;
 
+export type GreetingJingleOption = {
+  id: string;
+  label: string;
+  duration_sec?: number | null;
+  filename?: string;
+};
+
+export type AudioPresetOption = {
+  id: string;
+  label: string;
+  description?: string;
+  values: Record<string, unknown>;
+};
+
+export type IncomingAudioPresetsCatalog = {
+  voice: AudioPresetOption[];
+  intro: AudioPresetOption[];
+  outro: AudioPresetOption[];
+};
+
+export type GreetingPreviewMode = "full" | "voice" | "intro";
+
 export type GreetingAudioStatus = {
   track_wav?: string | null;
   voice_wav?: string | null;
@@ -136,6 +158,44 @@ export async function patchIncomingCallConfig(
 /**
  * Etat du cache accueil sur le modem.
  */
+/**
+ * Liste les jingles MusicScreen disponibles pour l'intro.
+ */
+export async function fetchGreetingJingles(): Promise<GreetingJingleOption[]> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/jingles`);
+  if (!res.ok) {
+    throw new Error(`Erreur liste jingles: ${res.status}`);
+  }
+  return (await res.json()) as GreetingJingleOption[];
+}
+
+/**
+ * URL d'ecoute directe du MP3 jingle (fichier source, sans mix).
+ */
+export function getJingleListenUrl(jingleId: string): string {
+  const id = encodeURIComponent(jingleId.trim());
+  return `${getApiBaseUrl()}/settings/incoming-call/jingles/${id}/listen`;
+}
+
+/**
+ * Catalogue des prereglages audio (voix, intro, outro).
+ */
+export async function fetchIncomingAudioPresets(): Promise<IncomingAudioPresetsCatalog> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/audio-presets`);
+  if (!res.ok) {
+    throw new Error(`Erreur prereglages audio: ${res.status}`);
+  }
+  const data = (await res.json()) as Partial<IncomingAudioPresetsCatalog>;
+  return {
+    voice: data.voice ?? [],
+    intro: data.intro ?? [],
+    outro: data.outro ?? []
+  };
+}
+
+/**
+ * Etat du cache accueil sur le modem.
+ */
 export async function fetchGreetingAudioStatus(): Promise<GreetingAudioStatus> {
   const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/greeting/status`);
   if (!res.ok) {
@@ -148,12 +208,13 @@ export async function fetchGreetingAudioStatus(): Promise<GreetingAudioStatus> {
  * Genere un apercu WAV ecoute selon le bloc audio fourni.
  */
 export async function previewGreetingAudio(
-  audio?: Record<string, unknown>
+  audio?: Record<string, unknown>,
+  previewMode: GreetingPreviewMode = "full"
 ): Promise<Blob> {
   const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/greeting/preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(audio ? { audio } : {})
+    body: JSON.stringify(audio ? { audio, preview_mode: previewMode } : { preview_mode: previewMode })
   });
   if (!res.ok) {
     let detail = `Erreur apercu accueil: ${res.status}`;
