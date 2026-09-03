@@ -56,6 +56,13 @@ class ScanResponse(BaseModel):
     city: Optional[str] = None
     postal_code: Optional[str] = None
     line_type: Optional[str] = None
+    is_company: bool = False
+    company_name: Optional[str] = None
+    company_siren: Optional[str] = None
+    company_siret: Optional[str] = None
+    company_activity: Optional[str] = None
+    company_address: Optional[str] = None
+    name: Optional[str] = None
     social_media: Dict[str, Any] = Field(default_factory=dict)
     reputation_links: list[str] = Field(default_factory=list)
     raw: Dict[str, Any] = Field(default_factory=dict)
@@ -90,6 +97,8 @@ async def health() -> dict:
         "phoneinfoga_version": osint_engine.phoneinfoga_version(),
         "phoneinfoga_bin": osint_engine.phoneinfoga_bin(),
         "phoneinfoga_api": osint_engine.api_base_url(),
+        "prospectlab": osint_engine.prospectlab_configured(),
+        "prospectlab_url": osint_engine.prospectlab_base_url() if osint_engine.prospectlab_configured() else None,
     }
 
 
@@ -121,3 +130,31 @@ async def scan_phone(
         result.get("sources"),
     )
     return ScanResponse(**{k: result.get(k) for k in ScanResponse.model_fields})
+
+
+class CompanyRequest(BaseModel):
+    """Recherche entreprise (nom, SIREN, SIRET)."""
+
+    query: str = Field(..., min_length=2, description="Nom ou identifiant entreprise.")
+
+
+@app.post("/v1/company")
+async def search_company(
+    body: CompanyRequest,
+    x_osint_token: Optional[str] = Header(None, alias="X-OSINT-Token"),
+) -> Dict[str, Any]:
+    """
+    Cherche une entreprise via l'API publique Sirene (recherche-entreprises).
+
+    @param body Texte de recherche.
+    @param x_osint_token Token interne optionnel.
+    @returns Fiche company_* ou objet vide.
+    """
+    _check_token(x_osint_token)
+    result = await osint_engine.lookup_company(body.query.strip())
+    logger.info(
+        "OSINT company '{}' -> {}",
+        body.query,
+        result.get("company_name") or "aucun",
+    )
+    return result

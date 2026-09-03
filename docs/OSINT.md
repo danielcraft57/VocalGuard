@@ -124,7 +124,12 @@ Pour soulager node14 et utiliser le vrai **PhoneInfoga** (binaire Go sundowndev)
    - `OSINT_INTERNAL_TOKEN=...` (meme token que `/opt/vocalguard-osint/.env.osint`)
 3. Redemarrer `vocalguard` et `vocalguard-celery`.
 
-Le service expose `POST /v1/scan` et `GET /health` (port **8110**). Localement sur node15, PhoneInfoga ecoute sur `127.0.0.1:5011` (API REST). Les detections FR / CommercialDetector / APIs NumLookup restent sur node14.
+Le service expose :
+- `POST /v1/scan` : PhoneInfoga + libphonenumber (operateur / type de ligne)
+- `POST /v1/company` : fiche entreprise via recherche-entreprises.api.gouv.fr (meme source que ProspectLab)
+- `GET /health` (port **8110**)
+
+Localement sur node15, PhoneInfoga ecoute sur `127.0.0.1:5011`. Le worker interroge aussi **ProspectLab** (`GET /api/public/entreprises/by-phone`) : si le numero est deja dans la base de prospection, on recupere nom, SIREN, adresse, site. Les detections FR / CommercialDetector / APIs NumLookup restent sur node14. Si un nom d'entreprise est deja connu, l'enrichissement appelle aussi `/v1/company` (API publique Sirene).
 
 ## Liste des appels et profils en base
 

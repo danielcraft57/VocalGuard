@@ -45,14 +45,21 @@ async def scan_phone_remote(
     result = {
         "sources": payload.get("sources") or ["phoneinfoga_remote"],
         "carrier": payload.get("carrier"),
+        "operator": payload.get("carrier"),
         "country": payload.get("country"),
         "region": payload.get("region"),
         "city": payload.get("city"),
         "postal_code": payload.get("postal_code"),
         "line_type": payload.get("line_type"),
+        "is_company": bool(payload.get("is_company")),
+        "company_name": payload.get("company_name"),
+        "company_siren": payload.get("company_siren"),
+        "company_siret": payload.get("company_siret"),
+        "company_activity": payload.get("company_activity"),
+        "company_address": payload.get("company_address"),
+        "name": payload.get("name"),
         "social_media": payload.get("social_media") or {},
     }
-    # Compat champs VocalGuard
     if payload.get("e164"):
         result["phone_number"] = payload["e164"]
     logger.debug(
@@ -81,3 +88,35 @@ async def check_osint_service_health(base_url: str, timeout_sec: float = 3.0) ->
     except Exception as exc:
         logger.debug("OSINT distant health KO: {}", exc)
         return False
+
+
+async def lookup_company_remote(
+    base_url: str,
+    query: str,
+    *,
+    token: Optional[str] = None,
+    timeout_sec: float = 20.0,
+) -> Dict[str, Any]:
+    """
+    Recherche entreprise via le worker distant (API Sirene publique).
+
+    @param base_url URL de base (ex. http://node15.lan:8110).
+    @param query Nom, SIREN ou SIRET.
+    @param token Token X-OSINT-Token optionnel.
+    @param timeout_sec Delai max.
+    @returns Dict company_* ou {}.
+    """
+    if not (query or "").strip():
+        return {}
+    headers: dict[str, str] = {}
+    if token:
+        headers["X-OSINT-Token"] = token
+    url = f"{base_url.rstrip('/')}/v1/company"
+    async with httpx.AsyncClient(timeout=timeout_sec) as client:
+        response = await client.post(url, json={"query": query.strip()}, headers=headers)
+        response.raise_for_status()
+        payload = response.json()
+    if not isinstance(payload, dict) or not payload.get("company_name"):
+        return {}
+    logger.debug("OSINT entreprise distante OK {}", payload.get("company_name"))
+    return payload

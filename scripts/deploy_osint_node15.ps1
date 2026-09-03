@@ -22,12 +22,14 @@ New-Item -ItemType Directory -Path $staging | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $staging "backend") | Out-Null
 Copy-Item -Recurse (Join-Path $RepoRoot "backend\osint_worker") (Join-Path $staging "backend\osint_worker")
 Copy-Item (Join-Path $RepoRoot "scripts\systemd\vocalguard-osint.service") (Join-Path $staging "vocalguard-osint.service")
+Copy-Item (Join-Path $RepoRoot "scripts\ensure_prospectlab_osint_token.py") (Join-Path $staging "ensure_prospectlab_osint_token.py")
 
 ssh $Remote "sudo mkdir -p $RemoteRoot/bin"
 ssh $Remote "sudo chown -R ${OsintUser}:${OsintUser} $RemoteRoot"
 
 scp -r "$staging\backend" "${Remote}:${RemoteRoot}/"
 scp "$staging\vocalguard-osint.service" "${Remote}:/tmp/vocalguard-osint.service"
+scp "$staging\ensure_prospectlab_osint_token.py" "${Remote}:/tmp/ensure_prospectlab_osint_token.py"
 Remove-Item -Recurse -Force $staging
 
 # Binaire PhoneInfoga Go (arm64) si absent / trop vieux
@@ -52,7 +54,7 @@ set -e
 cd $RemoteRoot
 if [ ! -d venv ]; then python3 -m venv venv; fi
 ./venv/bin/pip install -q --upgrade pip
-./venv/bin/pip install -q 'fastapi>=0.115' 'uvicorn[standard]>=0.30' 'pydantic>=2.10' 'httpx>=0.27' loguru
+./venv/bin/pip install -q 'fastapi>=0.115' 'uvicorn[standard]>=0.30' 'pydantic>=2.10' 'httpx>=0.27' loguru phonenumbers
 "@
 
 # Token
@@ -67,10 +69,22 @@ if ($InternalToken) {
     Write-Host "Nouveau token OSINT genere."
 }
 
+$existingPlRaw = ssh $Remote "grep -E '^PROSPECTLAB_API_TOKEN=' $RemoteRoot/.env.osint 2>/dev/null || true"
+$plToken = ""
+if ("$existingPlRaw".Trim() -match '^PROSPECTLAB_API_TOKEN=(.+)$') {
+    $plToken = $Matches[1].Trim()
+}
+if (-not $plToken) {
+    Write-Host "Creation / reuse token ProspectLab (VocalGuard-OSINT)..."
+    $plToken = (ssh $Remote "cd /opt/prospectlab; ./env/bin/python /tmp/ensure_prospectlab_osint_token.py").Trim()
+}
+
 $envContent = @"
 OSINT_INTERNAL_TOKEN=$token
 PHONEINFOGA_BIN=$RemoteRoot/bin/phoneinfoga
 PHONEINFOGA_API_URL=http://127.0.0.1:5011
+PROSPECTLAB_URL=http://127.0.0.1:5000
+PROSPECTLAB_API_TOKEN=$plToken
 "@
 $envTmp = Join-Path $env:TEMP "vocalguard-osint.env"
 Set-Content -Path $envTmp -Value $envContent -NoNewline

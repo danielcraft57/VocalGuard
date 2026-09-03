@@ -329,6 +329,26 @@ class OSINTService:
                     result['sources'].extend(company_result.get('sources', []))
         except Exception as e:
             logger.warning(f"Erreur lors de la recherche personne/entreprise: {e}")
+
+        # Fiche entreprise via worker node15 (API publique Sirene, sans cle INSEE)
+        if self.osint_service_url:
+            company_query = (
+                result.get("company_name")
+                or (caller_name if caller_name and not caller_name.startswith("V") else None)
+            )
+            if company_query:
+                try:
+                    from backend.osint.remote import lookup_company_remote
+
+                    company_remote = await lookup_company_remote(
+                        self.osint_service_url,
+                        str(company_query),
+                        token=self.osint_internal_token,
+                    )
+                    if company_remote:
+                        result = self._merge_results(result, company_remote)
+                except Exception as e:
+                    logger.warning(f"OSINT entreprise distante KO: {e}")
         
         # Enrichissement basique si aucun outil disponible ou peu de sources
         try:
@@ -549,7 +569,8 @@ class OSINTService:
         # Mettre à jour les champs si disponibles
         for key in ["carrier", "operator", "operator_description", "operator_full_name", "operator_type", 
                    "country", "region", "city", "department", "postal_code", "line_type", 
-                   "name", "address", "reputation"]:
+                   "name", "address", "reputation", "company_name", "company_siret",
+                   "company_siren", "company_address", "company_activity"]:
             if new.get(key) and not base.get(key):
                 base[key] = new[key]
         
@@ -562,6 +583,8 @@ class OSINTService:
             base["is_spam"] = True
         if new.get("is_scam"):
             base["is_scam"] = True
+        if new.get("is_company"):
+            base["is_company"] = True
         
         # Augmenter la confiance
         if new.get("sources"):
