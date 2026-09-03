@@ -36,11 +36,11 @@ def _resolve_recording(config: Config, audio_file: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
-async def _transcribe_file(recognition: VoiceRecognition, path: Path) -> tuple[str, int]:
-    """Transcrit un fichier WAV, retourne (texte, octets PCM)."""
+async def _transcribe_file(recognition: VoiceRecognition, path: Path) -> tuple[str, int, list]:
+    """Transcrit un fichier WAV, retourne (texte, octets PCM, cues)."""
     pcm = load_wav_as_16k16bit_pcm(path)
-    text = (await recognition.transcribe(pcm, sample_rate=16000) or "").strip()
-    return text, len(pcm)
+    text, cues = await recognition.transcribe_with_cues(pcm, sample_rate=16000)
+    return (text or "").strip(), len(pcm), cues or []
 
 
 async def _run(call_ids: list[int]) -> None:
@@ -85,10 +85,12 @@ async def _run(call_ids: list[int]) -> None:
             if rec_path:
                 print(f"  Audio appel : {rec_path.name} ({rec_path.stat().st_size // 1024} Ko)")
                 try:
-                    new_call_tx, pcm_len = await _transcribe_file(recognition, rec_path)
+                    new_call_tx, pcm_len, cues = await _transcribe_file(recognition, rec_path)
                     print(f"  STT appel   : {new_call_tx or '(vide)'} [{pcm_len} octets PCM]")
                     if new_call_tx:
-                        await call_service.set_transcription_and_intent(call_id, transcription=new_call_tx)
+                        await call_service.set_transcription_and_intent(
+                            call_id, transcription=new_call_tx, cues=cues or None
+                        )
                 except Exception as exc:
                     print(f"  STT appel   : ERREUR {exc}")
                     new_call_tx = None
@@ -102,7 +104,7 @@ async def _run(call_ids: list[int]) -> None:
                 if vm_path:
                     print(f"  Audio VM    : {vm_path.name} ({vm_path.stat().st_size // 1024} Ko)")
                     try:
-                        new_vm_tx, pcm_len = await _transcribe_file(recognition, vm_path)
+                        new_vm_tx, pcm_len, _cues = await _transcribe_file(recognition, vm_path)
                         print(f"  STT VM      : {new_vm_tx or '(vide)'} [{pcm_len} octets PCM]")
                         if new_vm_tx:
                             await call_service.set_voicemail_transcription(vm.id, new_vm_tx)

@@ -48,6 +48,7 @@ class TranscribeResponse(BaseModel):
     text: str = Field(default="", description="Texte transcrit.")
     bytes_pcm: int = Field(default=0, description="Octets PCM 16 kHz traites.")
     engine: str = Field(default="", description="Moteur utilise (whisper ou vosk).")
+    cues: list[dict] = Field(default_factory=list, description="Cues SRT 4-5 mots.")
 
 
 @asynccontextmanager
@@ -100,6 +101,7 @@ async def transcribe_file(
             text=text,
             bytes_pcm=len(pcm),
             engine=stt_engine.engine_name() or "",
+            cues=stt_engine.last_cues(),
         )
     except Exception as exc:
         logger.exception("STT fichier echoue: {}", exc)

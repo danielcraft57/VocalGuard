@@ -193,6 +193,47 @@ class VoiceRecognition:
         if self.engine == "vosk":
             return await self._transcribe_vosk(audio_data, sample_rate)
         return ""
+
+    async def transcribe_with_cues(
+        self, audio_data: bytes, sample_rate: int = 16000
+    ) -> tuple[str, list]:
+        """
+        Transcrit et retourne des cues SRT (4-5 mots) si disponibles.
+
+        @param audio_data PCM 16-bit.
+        @param sample_rate Taux Hz.
+        @returns Tuple (texte, cues).
+        """
+        if not audio_data:
+            return "", []
+
+        if self.config.stt_service_url:
+            try:
+                from backend.voice.stt_remote import transcribe_pcm_remote_detailed
+
+                result = await transcribe_pcm_remote_detailed(
+                    self.config.stt_service_url,
+                    audio_data,
+                    sample_rate=sample_rate,
+                    token=self.config.stt_internal_token,
+                )
+                text = (result.get("text") or "").strip()
+                cues = result.get("cues") if isinstance(result.get("cues"), list) else []
+                if text:
+                    return text, cues or []
+            except Exception as e:
+                logger.warning("STT distant echoue, fallback local: {}", e)
+
+        text = ""
+        if self.engine == "whisper":
+            text = await self._transcribe_whisper(audio_data)
+        elif self.engine == "vosk":
+            text = await self._transcribe_vosk(audio_data, sample_rate)
+        text = (text or "").strip()
+        from backend.voice.transcript_cues import build_transcript_cues
+
+        duration = len(audio_data) / (2.0 * max(int(sample_rate), 1))
+        return text, build_transcript_cues(text, duration_sec=duration)
     
     async def _transcribe_whisper(self, audio_data: bytes) -> str:
         """Transcrit avec Whisper"""

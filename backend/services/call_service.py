@@ -332,12 +332,14 @@ class CallService:
         call_id: int,
         transcription: Optional[str] = None,
         intent_name: Optional[str] = None,
+        cues: Optional[list] = None,
     ) -> Optional[Call]:
         """
         Met a jour la transcription et/ou l'intent IVR associe a un appel.
 
         - transcription est stockee dans Call.transcription
         - intent_name est stocke dans Call.ivr_intent (colonne, plus JSON)
+        - cues SRT (4-5 mots) dans extra_data.transcription_cues
         """
         call = self.call_repo.get_by_id(call_id)
         if not call:
@@ -349,6 +351,11 @@ class CallService:
 
         if intent_name:
             update_data["ivr_intent"] = str(intent_name)[:100]
+
+        if cues:
+            meta = dict(call.extra_data or {})
+            meta["transcription_cues"] = cues
+            update_data["extra_data"] = meta
 
         if not update_data:
             return call

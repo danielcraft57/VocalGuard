@@ -5,7 +5,7 @@ Client HTTP vers le service STT distant (vocalguard-stt).
 from __future__ import annotations
 
 import io
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 from loguru import logger
@@ -30,8 +30,31 @@ async def transcribe_pcm_remote(
     @returns Texte transcrit.
     @raises httpx.HTTPError Si le service est injoignable ou renvoie une erreur.
     """
+    result = await transcribe_pcm_remote_detailed(
+        base_url,
+        audio_pcm,
+        sample_rate=sample_rate,
+        token=token,
+        timeout_sec=timeout_sec,
+    )
+    return result.get("text") or ""
+
+
+async def transcribe_pcm_remote_detailed(
+    base_url: str,
+    audio_pcm: bytes,
+    *,
+    sample_rate: int = 16000,
+    token: Optional[str] = None,
+    timeout_sec: float = 600.0,
+) -> dict[str, Any]:
+    """
+    Transcription distante avec cues SRT si le service les renvoie.
+
+    @returns Dict text, cues.
+    """
     if not audio_pcm:
-        return ""
+        return {"text": "", "cues": []}
     import wave
 
     buf = io.BytesIO()
@@ -53,8 +76,9 @@ async def transcribe_pcm_remote(
         response.raise_for_status()
         payload = response.json()
     text = (payload.get("text") or "").strip()
-    logger.debug("STT distant OK ({} octets -> {} chars)", len(audio_pcm), len(text))
-    return text
+    cues = payload.get("cues") if isinstance(payload.get("cues"), list) else []
+    logger.debug("STT distant OK ({} octets -> {} chars, {} cues)", len(audio_pcm), len(text), len(cues))
+    return {"text": text, "cues": cues}
 
 
 async def check_stt_service_health(base_url: str, timeout_sec: float = 3.0) -> bool:

@@ -1,0 +1,25 @@
+[Unit]
+Description=VocalGuard Whisper.cpp server (modele en RAM)
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/vocalguard-stt
+EnvironmentFile=-/opt/vocalguard-stt/.env.stt
+Environment=LD_LIBRARY_PATH=/opt/vocalguard-stt/whisper.cpp/build/bin
+ExecStart=/opt/vocalguard-stt/whisper.cpp/build/bin/whisper-server \
+  -m /opt/vocalguard-stt/whisper-models/ggml-small-q5_1.bin \
+  -l fr \
+  -t 4 \
+  -bs 1 \
+  -bo 1 \
+  --host 127.0.0.1 \
+  --port 8101 \
+  --inference-path /inference
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

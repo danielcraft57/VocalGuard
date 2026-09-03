@@ -1,6 +1,7 @@
 [Unit]
 Description=VocalGuard STT (Whisper / Vosk persistant)
-After=network.target
+After=network.target vocalguard-whisper.service
+Wants=vocalguard-whisper.service
 
 [Service]
 Type=simple

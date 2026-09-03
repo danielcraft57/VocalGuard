@@ -1589,7 +1589,9 @@ class CallManager:
         @param audio_pcm_16k PCM 16 kHz 16-bit mono (sortie de ``_record_audio``).
         """
         try:
-            text = await self.voice_recognition.transcribe(audio_pcm_16k, sample_rate=16000)
+            text, cues = await self.voice_recognition.transcribe_with_cues(
+                audio_pcm_16k, sample_rate=16000
+            )
             text = (text or "").strip()
             if not text:
                 logger.info("STT message #{} : vide / inaudible", voicemail_id)
@@ -1599,7 +1601,7 @@ class CallManager:
             if call_id:
                 try:
                     await self.call_service.set_transcription_and_intent(
-                        int(call_id), transcription=text
+                        int(call_id), transcription=text, cues=cues or None
                     )
                 except Exception:
                     logger.exception(

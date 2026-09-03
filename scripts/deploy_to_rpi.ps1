@@ -224,7 +224,17 @@ if (Test-Path $localEnvProd) {
 } else {
     throw "Missing local .env.prod / .env.prod.example / env.example"
 }
-ssh "$AppRemoteHost" "cd $RemoteDir && grep -q '^VG_ENV=' .env || echo 'VG_ENV=prod' >> .env" | Out-Null
+ssh "$AppRemoteHost" "cd $RemoteDir && grep -q '^VG_ENV=' .env || echo 'VG_ENV=prod' >> .env"
+# Si le .env.prod local n'a pas le STT, on reprend STT_* du backup (evite de retomber sur Vosk).
+ssh "$AppRemoteHost" @"
+cd $RemoteDir
+if ! grep -q '^STT_SERVICE_URL=' .env; then
+  bak=`$(ls -1t .env.backup.* 2>/dev/null | head -1)
+  if [ -n `"`$bak`" ]; then
+    grep -E '^STT_' `"`$bak`" >> .env || true
+  fi
+fi
+"@ | Out-Null
 ssh "$AppRemoteHost" "cd $RemoteDir && grep -q '^PUBLIC_BASE_URL=' .env || echo 'PUBLIC_BASE_URL=https://$NginxServerName' >> .env" | Out-Null
 ssh "$AppRemoteHost" "cd $RemoteDir && grep -q '^DATABASE_URL=postgresql' .env || echo 'WARNING: DATABASE_URL is not PostgreSQL in .env'" | Out-Null
 Ok "Production env synced"
