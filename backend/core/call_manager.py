@@ -1565,6 +1565,9 @@ class CallManager:
                     persist_path.unlink()
                 except OSError:
                     pass
+            elif getattr(self.modem, "last_vrx_stop_reason", "") == "disconnect_tones":
+                self._log_call("repondeur_sans_parole", raison="bips_raccrochage")
+                logger.info("Raccrochage pendant l'ecoute — pas de message a enregistrer")
 
             if self.modem.caller_line_finished():
                 logger.info("Appelant a raccroche — fin immediate sans message de fin")

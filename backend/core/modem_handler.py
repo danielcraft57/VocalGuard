@@ -11,6 +11,7 @@ Supporte deux façons de jouer un WAV vers la ligne :
 import asyncio
 import concurrent.futures
 import errno
+import math
 import threading
 import time
 import wave
@@ -229,25 +230,71 @@ class _VrxHangupScanner:
         return False
 
 
+def _goertzel_power(samples: list[float], freq: float, sample_rate: int) -> float:
+    """
+    Puissance Goertzel normalisee sur une fenetre (ex. 440 Hz occupation FR).
+
+    @param samples Echantillons flottants centres ~[-1, 1].
+    @param freq Frequence cible Hz.
+    @param sample_rate Taux d'echantillonnage.
+    @returns Puissance relative (sans unite).
+    """
+    n = len(samples)
+    if n < 8 or sample_rate <= 0:
+        return 0.0
+    w = 2.0 * math.pi * float(freq) / float(sample_rate)
+    coeff = 2.0 * math.cos(w)
+    s0 = 0.0
+    s1 = 0.0
+    s2 = 0.0
+    for x in samples:
+        s0 = float(x) + coeff * s1 - s2
+        s2 = s1
+        s1 = s0
+    power = s1 * s1 + s2 * s2 - coeff * s1 * s2
+    return power / float(n)
+
+
+def _pcm_frame_to_floats(raw: bytes, *, sample_width: int) -> list[float]:
+    """
+    Convertit une fenetre PCM en flottants centres.
+
+    @param raw Octets PCM.
+    @param sample_width 1 = u8, 2 = s16le.
+    @returns Liste de flottants ~[-1, 1].
+    """
+    width = max(1, int(sample_width))
+    if width <= 1:
+        return [(b - 128) / 128.0 for b in raw]
+    out: list[float] = []
+    for i in range(0, len(raw) - 1, 2):
+        val = int.from_bytes(raw[i : i + 2], "little", signed=True)
+        out.append(val / 32768.0)
+    return out
+
+
 class _VrxDisconnectToneScanner:
     """
-    Detecte 4 bips operateur en fin d'appel, pas de la parole.
+    Detecte la tonalite d'occupation / bips de fin d'appel.
 
-    Arme seulement apres un vrai silence, puis compte des bursts COURTS et
-    reguliers. Un son long (syllabe / phrase) reinitialise le compteur.
+    Priorite : cadence 440 Hz (occupation FR, ~0,5 s on/off). Les lectures
+    serie grosses sont decoupees en fenetres ~20 ms. ``trim_sec`` indique
+    combien couper en fin de WAV. ``heard_speech`` = son non-tonal trop long.
     """
 
     def __init__(
         self,
         *,
         threshold: int,
-        min_beeps: int = 4,
+        min_beeps: int = 3,
         sample_rate: int = 8000,
-        min_pre_silence_sec: float = 0.45,
-        min_burst_sec: float = 0.05,
-        max_burst_sec: float = 0.38,
-        min_gap_sec: float = 0.07,
-        max_gap_sec: float = 0.55,
+        min_pre_silence_sec: float = 0.25,
+        min_burst_sec: float = 0.25,
+        max_burst_sec: float = 0.75,
+        min_gap_sec: float = 0.25,
+        max_gap_sec: float = 0.85,
+        tone_freq: float = 440.0,
+        tone_power_min: float = 3.5,
     ) -> None:
         self._threshold = max(1, int(threshold))
         self._min_beeps = max(2, int(min_beeps))
@@ -257,60 +304,222 @@ class _VrxDisconnectToneScanner:
         self._max_burst_sec = max_burst_sec
         self._min_gap_sec = min_gap_sec
         self._max_gap_sec = max_gap_sec
+        self._tone_freq = float(tone_freq)
+        self._tone_power_min = float(tone_power_min)
         self._armed = False
         self._beeps = 0
         self._loud_sec = 0.0
         self._quiet_sec = 0.0
         self._gap_sec = 0.0
+        self._seq_sec = 0.0
+        self.trim_sec = 0.0
+        self.heard_speech = False
+        self._pending = b""
+        self._nontone_loud_sec = 0.0
+
+    def _reset_sequence(self) -> None:
+        """Oublie la cadence en cours (parole ou trop d'ecart)."""
+        self._beeps = 0
+        self._seq_sec = 0.0
+        self.trim_sec = 0.0
+
+    @property
+    def in_beep_train(self) -> bool:
+        """True si on est dans une suite de bips / tonalite (pas de la parole)."""
+        return self._beeps > 0 or (0 < self._loud_sec <= self._max_burst_sec)
 
     def feed(self, raw: bytes, *, sample_width: int) -> bool:
         """
-        Ingere un bloc VRX et cherche une cadence type 4 bips.
+        Ingere un bloc VRX et cherche une cadence d'occupation / bips.
 
         @param raw Octets PCM du flux VRX.
         @param sample_width 1 = u8, 2 = s16le.
-        @returns True si 4 bips courts consecutifs apres silence.
+        @returns True si assez de cycles consecutifs apres silence.
         """
         if not raw:
             return False
+        width = max(1, int(sample_width))
+        frame_samples = max(1, int(round(self._sample_rate * 0.04)))
+        frame_bytes = frame_samples * width
+        if self._pending:
+            raw = self._pending + raw
+            self._pending = b""
+        rem = len(raw) % width
+        if rem:
+            self._pending = raw[-rem:]
+            raw = raw[:-rem]
+        if not raw:
+            return False
+        for off in range(0, len(raw), frame_bytes):
+            frame = raw[off : off + frame_bytes]
+            if len(frame) < width:
+                break
+            if self._feed_frame(frame, sample_width=width):
+                return True
+        return False
+
+    def _feed_frame(self, raw: bytes, *, sample_width: int) -> bool:
+        """
+        Analyse une petite fenetre PCM (~40 ms) via Goertzel 440 Hz.
+
+        @param raw Octets d'une fenetre.
+        @param sample_width Largeur echantillon.
+        @returns True si cadence de tonalite confirmee.
+        """
         n_samples = len(raw) // max(1, int(sample_width))
         dur = n_samples / float(self._sample_rate)
         if dur <= 0:
             return False
+        samples = _pcm_frame_to_floats(raw, sample_width=sample_width)
+        tone_power = _goertzel_power(samples, self._tone_freq, self._sample_rate)
         peak = pcm_chunk_peak(raw, sample_width=sample_width)
-        loud = peak >= self._threshold
-        if loud:
+        soft_peak = max(8, self._threshold // 2)
+        is_tone = tone_power >= self._tone_power_min and peak >= soft_peak
+        # Hysteresis debut/fin : fenetres de bord encore un peu 440 Hz.
+        if (
+            not is_tone
+            and peak >= soft_peak
+            and tone_power >= self._tone_power_min * 0.35
+            and (self._loud_sec > 0 or self._gap_sec > 0 or self._beeps > 0)
+        ):
+            is_tone = True
+        # Debut du bip suivant : attaque forte pendant un gap valide (Goertzel
+        # encore bas sur 1 frame, ex. tonalite FR reelle).
+        if (
+            not is_tone
+            and self._loud_sec <= 0
+            and self._beeps > 0
+            and peak >= soft_peak
+            and self._min_gap_sec <= self._gap_sec <= self._max_gap_sec
+        ):
+            is_tone = True
+        if is_tone:
             self._quiet_sec = 0.0
+            self._nontone_loud_sec = 0.0
             self._loud_sec += dur
             if self._loud_sec > self._max_burst_sec:
-                self._beeps = 0
+                self._reset_sequence()
                 self._armed = False
                 self._gap_sec = 0.0
+                self._loud_sec = 0.0
             return False
+        # Fin de tonalite : une fenetre de bord encore un peu forte ne doit
+        # pas casser le cycle (peak residuel, Goertzel deja bas).
         if self._loud_sec > 0:
             burst = self._loud_sec
             gap = self._gap_sec
             self._loud_sec = 0.0
             self._gap_sec = 0.0
+            self._nontone_loud_sec = 0.0
             short_ok = self._min_burst_sec <= burst <= self._max_burst_sec
             gap_ok = self._beeps == 0 or (self._min_gap_sec <= gap <= self._max_gap_sec)
             if self._armed and short_ok and gap_ok:
                 self._beeps += 1
+                self._seq_sec = burst if self._beeps == 1 else self._seq_sec + gap + burst
+                self.trim_sec = self._seq_sec
                 if self._beeps >= self._min_beeps:
                     return True
             else:
-                self._beeps = 0
+                self._reset_sequence()
+        if peak >= self._threshold:
+            self._quiet_sec = 0.0
+            self._nontone_loud_sec += dur
+            # Ne raz le gap que si aucune cadence n'est en cours.
+            if self._beeps == 0 and tone_power < self._tone_power_min * 0.15:
+                self._gap_sec = 0.0
+            if self._nontone_loud_sec >= 0.20:
+                self.heard_speech = True
+                self._armed = False
+                self._reset_sequence()
+            return False
+        self._nontone_loud_sec = 0.0
         self._quiet_sec += dur
         self._gap_sec += dur
         if self._quiet_sec >= self._min_pre_silence_sec:
             self._armed = True
         if self._beeps > 0 and self._gap_sec > self._max_gap_sec:
-            self._beeps = 0
+            self._reset_sequence()
         return False
 
 
-# Alias et helpers exposés pour tests sans matériel (scripts/modem_lab/tests/test_modem_handler_smoke.py).
+# Alias et helpers exposes pour tests sans materiel (scripts/modem_lab/tests/test_modem_handler_smoke.py).
 _vrx_stream_contains_hangup_marker = _vrx_buffer_has_hangup_marker
+
+
+def _trim_pcm_tail(
+    data: bytes,
+    *,
+    sample_width: int,
+    sample_rate: int,
+    trim_sec: float,
+) -> bytes:
+    """
+    Retire une queue PCM (bips de raccrochage) sans vider tout le message.
+
+    @param data PCM brut.
+    @param sample_width Octets par echantillon.
+    @param sample_rate Taux Hz.
+    @param trim_sec Duree a couper en fin de fichier.
+    @returns PCM tronque.
+    """
+    if not data or trim_sec <= 0:
+        return data
+    width = max(1, int(sample_width))
+    rate = max(1000, int(sample_rate))
+    nbytes = int(trim_sec * rate) * width
+    if nbytes <= 0:
+        return data
+    keep = len(data) - nbytes
+    if keep < width * 400:
+        keep = min(len(data), width * 400)
+    keep -= keep % width
+    return data[: max(0, keep)]
+
+
+def _scan_hangup_tone_trim(
+    data: bytes,
+    *,
+    sample_width: int,
+    sample_rate: int,
+    threshold: int,
+) -> float:
+    """
+    Cherche une tonalite de fin dans le PCM et renvoie la duree a couper.
+
+    Utile en filet de securite si l'arret live est tombe sur silence
+    alors que la queue contient encore les bips operateur.
+
+    @param data PCM enregistre.
+    @param sample_width Largeur echantillon.
+    @param sample_rate Taux Hz.
+    @param threshold Seuil peak (meme echelle que pcm_chunk_peak).
+    @returns Secondes a retirer en fin, ou 0.
+    """
+    if not data:
+        return 0.0
+    scanner = _VrxDisconnectToneScanner(
+        threshold=threshold,
+        sample_rate=sample_rate,
+        min_beeps=3,
+    )
+    # Gros blocs volontairement : feed() decoupe en 20 ms.
+    step = max(sample_width, int(sample_rate * sample_width * 0.5))
+    for i in range(0, len(data), step):
+        if scanner.feed(data[i : i + step], sample_width=sample_width):
+            # Ne coupe que si la cadence est en queue (fin d'appel).
+            consumed = i + step
+            remain = len(data) - consumed
+            remain_sec = remain / float(max(1, sample_rate * sample_width))
+            if remain_sec <= 8.0:
+                # Inclure aussi le silence / bips encore presents apres le hit.
+                return float(scanner.trim_sec) + max(0.0, remain_sec)
+            # Faux positif en milieu de message : on continue apres reset.
+            scanner = _VrxDisconnectToneScanner(
+                threshold=threshold,
+                sample_rate=sample_rate,
+                min_beeps=3,
+            )
+    return 0.0
 
 
 def _serial_buffer_shows_remote_pickup(blob: bytes) -> bool:
@@ -1608,12 +1817,13 @@ class ModemHandler:
             )
             hangup_scanner = _VrxHangupScanner()
             tone_threshold = max(
-                effective_silence_threshold * 3,
-                48 if self.voice_profile.sample_width <= 1 else 9000,
+                effective_silence_threshold * 2,
+                28 if self.voice_profile.sample_width <= 1 else 5000,
             )
             disconnect_scanner = _VrxDisconnectToneScanner(
                 threshold=tone_threshold,
                 sample_rate=self.voice_profile.sample_rate,
+                min_beeps=3,
             )
             silence_started: Optional[float] = None
             heard_speech = False
@@ -1646,6 +1856,15 @@ class ModemHandler:
                         raw = self._read_vrx_chunk_unlocked()
                         if raw:
                             chunks.append(raw)
+                            tones = disconnect_scanner.feed(
+                                raw, sample_width=self.voice_profile.sample_width
+                            )
+                            if stop_on_remote_hangup and tones:
+                                logger.info(
+                                    "Enregistrement VRX interrompu: tonalite operateur (bips fin)"
+                                )
+                                self.last_vrx_stop_reason = "disconnect_tones"
+                                break
                             if stop_on_remote_hangup and elapsed_record >= min_record_before_hangup:
                                 if hangup_scanner.feed(raw):
                                     logger.info(
@@ -1653,22 +1872,16 @@ class ModemHandler:
                                     )
                                     self.last_vrx_stop_reason = "hangup_marker"
                                     break
-                                if disconnect_scanner.feed(
-                                    raw, sample_width=self.voice_profile.sample_width
-                                ):
-                                    logger.info(
-                                        "Enregistrement VRX interrompu: tonalite operateur (bips fin)"
-                                    )
-                                    self.last_vrx_stop_reason = "disconnect_tones"
-                                    break
+                            if disconnect_scanner.heard_speech:
+                                heard_speech = True
                             if silence_timeout_sec > 0:
                                 elapsed = time.monotonic() - record_started
                                 peak = pcm_chunk_peak(
                                     raw, sample_width=self.voice_profile.sample_width
                                 )
                                 if peak >= effective_silence_threshold:
-                                    heard_speech = True
-                                    silence_started = None
+                                    if heard_speech and not disconnect_scanner.in_beep_train:
+                                        silence_started = None
                                 elif heard_speech:
                                     if elapsed >= min_record_before_silence:
                                         if silence_started is None:
@@ -1700,8 +1913,16 @@ class ModemHandler:
                         self.serial_connection.write(end_rx)
                         self.serial_connection.flush()
                         time.sleep(0.1)
+                        leftover = bytearray()
                         while self.serial_connection.in_waiting > 0:
-                            chunks.append(self.serial_connection.read(self.serial_connection.in_waiting))
+                            leftover.extend(self.serial_connection.read(self.serial_connection.in_waiting))
+                        # Ne pas recoller les bips / NO CARRIER dans le message.
+                        if leftover and self.last_vrx_stop_reason not in (
+                            "disconnect_tones",
+                            "hangup_marker",
+                            "hangup_dcd",
+                        ):
+                            chunks.append(bytes(leftover))
                     except (OSError, serial.SerialException):
                         pass
             finally:
@@ -1713,6 +1934,51 @@ class ModemHandler:
             if self.last_vrx_stop_reason is None and time.monotonic() >= deadline:
                 self.last_vrx_stop_reason = "timeout"
             data = b"".join(chunks)
+            heard_speech = bool(heard_speech or disconnect_scanner.heard_speech)
+            tone_trim = float(getattr(disconnect_scanner, "trim_sec", 0.0) or 0.0)
+            if self.last_vrx_stop_reason == "disconnect_tones":
+                pass
+            else:
+                # Filet : bips encore dans la queue alors qu'on a coupe sur silence.
+                tone_trim = _scan_hangup_tone_trim(
+                    data,
+                    sample_width=self.voice_profile.sample_width,
+                    sample_rate=self.voice_profile.sample_rate,
+                    threshold=tone_threshold,
+                )
+                if tone_trim > 0:
+                    logger.info(
+                        "Tonalite operateur detectee en post-traitement ({:.1f} s a couper)",
+                        tone_trim,
+                    )
+                    self.last_vrx_stop_reason = self.last_vrx_stop_reason or "disconnect_tones"
+            if tone_trim > 0:
+                before = len(data)
+                data = _trim_pcm_tail(
+                    data,
+                    sample_width=self.voice_profile.sample_width,
+                    sample_rate=self.voice_profile.sample_rate,
+                    trim_sec=tone_trim,
+                )
+                if len(data) < before:
+                    logger.info(
+                        "Message coupe: {} ms de bips operateur retires",
+                        int(1000 * (before - len(data)) / max(1, self.voice_profile.bytes_per_sec)),
+                    )
+                remain_sec = len(data) / float(max(1, self.voice_profile.bytes_per_sec))
+                if not heard_speech or remain_sec < 0.4:
+                    heard_speech = False
+                    logger.info("Raccrochage sans message (bips seulement, rien a garder)")
+                    self.last_vrx_heard_speech = False
+                    self.log_voice_session(
+                        "VRX_fin",
+                        fichier=out_path.name,
+                        octets=0,
+                        raison="disconnect_tones_empty",
+                    )
+                    self._flush_serial_rx_sync(max_sec=0.25)
+                    vrx_opened = False
+                    return True
             out_path.parent.mkdir(parents=True, exist_ok=True)
             with wave.open(str(out_path), "wb") as wf:
                 wf.setnchannels(1)
