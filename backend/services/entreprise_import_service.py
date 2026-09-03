@@ -292,6 +292,10 @@ class EntrepriseImportService:
             )
             self._db.add(row_trace)
 
+            # Commit par lots pour limiter la memoire transaction (Postgres)
+            if total_rows % 200 == 0:
+                self._db.commit()
+
             if progress_callback and (total_rows == 1 or total_rows % 25 == 0):
                 # Event "heartbeat" périodique pour la jauge, même si beaucoup de lignes sont ignorées.
                 try:

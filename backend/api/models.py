@@ -17,7 +17,7 @@ def _utc_iso(dt: Optional[datetime]) -> Optional[str]:
 
 
 class CallResponse(BaseModel):
-    """Modèle de réponse pour un appel"""
+    """Modele de reponse pour un appel"""
     id: int
     caller_id: Optional[int] = None
     phone_number: Optional[str] = None
@@ -29,6 +29,12 @@ class CallResponse(BaseModel):
     duration: Optional[int] = None
     transcription: Optional[str] = None
     audio_file: Optional[str] = None
+    # Champs a plat (schema normalise)
+    incoming_profile: Optional[str] = None
+    no_message: bool = False
+    ui_tag: Optional[str] = None
+    ivr_intent: Optional[str] = None
+    # Vue derivee read-only (compatibilite front)
     extra_data: Optional[Dict[str, Any]] = None
     osint: Optional["OsintReputationResponse"] = None
 
@@ -42,7 +48,7 @@ class CallResponse(BaseModel):
 
     @classmethod
     def from_orm(cls, obj):
-        """Compatibilité avec Pydantic v1"""
+        """Compatibilite avec Pydantic v1"""
         return cls.model_validate(obj)
 
 
@@ -163,9 +169,7 @@ class PhoneNumberProfileResponse(BaseModel):
     last_checked_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
-    
-    raw_data: Optional[Dict[str, Any]] = None
-    
+
     class Config:
         from_attributes = True
     

@@ -1,9 +1,11 @@
 """
-Gestion de la base de données (mode synchrone simple pour le développement).
+Gestion de la base de donnees (SQLAlchemy sync).
 
-On utilise un engine SQLAlchemy classique et une seule factory de sessions.
-L'initialisation est déclenchée au démarrage de l'application FastAPI.
+SQLite : create_all + migrations legeres (dev).
+PostgreSQL : pool configure ; schema via Alembic (pas de create_all par defaut).
 """
+
+import os
 
 from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import sessionmaker, Session
@@ -18,37 +20,53 @@ SessionLocal = None
 
 async def init_database(database_url: str) -> None:
     """
-    Initialise la base de données.
-    
-    Args:
-        database_url: URL de connexion à la base de données.
+    Initialise la base de donnees.
+
+    @param database_url URL de connexion (sqlite:///... ou postgresql+psycopg2://...).
     """
     global SessionLocal
 
-    logger.info(f"Initialisation de la base de données: {database_url}")
+    logger.info(f"Initialisation de la base de donnees: {database_url}")
 
-    # Engine synchrone (compatible SQLite et PostgreSQL)
+    is_sqlite = database_url.startswith("sqlite")
+    is_postgres = database_url.startswith("postgresql") or database_url.startswith("postgres")
+
     engine_kwargs = {"echo": False, "pool_pre_ping": True}
-    if database_url.startswith("sqlite"):
-        # SQLite: same-thread off pour usage API + workers locaux
+    if is_sqlite:
         engine_kwargs["connect_args"] = {"check_same_thread": False}
+    elif is_postgres:
+        engine_kwargs.update(
+            {
+                "pool_size": 10,
+                "max_overflow": 20,
+                "pool_recycle": 1800,
+                "pool_timeout": 30,
+            }
+        )
+
     engine = create_engine(database_url, **engine_kwargs)
-    if database_url.startswith("sqlite"):
+    if is_sqlite:
         @event.listens_for(engine, "connect")
         def _set_sqlite_pragma(dbapi_connection, connection_record):  # type: ignore[unused-argument]
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
 
-    # Factory de sessions
     SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
-    # Création des tables
-    Base.metadata.create_all(bind=engine)
-    _apply_lightweight_migrations(engine)
-    _apply_postgres_call_foreign_keys(engine)
+    autocreate = os.getenv("VG_DB_AUTOCREATE", "").strip().lower() in ("1", "true", "yes")
+    if is_sqlite or autocreate:
+        Base.metadata.create_all(bind=engine)
+        logger.info("create_all applique (sqlite ou VG_DB_AUTOCREATE)")
+    elif is_postgres:
+        logger.info("PostgreSQL: schema attendu via Alembic (pas de create_all)")
 
-    logger.info("Base de données initialisée")
+    if is_sqlite:
+        _apply_lightweight_migrations(engine)
+    elif is_postgres:
+        _apply_postgres_call_foreign_keys(engine)
+
+    logger.info("Base de donnees initialisee")
 
 
 def _apply_postgres_call_foreign_keys(engine) -> None:
@@ -77,15 +95,10 @@ def _apply_postgres_call_foreign_keys(engine) -> None:
 
 def _apply_lightweight_migrations(engine) -> None:
     """
-    Applique des migrations légères compatibles dev.
+    Applique des migrations legeres compatibles SQLite dev.
 
-    Contexte: on utilise create_all sans Alembic automatique au runtime.
-    Cette étape complète le schéma quand des colonnes ont été ajoutées
-    après la première création de la base locale.
+    En PostgreSQL, utiliser Alembic (runtime saute cette etape).
     """
-    # Migrations runtime limitées à SQLite dev.
-    # En PostgreSQL, préférer des migrations versionnées (Alembic) pour éviter
-    # les divergences de syntaxe et garder un schéma maîtrisé.
     if engine.dialect.name != "sqlite":
         return
 
@@ -109,12 +122,30 @@ def _apply_lightweight_migrations(engine) -> None:
             if "customer_id" in cols and "client_id" not in cols:
                 conn.execute(text("ALTER TABLE calls RENAME COLUMN customer_id TO client_id"))
                 logger.info("Migration légère appliquée: calls.customer_id -> calls.client_id")
+            for col_name, ddl in (
+                ("incoming_profile", "ALTER TABLE calls ADD COLUMN incoming_profile VARCHAR(32)"),
+                ("incoming_policy_source", "ALTER TABLE calls ADD COLUMN incoming_policy_source VARCHAR(128)"),
+                ("incoming_rings", "ALTER TABLE calls ADD COLUMN incoming_rings INTEGER"),
+                ("incoming_ignored", "ALTER TABLE calls ADD COLUMN incoming_ignored BOOLEAN NOT NULL DEFAULT 0"),
+                ("no_message", "ALTER TABLE calls ADD COLUMN no_message BOOLEAN NOT NULL DEFAULT 0"),
+                ("no_message_reason", "ALTER TABLE calls ADD COLUMN no_message_reason VARCHAR(80)"),
+                ("ui_tag", "ALTER TABLE calls ADD COLUMN ui_tag VARCHAR(64)"),
+                ("ivr_intent", "ALTER TABLE calls ADD COLUMN ivr_intent VARCHAR(100)"),
+                ("transcription_cues", "ALTER TABLE calls ADD COLUMN transcription_cues JSON"),
+            ):
+                if col_name not in cols:
+                    conn.execute(text(ddl))
+                    logger.info("Migration légère appliquée: calls.{} ajoute", col_name)
+                    cols.add(col_name)
 
         if "voicemails" in table_names:
             cols = {col["name"] for col in inspector.get_columns("voicemails")}
             if "customer_id" in cols and "client_id" not in cols:
                 conn.execute(text("ALTER TABLE voicemails RENAME COLUMN customer_id TO client_id"))
                 logger.info("Migration légère appliquée: voicemails.customer_id -> voicemails.client_id")
+            if "transcription_cues" not in cols:
+                conn.execute(text("ALTER TABLE voicemails ADD COLUMN transcription_cues JSON"))
+                logger.info("Migration légère appliquée: voicemails.transcription_cues ajoute")
 
         if "agenda" in table_names:
             columns = {col["name"] for col in inspector.get_columns("agenda")}
@@ -127,17 +158,6 @@ def _apply_lightweight_migrations(engine) -> None:
             if "entreprise_id" not in columns:
                 conn.execute(text("ALTER TABLE agenda ADD COLUMN entreprise_id INTEGER"))
                 logger.info("Migration légère appliquée: agenda.entreprise_id ajouté")
-        if "quotes" in table_names:
-            cols = {col["name"] for col in inspector.get_columns("quotes")}
-            if "customer_id" in cols and "client_id" not in cols:
-                conn.execute(text("ALTER TABLE quotes RENAME COLUMN customer_id TO client_id"))
-                logger.info("Migration légère appliquée: quotes.customer_id -> quotes.client_id")
-
-        if "clients" in table_names:
-            cols = {col["name"] for col in inspector.get_columns("clients")}
-            if "entreprise_id" not in cols:
-                conn.execute(text("ALTER TABLE clients ADD COLUMN entreprise_id INTEGER"))
-                logger.info("Migration légère appliquée: clients.entreprise_id ajouté")
             if "agenda_tag" not in columns:
                 conn.execute(text("ALTER TABLE agenda ADD COLUMN agenda_tag VARCHAR(50)"))
                 logger.info("Migration légère appliquée: agenda.agenda_tag ajouté")
@@ -150,6 +170,18 @@ def _apply_lightweight_migrations(engine) -> None:
             if "is_all_day" not in columns:
                 conn.execute(text("ALTER TABLE agenda ADD COLUMN is_all_day BOOLEAN NOT NULL DEFAULT 0"))
                 logger.info("Migration légère appliquée: agenda.is_all_day ajouté")
+
+        if "quotes" in table_names:
+            cols = {col["name"] for col in inspector.get_columns("quotes")}
+            if "customer_id" in cols and "client_id" not in cols:
+                conn.execute(text("ALTER TABLE quotes RENAME COLUMN customer_id TO client_id"))
+                logger.info("Migration légère appliquée: quotes.customer_id -> quotes.client_id")
+
+        if "clients" in table_names:
+            cols = {col["name"] for col in inspector.get_columns("clients")}
+            if "entreprise_id" not in cols:
+                conn.execute(text("ALTER TABLE clients ADD COLUMN entreprise_id INTEGER"))
+                logger.info("Migration légère appliquée: clients.entreprise_id ajouté")
 
         if "api_public_tokens" not in table_names:
             conn.execute(
@@ -244,18 +276,15 @@ def _apply_lightweight_migrations(engine) -> None:
 
 def get_db() -> Session:
     """
-    Fournit une session de base de données synchrone.
-    
-    Raises:
-        RuntimeError: si la base n'a pas encore été initialisée.
+    Fournit une session de base de donnees synchrone.
+
+    @raises RuntimeError si la base n'a pas encore ete initialisee.
     """
     if SessionLocal is None:
-        raise RuntimeError("Base de données non initialisée")
+        raise RuntimeError("Base de donnees non initialisee")
 
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-
-

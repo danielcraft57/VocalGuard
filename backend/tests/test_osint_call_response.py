@@ -25,5 +25,5 @@ def test_profile_to_osint_includes_company() -> None:
     resp = _profile_to_osint_response(profile, "+33383123456")
     assert resp.company_name == "INGEDUS.COM Nancy"
     assert resp.is_company is True
-    assert "prospectlab" in resp.sources
+    assert "database" in resp.sources
     assert resp.city == "Nancy"

@@ -69,13 +69,23 @@ Une fois le service active (`systemctl enable vocalguard`), VocalGuard demarre a
 - **Fichier de config** : `~/VocalGuard/config/config.yaml` (ou `~/.vocalguard/config.yaml` selon la config). Creer depuis `config/config.example.yaml` si besoin.
 - **Variables d'environnement** : gerer en prod via un fichier local `.env.prod` (non versionne), copie vers `.env` sur le serveur par `deploy_to_rpi.ps1`.
   Le runtime charge `.env.prod` automatiquement quand `VG_ENV=prod`, sinon fallback `.env`.
-- **Base de donnees** : SQLite par defaut (`vocalguard.db` dans le repertoire du projet). Pour PostgreSQL en prod, definir `DATABASE_URL` (ou `database_url`) avec des credentials non exposes.
+- **Base de donnees** : PostgreSQL sur **node14** (schema Alembic). Guide detaille :
+  **[POSTGRES.md](POSTGRES.md)**.
+  URL typique dans `.env` :
+  `DATABASE_URL=postgresql+psycopg2://vocalguard:<mdp>@127.0.0.1:5432/vocalguard`
+  (mot de passe root-only : `/root/vocalguard_pg_password.txt` apres install).
+  Ancien SQLite archive sous `/opt/vocalguard/data/vocalguard.db.bak.*.gz` / `.pre_postgres_*`.
+  Install / cutover : `scripts/postgres/install_postgres_node14.sh` puis `scripts/postgres/cutover_node14.sh`.
+  Acces LAN optionnel : `psql -h node14.lan -U vocalguard -d vocalguard` (pg_hba : `192.168.1.0/24`, scram).
+  Dump / restore : `pg_dump -U vocalguard vocalguard > dump.sql` / `psql -U vocalguard vocalguard < dump.sql`.
+  SSL LAN : pas obligatoire au jour 1 ; `ssl=on` possible ensuite.
 
 ## 7. Fichiers concernes
 
 | Fichier | Role |
 |--------|------|
 | `scripts/deploy_to_rpi.ps1` | Deploiement complet + generation/installation des services systemd |
+| `scripts/postgres/` | Install / cutover / indexes Postgres (voir POSTGRES.md) |
 | `run_backend.sh` | Lancement manuel (dev ou debug) |
 | `scripts/deploy_telephony.ps1` | Déploiement / mise à jour **uniquement** du daemon modem (`vocalguard-telephony`, port 8090) |
 

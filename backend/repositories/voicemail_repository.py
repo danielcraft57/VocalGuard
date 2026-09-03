@@ -42,6 +42,32 @@ class VoicemailRepository(BaseRepository[Voicemail]):
             Liste des messages récents
         """
         return self.db.query(Voicemail).order_by(desc(Voicemail.created_at)).limit(limit).all()
+
+    def list_paginated(
+        self,
+        *,
+        skip: int = 0,
+        limit: int = 100,
+        is_read: Optional[bool] = None,
+        light: bool = True,
+    ) -> List[Voicemail]:
+        """
+        Liste paginee en SQL (ORDER BY created_at DESC OFFSET/LIMIT).
+
+        @param skip Offset
+        @param limit Taille page
+        @param is_read Filtre lecture optionnel
+        @param light Si True, ne charge pas transcription_cues
+        @returns Messages
+        """
+        from sqlalchemy.orm import defer
+
+        q = self.db.query(Voicemail)
+        if is_read is not None:
+            q = q.filter(Voicemail.is_read == is_read)
+        if light:
+            q = q.options(defer(Voicemail.transcription_cues))
+        return q.order_by(desc(Voicemail.created_at)).offset(skip).limit(limit).all()
     
     def mark_as_read(self, voicemail_id: int) -> Optional[Voicemail]:
         """

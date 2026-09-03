@@ -25,7 +25,9 @@ from backend.api.models import (
 from backend.api.routes import appointments as appointments_routes
 from backend.api.routes.entreprises import _to_entreprise_response, _attach_entreprise_emails
 from backend.database.database import get_db
-from backend.database.models import ApiPublicToken, Appointment, Entreprise, EntrepriseEmail, Client, Quote, Call
+from backend.database.models import ApiPublicToken, Appointment, Entreprise, EntrepriseEmail, Client, Quote, QuoteLine, Call
+from backend.api.routes.quotes import _quote_to_response, _compute_totals
+from sqlalchemy.orm import joinedload
 
 router = APIRouter(prefix="/public", tags=["public-api"])
 
@@ -433,8 +435,13 @@ async def public_list_quotes(
     token: ApiPublicToken = Depends(_require_public_token),
 ) -> List[QuoteResponse]:
     _require_token_permission(token, "can_read_quotes", "Ce token ne peut pas lire les devis.")
-    quotes = db.query(Quote).order_by(Quote.created_at.desc()).all()
-    return [QuoteResponse.from_orm(q) for q in quotes]
+    quotes = (
+        db.query(Quote)
+        .options(joinedload(Quote.lines))
+        .order_by(Quote.created_at.desc())
+        .all()
+    )
+    return [_quote_to_response(q) for q in quotes]
 
 
 @router.post("/quotes", response_model=QuoteResponse, status_code=201)
@@ -444,23 +451,37 @@ async def public_create_quote(
     token: ApiPublicToken = Depends(_require_public_token),
 ) -> QuoteResponse:
     _require_token_permission(token, "can_write_quotes", "Ce token ne peut pas modifier les devis.")
-    total_ht_float = sum(line.quantity * line.unit_price for line in payload.lines)
-    total_ht = int(round(total_ht_float * 100))
+    total_ht, total_ttc = _compute_totals(payload.lines)
     quote = Quote(
         client_id=payload.client_id,
         phone_number=payload.phone_number,
         title=payload.title,
-        lines=[line.model_dump() for line in payload.lines],
         notes=payload.notes,
         status=payload.status,
         total_ht=total_ht,
-        total_ttc=total_ht,
+        total_ttc=total_ttc,
         created_at=datetime.utcnow(),
     )
     db.add(quote)
+    db.flush()
+    for idx, line in enumerate(payload.lines):
+        db.add(
+            QuoteLine(
+                quote_id=quote.id,
+                position=idx,
+                description=line.description,
+                quantity=line.quantity,
+                unit_price=line.unit_price,
+            )
+        )
     db.commit()
-    db.refresh(quote)
-    return QuoteResponse.from_orm(quote)
+    quote = (
+        db.query(Quote)
+        .options(joinedload(Quote.lines))
+        .filter(Quote.id == quote.id)
+        .one()
+    )
+    return _quote_to_response(quote)
 
 
 @router.get("/calls")

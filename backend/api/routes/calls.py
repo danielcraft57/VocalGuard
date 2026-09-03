@@ -751,6 +751,66 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
         )
 
 
+def _truncate_text(value: Optional[str], max_len: int = 120) -> Optional[str]:
+    """Tronque un texte pour les listes API (payload leger)."""
+    if value is None:
+        return None
+    text = str(value)
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3] + "..."
+
+
+def _call_list_extra_data(call: Call) -> Optional[dict]:
+    """
+    extra_data liste sans transcription_cues (evite lazy-load JSONB).
+
+    @param call Appel ORM (cues eventuellement defer).
+    @returns Dict compact ou None.
+    """
+    data: dict = {}
+    if call.incoming_profile:
+        data["incoming_profile"] = call.incoming_profile
+    if call.incoming_policy_source:
+        data["incoming_policy_source"] = call.incoming_policy_source
+    if call.incoming_rings is not None:
+        data["incoming_rings"] = call.incoming_rings
+    if call.incoming_ignored:
+        data["incoming_ignored"] = True
+    if call.no_message:
+        data["no_message"] = True
+    if call.no_message_reason:
+        data["no_message_reason"] = call.no_message_reason
+    if call.ui_tag:
+        data["ui_tag"] = call.ui_tag
+    if call.ivr_intent:
+        data["ivr_intent"] = call.ivr_intent
+    return data or None
+
+
+def _call_to_list_response(call: Call, osint: Optional[OsintReputationResponse] = None) -> CallResponse:
+    """Serialise un appel pour la liste (transcription tronquee, sans cues)."""
+    return CallResponse(
+        id=call.id,
+        caller_id=call.caller_id,
+        phone_number=call.phone_number,
+        caller_name=call.caller_name,
+        call_time=call.call_time,
+        answer_time=call.answer_time,
+        end_time=call.end_time,
+        status=call.status or "ringing",
+        duration=call.duration,
+        transcription=_truncate_text(call.transcription, 120),
+        audio_file=call.audio_file,
+        incoming_profile=call.incoming_profile,
+        no_message=bool(call.no_message),
+        ui_tag=call.ui_tag,
+        ivr_intent=call.ivr_intent,
+        extra_data=_call_list_extra_data(call),
+        osint=osint,
+    )
+
+
 def _profile_to_osint_response(profile: PhoneNumberProfile, phone_number: str) -> OsintReputationResponse:
     """
     Construit OsintReputationResponse a partir d'un PhoneNumberProfile (reputation, lieu, operateur, entreprise).
@@ -773,12 +833,6 @@ def _profile_to_osint_response(profile: PhoneNumberProfile, phone_number: str) -
     elif rep == "neutral":
         rec = "review"
     sources: list[str] = ["database"]
-    raw = profile.raw_data if isinstance(profile.raw_data, dict) else {}
-    extra_sources = raw.get("sources")
-    if isinstance(extra_sources, list):
-        for src in extra_sources:
-            if isinstance(src, str) and src and src not in sources:
-                sources.append(src)
     return OsintReputationResponse(
         phone_number=phone_number,
         reputation=rep,
@@ -809,7 +863,7 @@ async def get_calls(
     db: Session = Depends(get_db),
 ):
     """
-    Recupere la liste des appels.
+    Recupere la liste des appels (payload leger : pas de cues JSONB, transcription tronquee).
     Avec with_osint=true, joint les profils OSINT deja en base (pas d'appel API OSINT).
     """
     filters = {}
@@ -819,37 +873,49 @@ async def get_calls(
         filters["phone_number"] = phone_number
 
     total = call_repo.count(**filters)
-    calls = call_repo.get_all(skip=skip, limit=limit, **filters)
+    calls = call_repo.get_all_light(skip=skip, limit=limit, **filters)
 
     if not with_osint:
         return {
             "total": total,
             "skip": skip,
             "limit": limit,
-            "calls": [CallResponse.model_validate(call) for call in calls],
+            "calls": [_call_to_list_response(call) for call in calls],
         }
 
-    phones = list({c.phone_number for c in calls if c.phone_number})
+    phones = [c.phone_number for c in calls if c.phone_number]
     profile_by_phone: dict[str, PhoneNumberProfile] = {}
     if phones:
-        rows = (
-            db.query(PhoneNumberProfile)
-            .filter(PhoneNumberProfile.phone_number.in_(phones))
-            .order_by(PhoneNumberProfile.phone_number, desc(PhoneNumberProfile.last_checked_at))
-            .all()
-        )
+        osint_svc = PhoneOsintService(db, Config())
+        norms = {p: osint_svc._normalize_number(p) for p in set(phones)}
+        norm_values = list({n for n in norms.values() if n})
+        rows = []
+        if norm_values:
+            rows = (
+                db.query(PhoneNumberProfile)
+                .filter(PhoneNumberProfile.normalized_number.in_(norm_values))
+                .order_by(
+                    PhoneNumberProfile.normalized_number,
+                    desc(PhoneNumberProfile.last_checked_at),
+                )
+                .all()
+            )
+        profile_by_norm: dict[str, PhoneNumberProfile] = {}
         for p in rows:
-            if p.phone_number not in profile_by_phone:
-                profile_by_phone[p.phone_number] = p
+            if p.normalized_number not in profile_by_norm:
+                profile_by_norm[p.normalized_number] = p
+        for raw, norm in norms.items():
+            if norm in profile_by_norm:
+                profile_by_phone[raw] = profile_by_norm[norm]
 
     result_calls = []
     for call in calls:
-        data = CallResponse.model_validate(call).model_dump()
+        osint = None
         if call.phone_number and call.phone_number in profile_by_phone:
-            data["osint"] = _profile_to_osint_response(profile_by_phone[call.phone_number], call.phone_number)
-        else:
-            data["osint"] = None
-        result_calls.append(CallResponse(**data))
+            osint = _profile_to_osint_response(
+                profile_by_phone[call.phone_number], call.phone_number
+            )
+        result_calls.append(_call_to_list_response(call, osint=osint))
 
     return {
         "total": total,
@@ -1072,16 +1138,12 @@ async def patch_call_tag(
     call_repo: CallRepository = Depends(get_call_repository),
     block_service: BlockService = Depends(get_block_service),
 ):
-    """Met a jour le tag UI d'un appel (extra_data.ui_tag) et synchronise liste blanche / noire si besoin."""
+    """Met a jour le tag UI d'un appel (colonne ui_tag) et synchronise liste blanche / noire si besoin."""
     call = call_repo.get_by_id(call_id)
     if not call:
         raise HTTPException(status_code=404, detail="Appel non trouve")
 
-    meta = dict(call.extra_data or {})
-    if body.tag == "none":
-        meta.pop("ui_tag", None)
-    else:
-        meta["ui_tag"] = body.tag
+    ui_tag = None if body.tag == "none" else body.tag
 
     pn = call.phone_number
     if pn:
@@ -1090,7 +1152,7 @@ async def patch_call_tag(
         elif body.tag == "blocked":
             await block_service.block_caller(pn, reason="ui_tag_blocked")
 
-    call_repo.update(call_id, extra_data=meta)
+    call_repo.update(call_id, ui_tag=ui_tag)
     return {"ok": True, "call_id": call_id, "tag": body.tag}
 
 

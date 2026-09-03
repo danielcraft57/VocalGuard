@@ -1,6 +1,6 @@
 # Configuration exemple pour VocalGuard
 
-# Base de données
+# Base de donnees (dev SQLite ; prod node14: postgresql+psycopg2://vocalguard:...@127.0.0.1:5432/vocalguard)
 database_url: "sqlite:///vocalguard.db"
 
 # API

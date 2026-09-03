@@ -12,6 +12,10 @@ export interface Call {
   duration?: number | null;
   transcription?: string | null;
   audio_file?: string | null;
+  incoming_profile?: string | null;
+  no_message?: boolean;
+  ui_tag?: string | null;
+  ivr_intent?: string | null;
   extra_data?: Record<string, unknown> | null;
 }
 
@@ -45,12 +49,12 @@ export interface CallWithOsint extends Call {
 }
 
 /**
- * Recupere la liste des appels avec la reputation OSINT depuis la base (un seul appel API, rapide).
- * Les numeros deja enrichis en base (migration --run-osint ou appels recents) auront leur reputation.
+ * Recupere la liste des appels avec OSINT (payload liste leger cote API).
+ * Defaut 100 lignes recentes (plus rapide que 500 + TEXT/JSONB).
  */
-export async function fetchCallsWithOsint(): Promise<CallWithOsint[]> {
+export async function fetchCallsWithOsint(limit = 100): Promise<CallWithOsint[]> {
   const data = await getJson<CallListResponse & { calls: CallWithOsint[] }>(
-    "/calls?with_osint=true&limit=500"
+    `/calls?with_osint=true&limit=${Math.min(Math.max(limit, 1), 500)}`
   );
   return data.calls ?? [];
 }

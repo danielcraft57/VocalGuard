@@ -11,7 +11,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, File, UploadFile, Query, HTTPException
 from loguru import logger
 import anyio
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import or_
 from sqlalchemy import func
 from sqlalchemy import delete as sa_delete
@@ -143,9 +143,13 @@ async def list_entreprises(
             )
         )
 
-    total = base.count()
+    total = base.order_by(None).with_entities(func.count(Entreprise.id)).scalar() or 0
     entreprises = (
-        base.order_by(Entreprise.created_at.desc())
+        base.options(
+            selectinload(Entreprise.categories),
+            selectinload(Entreprise.emails),
+        )
+        .order_by(Entreprise.created_at.desc())
         .offset(skip)
         .limit(limit)
         .all()
@@ -224,11 +228,25 @@ async def get_entreprise_call_stats(
     if not digits:
         return {"total": 0, "by_status": {}, "note": "Entreprise sans téléphone"}
 
-    like = f"%{digits}%"
+    # Match exact / formats courants (evite ilike '%...%' non indexable)
+    candidates = {digits}
+    if e.phone_number:
+        candidates.add(str(e.phone_number).strip())
+    if digits.startswith("0") and len(digits) == 10:
+        candidates.add("+33" + digits[1:])
+        candidates.add("33" + digits[1:])
+    elif digits.startswith("33") and len(digits) >= 11:
+        candidates.add("0" + digits[2:])
+        candidates.add("+" + digits)
+    suffix = digits[-9:] if len(digits) >= 9 else digits
     rows = (
         db.query(Call.status, func.count(Call.id))
-        .filter(Call.phone_number.isnot(None))
-        .filter(Call.phone_number.ilike(like))  # type: ignore[attr-defined]
+        .filter(
+            or_(
+                Call.phone_number.in_(list(candidates)),
+                Call.phone_number.like(f"%{suffix}"),
+            )
+        )
         .group_by(Call.status)
         .all()
     )

@@ -109,6 +109,62 @@ class PhoneOsintService:
 
         return profile
 
+    def ensure_profiles_batch(
+        self,
+        phone_numbers: list[str],
+        *,
+        batch_size: int = 200,
+    ) -> int:
+        """
+        Cree en lot les profils OSINT manquants (bulk_insert_mappings).
+
+        @param phone_numbers Numeros a assurer.
+        @param batch_size Taille des commits.
+        @returns Nombre de profils nouvellement inseres.
+        """
+        if not phone_numbers:
+            return 0
+        normalized_map: dict[str, str] = {}
+        for raw in phone_numbers:
+            if not raw:
+                continue
+            norm = self._normalize_number(raw)
+            if norm and norm not in normalized_map:
+                normalized_map[norm] = raw
+
+        existing = {
+            row[0]
+            for row in self._db.query(PhoneNumberProfile.normalized_number)
+            .filter(PhoneNumberProfile.normalized_number.in_(list(normalized_map.keys())))
+            .all()
+        }
+        to_insert = [
+            {
+                "phone_number": phone,
+                "normalized_number": norm,
+                "created_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow(),
+                "is_company": False,
+                "is_spam": False,
+                "is_scam": False,
+                "is_commercial": False,
+                "is_telemarketer": False,
+            }
+            for norm, phone in normalized_map.items()
+            if norm not in existing
+        ]
+        inserted = 0
+        for i in range(0, len(to_insert), batch_size):
+            chunk = to_insert[i : i + batch_size]
+            if not chunk:
+                continue
+            self._db.bulk_insert_mappings(PhoneNumberProfile, chunk)
+            self._db.commit()
+            inserted += len(chunk)
+        if inserted:
+            logger.info("Profils OSINT crees en lot: {}", inserted)
+        return inserted
+
     def force_queue_refresh(self, phone_number: str) -> PhoneNumberProfile:
         """
         Cree ou recupere le profil puis relance une tache Celery OSINT (file d'attente).

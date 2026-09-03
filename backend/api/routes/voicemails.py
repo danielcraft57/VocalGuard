@@ -60,12 +60,17 @@ async def get_voicemails(
     if is_read is False:
         return [
             VoicemailResponse.model_validate(vm)
-            for vm in voicemail_repo.get_unread(skip=skip, limit=limit)
+            for vm in voicemail_repo.list_paginated(skip=skip, limit=limit, is_read=False)
         ]
-    voicemails = voicemail_repo.get_recent(limit=skip + limit)
     if is_read is True:
-        voicemails = [vm for vm in voicemails if vm.is_read]
-    return [VoicemailResponse.model_validate(vm) for vm in voicemails[skip : skip + limit]]
+        return [
+            VoicemailResponse.model_validate(vm)
+            for vm in voicemail_repo.list_paginated(skip=skip, limit=limit, is_read=True)
+        ]
+    return [
+        VoicemailResponse.model_validate(vm)
+        for vm in voicemail_repo.list_paginated(skip=skip, limit=limit)
+    ]
 
 
 @router.get("/voicemails/{voicemail_id}", response_model=VoicemailResponse)

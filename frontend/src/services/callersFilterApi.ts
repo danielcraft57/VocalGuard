@@ -21,7 +21,7 @@ export interface Caller {
  * Liste des appelants en liste blanche (Permitted, inspire callattendant).
  */
 export async function fetchWhitelist(): Promise<Caller[]> {
-  const list = await getJson<Caller[]>(`/callers?is_whitelisted=true&limit=500`);
+  const list = await getJson<Caller[]>(`/callers?is_whitelisted=true&limit=200`);
   return Array.isArray(list) ? list : [];
 }
 
@@ -29,7 +29,7 @@ export async function fetchWhitelist(): Promise<Caller[]> {
  * Liste des appelants en liste noire (Blocked, inspire callattendant).
  */
 export async function fetchBlocklist(): Promise<Caller[]> {
-  const list = await getJson<Caller[]>(`/callers?is_blocked=true&limit=500`);
+  const list = await getJson<Caller[]>(`/callers?is_blocked=true&limit=200`);
   return Array.isArray(list) ? list : [];
 }
 

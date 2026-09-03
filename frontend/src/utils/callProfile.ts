@@ -12,6 +12,7 @@ export const CALL_NO_MESSAGE_LABEL = "Pas de message";
  */
 export function isCallWithoutMessage(call: CallWithOsint | null | undefined): boolean {
   if (!call) return false;
+  if (call.no_message === true) return true;
   const ex = call.extra_data;
   if (ex && typeof ex === "object" && (ex as { no_message?: unknown }).no_message === true) {
     return true;
@@ -26,6 +27,10 @@ export function isCallWithoutMessage(call: CallWithOsint | null | undefined): bo
  * @returns permitted | screened | blocked.
  */
 export function getCallIncomingProfile(call: CallWithOsint): IncomingProfileKind {
+  const flat = String(call.incoming_profile || "").toLowerCase();
+  if (flat === "permitted" || flat === "blocked" || flat === "screened") {
+    return flat;
+  }
   const ex = call.extra_data;
   if (ex && typeof ex === "object") {
     const raw = String((ex as { incoming_profile?: string }).incoming_profile || "").toLowerCase();

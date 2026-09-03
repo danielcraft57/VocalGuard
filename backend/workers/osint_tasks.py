@@ -83,7 +83,7 @@ def _apply_osint_result_to_profile(
         # On stocke la confiance sur 0-100
         profile.confidence = int(confidence * 100)
 
-    profile.raw_data = result
+    # Plus de dump JSON brut (raw_data) : champs structures uniquement.
     profile.last_checked_at = datetime.utcnow()
 
 

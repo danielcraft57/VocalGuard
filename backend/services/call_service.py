@@ -127,7 +127,7 @@ class CallService:
         ignored: bool = False,
     ) -> Optional[Call]:
         """
-        Enregistre le profil policy sur l'appel (extra_data) pour l'UI /calls.
+        Enregistre le profil policy sur l'appel (colonnes a plat) pour l'UI /calls.
 
         @param call_id ID appel.
         @param profile permitted | screened | blocked.
@@ -139,12 +139,13 @@ class CallService:
         call = self.call_repo.get_by_id(call_id)
         if not call:
             return None
-        meta = dict(call.extra_data or {})
-        meta["incoming_profile"] = str(profile)
-        meta["incoming_policy_source"] = str(source)
-        meta["incoming_rings"] = int(rings_before_answer)
-        meta["incoming_ignored"] = bool(ignored)
-        return self.call_repo.update(call_id, extra_data=meta)
+        return self.call_repo.update(
+            call_id,
+            incoming_profile=str(profile),
+            incoming_policy_source=str(source),
+            incoming_rings=int(rings_before_answer),
+            incoming_ignored=bool(ignored),
+        )
 
     async def create_outgoing_call(self, phone_number: str) -> Call:
         """
@@ -337,7 +338,7 @@ class CallService:
         """
         Marque un appel sans message vocal (bips / silence seulement).
 
-        Pas de STT : transcription fixe « Pas de message » + drapeau extra_data.
+        Pas de STT : transcription fixe « Pas de message » + drapeau no_message.
 
         @param call_id ID appel.
         @param reason Cause (silence, bips_raccrochage, trop_court, ...).
@@ -346,10 +347,6 @@ class CallService:
         call = self.call_repo.get_by_id(call_id)
         if not call:
             return None
-        meta = dict(call.extra_data or {})
-        meta["no_message"] = True
-        meta["no_message_reason"] = str(reason or "vide")[:80]
-        meta.pop("transcription_cues", None)
         # Plus besoin de garder un WAV d'accueil / bips sans message.
         audio_path = call.audio_file
         if audio_path:
@@ -365,7 +362,9 @@ class CallService:
             call_id,
             transcription="Pas de message",
             audio_file=None,
-            extra_data=meta,
+            no_message=True,
+            no_message_reason=str(reason or "vide")[:80],
+            transcription_cues=None,
         )
 
     async def set_transcription_and_intent(
@@ -379,8 +378,8 @@ class CallService:
         Met a jour la transcription et/ou l'intent IVR associe a un appel.
 
         - transcription est stockee dans Call.transcription
-        - intent_name est stocke dans Call.ivr_intent (colonne, plus JSON)
-        - cues SRT (4-5 mots) dans extra_data.transcription_cues
+        - intent_name est stocke dans Call.ivr_intent
+        - cues SRT (4-5 mots) dans Call.transcription_cues (JSONB)
         """
         call = self.call_repo.get_by_id(call_id)
         if not call:
@@ -394,9 +393,7 @@ class CallService:
             update_data["ivr_intent"] = str(intent_name)[:100]
 
         if cues:
-            meta = dict(call.extra_data or {})
-            meta["transcription_cues"] = cues
-            update_data["extra_data"] = meta
+            update_data["transcription_cues"] = cues
 
         if not update_data:
             return call

@@ -19,11 +19,13 @@ router = APIRouter()
 async def list_clients(
     db: Session = Depends(get_db),
     entreprise_id: Optional[int] = Query(None, description="Filtrer par entreprise"),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(200, ge=1, le=1000),
 ) -> List[ClientResponse]:
     q = db.query(Client).order_by(Client.created_at.desc())
     if entreprise_id is not None:
         q = q.filter(Client.entreprise_id == entreprise_id)
-    rows = q.all()
+    rows = q.offset(skip).limit(limit).all()
     return [ClientResponse.from_orm(c) for c in rows]
 
 

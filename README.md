@@ -96,8 +96,9 @@ uvicorn backend.main:app --reload
 - L'API sera accessible sur `http://localhost:8000`
 - La documentation de l'API sera disponible sur `http://localhost:8000/docs`
 
-Le backend utilise par défaut une base SQLite locale `vocalguard.db` à la racine.  
-En production, vous pouvez passer sur PostgreSQL en ajustant `database_url` dans la configuration.
+Le backend utilise par defaut une base SQLite locale `vocalguard.db` a la racine (dev).
+En production (**node14**), la stack tourne sur **PostgreSQL** (schema Alembic, pool SQLAlchemy).
+Details : [docs/POSTGRES.md](docs/POSTGRES.md) (install LAN, cutover, indexes perf, dump/restore).
 
 ### Profils d'environnement (`.env` et `.env.prod`)
 

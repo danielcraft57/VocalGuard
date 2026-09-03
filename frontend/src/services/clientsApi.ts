@@ -12,9 +12,13 @@ export interface Client {
 }
 
 /**
- * Liste les clients connus.
+ * Liste les clients connus (pagine cote API, defaut 200).
  */
-export async function fetchClients(): Promise<Client[]> {
-  return getJson<Client[]>("/clients");
+export async function fetchClients(opts?: { skip?: number; limit?: number }): Promise<Client[]> {
+  const params = new URLSearchParams();
+  if (opts?.skip != null) params.set("skip", String(opts.skip));
+  if (opts?.limit != null) params.set("limit", String(opts.limit));
+  const qs = params.toString();
+  return getJson<Client[]>(`/clients${qs ? `?${qs}` : ""}`);
 }
 

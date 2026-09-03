@@ -56,6 +56,32 @@ function startOfWeek(base: Date): Date {
   return d;
 }
 
+/**
+ * Fenetre de chargement agenda (marge autour de la vue pour rester fluide).
+ */
+function agendaFetchWindow(view: AgendaView, cursor: Date): { from: Date; to: Date } {
+  if (view === "month") {
+    const from = new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1);
+    const to = new Date(cursor.getFullYear(), cursor.getMonth() + 2, 1);
+    return { from, to };
+  }
+  if (view === "day") {
+    const from = new Date(cursor);
+    from.setDate(from.getDate() - 2);
+    from.setHours(0, 0, 0, 0);
+    const to = new Date(cursor);
+    to.setDate(to.getDate() + 3);
+    to.setHours(0, 0, 0, 0);
+    return { from, to };
+  }
+  // week (+ marge)
+  const from = startOfWeek(cursor);
+  from.setDate(from.getDate() - 7);
+  const to = startOfWeek(cursor);
+  to.setDate(to.getDate() + 21);
+  return { from, to };
+}
+
 function defaultFormFromDate(start: Date): AppointmentPayload {
   const end = new Date(start.getTime() + 60 * 60 * 1000);
   return {
@@ -108,7 +134,7 @@ export function useAgendaCalendar() {
   }, []);
 
   useEffect(() => {
-    fetchEntreprises({ limit: 120 })
+    fetchEntreprises({ limit: 60 })
       .then((res) => {
         setEntrepriseCache(res.items);
         setEntrepriseOptions(res.items.slice(0, 20));
@@ -141,7 +167,8 @@ export function useAgendaCalendar() {
     let cancelled = false;
     async function loadEvents(): Promise<void> {
       try {
-        const data = await fetchAppointments();
+        const { from, to } = agendaFetchWindow(view, cursorDate);
+        const data = await fetchAppointments({ from, to });
         if (!cancelled) {
           setEvents(data);
           setError(null);
@@ -160,7 +187,7 @@ export function useAgendaCalendar() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [view, cursorDate]);
 
   const weekDays = useMemo(() => {
     const start = startOfWeek(cursorDate);
@@ -262,7 +289,8 @@ export function useAgendaCalendar() {
   };
 
   const refreshEvents = async (): Promise<void> => {
-    setEvents(await fetchAppointments());
+    const { from, to } = agendaFetchWindow(view, cursorDate);
+    setEvents(await fetchAppointments({ from, to }));
   };
 
   const saveEvent = async (): Promise<void> => {

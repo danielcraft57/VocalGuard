@@ -30,11 +30,30 @@ class CallRepository(BaseRepository[Call]):
         Returns:
             Liste des appels ordonnee par date decroissante
         """
+        return self._list_query(light=False, skip=skip, limit=limit, **filters).all()
+
+    def get_all_light(self, skip: int = 0, limit: int = 100, **filters) -> List[Call]:
+        """
+        Liste appels sans charger transcription_cues (JSONB) - page liste.
+
+        @param skip Offset
+        @param limit Limite
+        @param filters Filtres egalite
+        @returns Appels legers
+        """
+        return self._list_query(light=True, skip=skip, limit=limit, **filters).all()
+
+    def _list_query(self, *, light: bool, skip: int, limit: int, **filters):
+        """Construit la requete liste appels (option defer cues)."""
+        from sqlalchemy.orm import defer
+
         query = self.db.query(Call)
         for key, value in filters.items():
             if hasattr(Call, key) and value is not None:
                 query = query.filter(getattr(Call, key) == value)
-        return query.order_by(desc(Call.call_time)).offset(skip).limit(limit).all()
+        if light:
+            query = query.options(defer(Call.transcription_cues))
+        return query.order_by(desc(Call.call_time)).offset(skip).limit(limit)
 
     def get_recent_calls(self, limit: int = 50) -> List[Call]:
         """

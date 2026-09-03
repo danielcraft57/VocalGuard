@@ -4,9 +4,10 @@ from datetime import datetime, time
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
 from sqlalchemy.orm import Session
+from sqlalchemy.orm import load_only
 
 from backend.api.models import (
     AppointmentCreate,
@@ -109,8 +110,22 @@ def _assert_appointment_allowed(
 
 @router.get("/agenda", response_model=List[AppointmentResponse])
 @router.get("/appointments", response_model=List[AppointmentResponse], include_in_schema=False)
-async def list_appointments(db: Session = Depends(get_db)) -> List[AppointmentResponse]:
-    appointments = db.query(Appointment).order_by(Appointment.start_time.asc()).all()
+async def list_appointments(
+    db: Session = Depends(get_db),
+    from_time: Optional[datetime] = Query(None, description="Debut fenetre (inclus)"),
+    to_time: Optional[datetime] = Query(None, description="Fin fenetre (exclus)"),
+) -> List[AppointmentResponse]:
+    """
+    Liste les RDV, optionnellement bornes a une fenetre calendrier.
+
+    Sans bornes : charge tout (compat). Avec from/to : filtre indexable sur start_time.
+    """
+    q = db.query(Appointment)
+    if from_time is not None:
+        q = q.filter(Appointment.start_time >= from_time)
+    if to_time is not None:
+        q = q.filter(Appointment.start_time < to_time)
+    appointments = q.order_by(Appointment.start_time.asc()).all()
     return [AppointmentResponse.from_orm(a) for a in appointments]
 
 
@@ -239,12 +254,25 @@ async def get_appointments_context(db: Session = Depends(get_db)) -> dict:
     non_working_days = (
         db.query(AppointmentNonWorkingDay).order_by(AppointmentNonWorkingDay.date.asc()).all()
     )
-    recent_calls = db.query(Call).order_by(Call.call_time.desc()).limit(30).all()
+    recent_calls = (
+        db.query(Call)
+        .options(
+            load_only(
+                Call.id,
+                Call.phone_number,
+                Call.call_time,
+                Call.transcription,
+                Call.ivr_intent,
+            )
+        )
+        .order_by(Call.call_time.desc())
+        .limit(30)
+        .all()
+    )
     ml_brain = _get_ml_brain()
     call_suggestions = []
     for call in recent_calls:
-        metadata = dict(call.extra_data or {})
-        intent = metadata.get("ivr_intent")
+        intent = call.ivr_intent
         transcription = call.transcription or ""
         if intent or transcription:
             ml_context = None

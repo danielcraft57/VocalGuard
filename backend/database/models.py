@@ -4,8 +4,27 @@ Modèles de base de données SQLAlchemy
 
 from datetime import datetime
 from typing import Optional
-from sqlalchemy import Column, Integer, String, DateTime, Date, Boolean, Text, ForeignKey, JSON, Float, Table, Time, UniqueConstraint
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    DateTime,
+    Date,
+    Boolean,
+    Text,
+    ForeignKey,
+    Float,
+    Table,
+    Time,
+    UniqueConstraint,
+    Index,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.types import JSON as SA_JSON
+
+# JSONB sur Postgres, JSON portable ailleurs (tests SQLite).
+JsonbCompat = SA_JSON().with_variant(JSONB(), "postgresql")
 
 Base = declarative_base()
 
@@ -25,99 +44,145 @@ entreprise_email_links = Table(
 
 
 class Caller(Base):
-    """Modèle pour les appelants"""
-    
+    """Modele pour les appelants (pas de JSON metier)."""
+
     __tablename__ = "callers"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     phone_number = Column(String(20), unique=True, index=True, nullable=False)
     name = Column(String(255), nullable=True)
-    is_blocked = Column(Boolean, default=False)
-    is_whitelisted = Column(Boolean, default=False)
+    is_blocked = Column(Boolean, default=False, nullable=False, index=True)
+    is_whitelisted = Column(Boolean, default=False, nullable=False, index=True)
     notes = Column(Text, nullable=True)
-    extra_data = Column("metadata", JSON, nullable=True)  # Données supplémentaires (score, tags, etc.)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # Relations
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
     calls = relationship("Call", back_populates="caller")
 
 
 class FrenchPhonePrefix(Base):
-    """Modèle pour les préfixes de numéros français"""
-    
+    """Modele pour les prefixes de numeros francais"""
+
     __tablename__ = "french_phone_prefixes"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    prefix = Column(String(10), unique=True, index=True, nullable=False)  # Ex: 0387
+    prefix = Column(String(10), unique=True, index=True, nullable=False)
     city = Column(String(255), nullable=True)
     region = Column(String(255), nullable=True)
     department = Column(String(255), nullable=True)
     postal_code = Column(String(10), nullable=True)
     operator = Column(String(100), nullable=True)
-    operator_type = Column(String(50), nullable=True)  # historique, alternatif
-    line_type = Column(String(20), nullable=True)  # mobile, landline, special
+    operator_type = Column(String(50), nullable=True)
+    line_type = Column(String(20), nullable=True)
     latitude = Column(String(20), nullable=True)
     longitude = Column(String(20), nullable=True)
     population = Column(Integer, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
 class Call(Base):
-    """Modèle pour les appels"""
-    
+    """Modele pour les appels (colonnes a plat, cues SRT en JSONB)."""
+
     __tablename__ = "calls"
-    
+    __table_args__ = (
+        Index("ix_calls_call_time", "call_time"),
+        Index("ix_calls_status", "status"),
+        Index("ix_calls_phone_number", "phone_number"),
+        Index("ix_calls_status_call_time", "status", "call_time"),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
-    caller_id = Column(Integer, ForeignKey("callers.id", ondelete="SET NULL"), nullable=True)
-    client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
-    phone_number = Column(String(20), index=True, nullable=True)
+    caller_id = Column(Integer, ForeignKey("callers.id", ondelete="SET NULL"), nullable=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True, index=True)
+    phone_number = Column(String(20), nullable=True)
     caller_name = Column(String(255), nullable=True)
-    
+
     call_time = Column(DateTime, default=datetime.utcnow, nullable=False)
     answer_time = Column(DateTime, nullable=True)
     end_time = Column(DateTime, nullable=True)
-    
-    status = Column(String(50), default="ringing")  # ringing, answered, blocked, completed, missed
-    duration = Column(Integer, nullable=True)  # Durée en secondes
-    
-    transcription = Column(Text, nullable=True)  # Transcription de l'appel
-    audio_file = Column(String(500), nullable=True)  # Chemin du fichier audio
-    
-    extra_data = Column("metadata", JSON, nullable=True)  # Données supplémentaires
-    
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relations
+
+    status = Column(String(50), default="ringing", nullable=False)
+    duration = Column(Integer, nullable=True)
+
+    transcription = Column(Text, nullable=True)
+    audio_file = Column(String(500), nullable=True)
+
+    # Ancien extra_data JSON -> colonnes
+    incoming_profile = Column(String(32), nullable=True)
+    incoming_policy_source = Column(String(128), nullable=True)
+    incoming_rings = Column(Integer, nullable=True)
+    incoming_ignored = Column(Boolean, default=False, nullable=False)
+    no_message = Column(Boolean, default=False, nullable=False)
+    no_message_reason = Column(String(80), nullable=True)
+    ui_tag = Column(String(64), nullable=True)
+    ivr_intent = Column(String(100), nullable=True)
+    # Seul JSON autorise (karaoke SRT)
+    transcription_cues = Column(JsonbCompat, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
     caller = relationship("Caller", back_populates="calls")
     client = relationship("Client", back_populates="calls")
+    voicemails = relationship("Voicemail", back_populates="call")
+
+    @property
+    def extra_data(self) -> Optional[dict]:
+        """
+        Vue derivee read-only pour l'API / front (anciennement colonne JSON metadata).
+
+        @returns Dict des champs a plat non vides, ou None.
+        """
+        data: dict = {}
+        if self.incoming_profile:
+            data["incoming_profile"] = self.incoming_profile
+        if self.incoming_policy_source:
+            data["incoming_policy_source"] = self.incoming_policy_source
+        if self.incoming_rings is not None:
+            data["incoming_rings"] = self.incoming_rings
+        if self.incoming_ignored:
+            data["incoming_ignored"] = True
+        if self.no_message:
+            data["no_message"] = True
+        if self.no_message_reason:
+            data["no_message_reason"] = self.no_message_reason
+        if self.ui_tag:
+            data["ui_tag"] = self.ui_tag
+        if self.ivr_intent:
+            data["ivr_intent"] = self.ivr_intent
+        if self.transcription_cues is not None:
+            data["transcription_cues"] = self.transcription_cues
+        return data or None
 
 
 class Voicemail(Base):
-    """Modèle pour les messages vocaux"""
-    
+    """Modele pour les messages vocaux (cues SRT optionnels en JSONB)."""
+
     __tablename__ = "voicemails"
-    
+    __table_args__ = (
+        Index("ix_voicemails_created_at", "created_at"),
+        Index("ix_voicemails_read_archived_created", "is_read", "is_archived", "created_at"),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
-    call_id = Column(Integer, ForeignKey("calls.id", ondelete="CASCADE"), nullable=True)
-    caller_id = Column(Integer, ForeignKey("callers.id"), nullable=True)
-    client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
-    
+    call_id = Column(Integer, ForeignKey("calls.id", ondelete="CASCADE"), nullable=True, index=True)
+    caller_id = Column(Integer, ForeignKey("callers.id", ondelete="SET NULL"), nullable=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True, index=True)
+
     phone_number = Column(String(20), index=True, nullable=True)
     caller_name = Column(String(255), nullable=True)
-    
+
     audio_file = Column(String(500), nullable=False)
     transcription = Column(Text, nullable=True)
-    duration = Column(Integer, nullable=True)  # Durée en secondes
-    
-    is_read = Column(Boolean, default=False)
-    is_archived = Column(Boolean, default=False)
-    
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Relations
-    call = relationship("Call")
+    transcription_cues = Column(JsonbCompat, nullable=True)
+    duration = Column(Integer, nullable=True)
+
+    is_read = Column(Boolean, default=False, nullable=False)
+    is_archived = Column(Boolean, default=False, nullable=False)
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    call = relationship("Call", back_populates="voicemails")
     caller = relationship("Caller")
     client = relationship("Client", back_populates="voicemails")
 
@@ -140,20 +205,20 @@ class BlockRule(Base):
 
 
 class PhoneNumberProfile(Base):
-    """Modele pour les profils OSINT des numeros."""
-    
+    """Modele pour les profils OSINT des numeros (champs structures, sans dump JSON)."""
+
     __tablename__ = "phone_number_profiles"
-    
+    __table_args__ = (
+        UniqueConstraint("normalized_number", name="uq_phone_number_profiles_normalized"),
+    )
+
     id = Column(Integer, primary_key=True, index=True)
-    
-    # Numero tel tel que vu dans les appels
+
     phone_number = Column(String(32), index=True, nullable=False)
-    # Numero normalise (ex: format E.164) pour dedoublonnage
-    normalized_number = Column(String(32), index=True, nullable=False)
-    
-    caller_id = Column(Integer, ForeignKey("callers.id"), nullable=True)
-    
-    # Informations basiques
+    normalized_number = Column(String(32), nullable=False)
+
+    caller_id = Column(Integer, ForeignKey("callers.id", ondelete="SET NULL"), nullable=True, index=True)
+
     country = Column(String(64), nullable=True)
     region = Column(String(128), nullable=True)
     city = Column(String(128), nullable=True)
@@ -162,29 +227,22 @@ class PhoneNumberProfile(Base):
     line_type = Column(String(32), nullable=True)
     operator = Column(String(128), nullable=True)
     carrier = Column(String(128), nullable=True)
-    
-    # Identite / entreprise
-    is_company = Column(Boolean, default=False)
+
+    is_company = Column(Boolean, default=False, nullable=False)
     name = Column(String(255), nullable=True)
     company_name = Column(String(255), nullable=True)
-    
-    # Reputation
-    reputation = Column(String(32), nullable=True)
-    is_spam = Column(Boolean, default=False)
-    is_scam = Column(Boolean, default=False)
-    is_commercial = Column(Boolean, default=False)
-    is_telemarketer = Column(Boolean, default=False)
-    # Confiance en pourcentage (0 - 100)
+
+    reputation = Column(String(32), nullable=True, index=True)
+    is_spam = Column(Boolean, default=False, nullable=False, index=True)
+    is_scam = Column(Boolean, default=False, nullable=False, index=True)
+    is_commercial = Column(Boolean, default=False, nullable=False)
+    is_telemarketer = Column(Boolean, default=False, nullable=False)
     confidence = Column(Integer, nullable=True)
-    
-    # Donnees brutes renvoyees par les outils OSINT
-    raw_data = Column(JSON, nullable=True)
-    
+
     last_checked_at = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
-    # Relations
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
     caller = relationship("Caller")
 
 
@@ -201,7 +259,7 @@ class Client(Base):
     name = Column(String(255), nullable=True)
     notes = Column(Text, nullable=True)
     
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relations
@@ -216,6 +274,10 @@ class Entreprise(Base):
     """Modele pour les entreprises importees (prospection)."""
 
     __tablename__ = "entreprises"
+    __table_args__ = (
+        Index("ix_entreprises_created_at", "created_at"),
+        Index("ix_entreprises_country", "country"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
 
@@ -379,11 +441,15 @@ class Appointment(Base):
     """Modele pour les rendez-vous."""
     
     __tablename__ = "agenda"
+    __table_args__ = (
+        Index("ix_agenda_start_time", "start_time"),
+        Index("ix_agenda_created_at", "created_at"),
+    )
     
     id = Column(Integer, primary_key=True, index=True)
     
-    client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
-    source_call_id = Column(Integer, ForeignKey("calls.id", ondelete="SET NULL"), nullable=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True, index=True)
+    source_call_id = Column(Integer, ForeignKey("calls.id", ondelete="SET NULL"), nullable=True, index=True)
     entreprise_id = Column(Integer, ForeignKey("entreprises.id", ondelete="CASCADE"), nullable=True, index=True)
     phone_number = Column(String(20), index=True, nullable=True)
     
@@ -442,27 +508,50 @@ class AppointmentNonWorkingDay(Base):
 
 
 class Quote(Base):
-    """Modele pour les devis."""
-    
+    """Modele pour les devis (lignes en table enfant quote_lines)."""
+
     __tablename__ = "quotes"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    
-    client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True)
+
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="SET NULL"), nullable=True, index=True)
     phone_number = Column(String(20), index=True, nullable=True)
-    
+
     title = Column(String(255), nullable=False)
-    lines = Column(JSON, nullable=False)  # Liste de lignes serializee
     notes = Column(Text, nullable=True)
-    status = Column(String(50), default="draft")
-    
+    status = Column(String(50), default="draft", nullable=False)
+
     # Montants en centimes pour eviter les flottants
     total_ht = Column(Integer, nullable=True)
     total_ttc = Column(Integer, nullable=True)
-    
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
     client = relationship("Client", back_populates="quotes")
+    lines = relationship(
+        "QuoteLine",
+        back_populates="quote",
+        cascade="all, delete-orphan",
+        order_by="QuoteLine.position",
+    )
+
+
+class QuoteLine(Base):
+    """Ligne de devis (remplace quotes.lines JSON)."""
+
+    __tablename__ = "quote_lines"
+    __table_args__ = (
+        Index("ix_quote_lines_quote_id", "quote_id"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    quote_id = Column(Integer, ForeignKey("quotes.id", ondelete="CASCADE"), nullable=False)
+    position = Column(Integer, nullable=False, default=0)
+    description = Column(String(500), nullable=False)
+    quantity = Column(Float, nullable=False, default=1.0)
+    unit_price = Column(Float, nullable=False, default=0.0)
+
+    quote = relationship("Quote", back_populates="lines")
 
 
 class ApiPublicToken(Base):
