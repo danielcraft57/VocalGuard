@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   fetchIncomingCallConfig,
   patchIncomingCallConfig,
@@ -8,8 +8,10 @@ import {
   type IncomingCallConfigPatch
 } from "../services/settingsApi";
 
+const AUTOSAVE_DELAY_MS = 650;
+
 /**
- * Hook pour charger et sauvegarder la config appels entrants.
+ * Hook pour charger et sauvegarder la config appels entrants (auto-save debounce).
  */
 export function useIncomingCallConfig() {
   const [config, setConfig] = useState<IncomingCallConfig | null>(null);
@@ -18,6 +20,11 @@ export function useIncomingCallConfig() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const draftRef = useRef(draft);
+  const savingRef = useRef(false);
+  const pendingAfterSaveRef = useRef(false);
+
+  draftRef.current = draft;
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -42,6 +49,7 @@ export function useIncomingCallConfig() {
     value: IncomingCallConfigPatch[K]
   ) => {
     setDraft((prev) => ({ ...prev, [key]: value }));
+    setSuccess(null);
   }, []);
 
   const effective = config
@@ -51,23 +59,51 @@ export function useIncomingCallConfig() {
   const dirty = Object.keys(draft).length > 0;
 
   const save = useCallback(async (): Promise<boolean> => {
-    if (!dirty) return true;
+    const payload = { ...draftRef.current };
+    if (Object.keys(payload).length === 0) return true;
+    if (savingRef.current) {
+      pendingAfterSaveRef.current = true;
+      return false;
+    }
+    savingRef.current = true;
     setSaving(true);
     setError(null);
-    setSuccess(null);
     try {
-      const updated = await patchIncomingCallConfig(draft);
+      const updated = await patchIncomingCallConfig(payload);
       setConfig(updated);
-      setDraft({});
-      setSuccess("Parametres enregistres");
+      setDraft((prev) => {
+        const next: IncomingCallConfigPatch = { ...prev };
+        for (const key of Object.keys(payload) as (keyof IncomingCallConfigPatch)[]) {
+          if (JSON.stringify(next[key]) === JSON.stringify(payload[key])) {
+            delete next[key];
+          }
+        }
+        return next;
+      });
+      setSuccess("Enregistre automatiquement");
       return true;
     } catch (e) {
       setError(e instanceof Error ? e.message : "Echec enregistrement");
       return false;
     } finally {
+      savingRef.current = false;
       setSaving(false);
+      if (pendingAfterSaveRef.current) {
+        pendingAfterSaveRef.current = false;
+        window.setTimeout(() => {
+          void save();
+        }, AUTOSAVE_DELAY_MS);
+      }
     }
-  }, [dirty, draft]);
+  }, []);
+
+  useEffect(() => {
+    if (!dirty || loading) return undefined;
+    const timer = window.setTimeout(() => {
+      void save();
+    }, AUTOSAVE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [draft, dirty, loading, save]);
 
   return {
     config: effective,
@@ -80,6 +116,7 @@ export function useIncomingCallConfig() {
     setSuccess,
     patchField,
     save,
-    reload
+    reload,
+    autoSave: true as const
   };
 }

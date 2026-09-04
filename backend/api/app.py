@@ -38,6 +38,7 @@ from backend.api.routes import (
     public_mobile,
     auth_ui,
     tokens,
+    kb as kb_routes,
 )
 from backend.api.routes.realtime import wire_main_process_realtime
 from backend.database import database as db_module
@@ -71,6 +72,7 @@ def create_app(config: Config) -> FastAPI:
         allow_headers=["*"],
     )
     app.add_middleware(UiAuthMiddleware, config=config)
+    app.state.config = config
     
     # Inclure les routes
     app.include_router(calls.router, prefix="/api/v1", tags=["calls"])
@@ -96,6 +98,7 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(public_mobile.router, prefix="/api/v1")
     app.include_router(auth_ui.router, prefix="/api/v1")
     app.include_router(tokens.router, prefix="/api/v1")
+    app.include_router(kb_routes.router, prefix="/api/v1", tags=["kb"])
     
     # Dossier qui accueille le front (build statique Next.js copié depuis `frontend/out`)
     # Resolve en absolu pour ne pas dépendre du répertoire de travail au lancement.
@@ -110,6 +113,21 @@ def create_app(config: Config) -> FastAPI:
     async def on_startup() -> None:
         """Initialise la base de donnees et demarre la surveillance des appels (modem)."""
         await db_module.init_database(config.database_url)
+
+        # Seed intents KB si table vide (one-shot)
+        try:
+            from backend.services import intent_repository as intent_repo
+
+            db_seed = db_module.SessionLocal()
+            try:
+                base = Path(config.base_path) if config.base_path else Path(".")
+                n = intent_repo.ensure_seeded(db_seed, base)
+                if n:
+                    logger.info("Seed intents KB: {} intents", n)
+            finally:
+                db_seed.close()
+        except Exception as exc:
+            logger.warning("Seed intents KB ignore: {}", exc)
 
         # Demarrer le gestionnaire d'appels (modem, IVR, blocage) en tache de fond
         db = db_module.SessionLocal()

@@ -232,6 +232,7 @@ export default function IncomingAdvancedSettingsPage() {
           </Accordion>
 
           <VgSaveBar
+            autoSave
             saving={saving}
             dirty={dirty}
             error={error}

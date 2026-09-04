@@ -5,7 +5,11 @@ import Link from "next/link";
 import {
   Box,
   CircularProgress,
+  FormControl,
   FormControlLabel,
+  InputLabel,
+  MenuItem,
+  Select,
   Slider,
   Step,
   StepLabel,
@@ -23,6 +27,7 @@ import { VgSettingsSection } from "../../../components/mui/VgSettingsSection";
 import { useIncomingCallConfig } from "../../../hooks/useIncomingCallConfig";
 
 type VoicemailBlock = {
+  mode?: "simple" | "ivr" | "conversation";
   require_dtmf?: boolean;
   dtmf_digit?: string;
   dtmf_prompt_source?: "tts" | "wav";
@@ -67,7 +72,7 @@ export default function VoicemailSettingsPage() {
     <AppLayout title="Messagerie et DTMF" hidePageHeader>
       <VgPageHeader
         title="Messagerie et DTMF"
-        subtitle="Filtre anti-robots, duree d'enregistrement et fin sur silence."
+        subtitle="Mode conversation, filtre anti-robots, duree d'enregistrement et fin sur silence."
         action={
           <Link href="/settings" style={{ display: "flex", alignItems: "center", gap: 4 }}>
             <ArrowBackIcon fontSize="small" />
@@ -82,6 +87,34 @@ export default function VoicemailSettingsPage() {
         </Box>
       ) : (
         <>
+          <VgSettingsSection
+            title="Mode repondeur"
+            description="Simple = message classique. Conversation = intents KB (STT node15). IVR = ancien dialogue keywords."
+          >
+            <FormControl size="small" sx={{ minWidth: 260 }}>
+              <InputLabel id="vm-mode-label">Mode</InputLabel>
+              <Select
+                labelId="vm-mode-label"
+                label="Mode"
+                value={vm.mode || "simple"}
+                onChange={(e) =>
+                  patchVm({
+                    mode: e.target.value as "simple" | "ivr" | "conversation"
+                  })
+                }
+              >
+                <MenuItem value="simple">Simple (bip + message)</MenuItem>
+                <MenuItem value="conversation">Conversation (intents KB)</MenuItem>
+                <MenuItem value="ivr">IVR keywords (legacy)</MenuItem>
+              </Select>
+            </FormControl>
+            {(vm.mode || "simple") === "conversation" ? (
+              <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
+                Necessite STT (node15) et des voix regenerees depuis /kb.
+              </Typography>
+            ) : null}
+          </VgSettingsSection>
+
           <VgSettingsSection
             title="Flux repondeur"
             description="Etapes typiques apres decrochage (le DTMF est optionnel)."
@@ -178,6 +211,7 @@ export default function VoicemailSettingsPage() {
           </VgSettingsSection>
 
           <VgSaveBar
+            autoSave
             saving={saving}
             dirty={dirty}
             error={error}

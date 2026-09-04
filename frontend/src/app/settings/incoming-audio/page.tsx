@@ -611,6 +611,7 @@ export default function IncomingAudioSettingsPage() {
           </Accordion>
 
           <VgSaveBar
+            autoSave
             saving={saving}
             dirty={dirty}
             error={error}

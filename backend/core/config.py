@@ -84,6 +84,9 @@ class Config(BaseSettings):
     # Service STT distant (ex. node15.lan:8100) — messages vocaux batch.
     stt_service_url: Optional[str] = Field(default=None)
     stt_internal_token: Optional[str] = Field(default=None)
+    # Service TTS distant (ex. node15.lan:8100) — accueil, KB, apercu incoming-audio.
+    # Si vide : fallback sur stt_service_url (meme daemon historique).
+    tts_service_url: Optional[str] = Field(default=None)
 
     # Service OSINT distant (ex. node15.lan:8110) — PhoneInfoga / scanners.
     osint_service_url: Optional[str] = Field(default=None)
@@ -140,7 +143,7 @@ class Config(BaseSettings):
     
     # Messagerie vocale
     voicemail_enabled: bool = Field(default=True)
-    voicemail_mode: str = Field(default="simple")  # simple (repondeur) ou ivr (dialogue STT)
+    voicemail_mode: str = Field(default="simple")  # simple | ivr | conversation
     voicemail_greeting: str = Field(
         default=(
             "Bonjour, vous êtes bien chez DanielCraft, de Loïc Daniel, "
@@ -229,6 +232,12 @@ class Config(BaseSettings):
             self.stt_service_url = os.environ.get("STT_SERVICE_URL", "").strip().rstrip("/") or None
         if os.environ.get("STT_INTERNAL_TOKEN"):
             self.stt_internal_token = os.environ.get("STT_INTERNAL_TOKEN", "").strip() or None
+        if os.environ.get("TTS_SERVICE_URL"):
+            self.tts_service_url = os.environ.get("TTS_SERVICE_URL", "").strip().rstrip("/") or None
+        if os.environ.get("VOICEMAIL_MODE"):
+            mode = os.environ.get("VOICEMAIL_MODE", "").strip().lower()
+            if mode in ("simple", "ivr", "conversation"):
+                self.voicemail_mode = mode
         if os.environ.get("OSINT_SERVICE_URL"):
             self.osint_service_url = os.environ.get("OSINT_SERVICE_URL", "").strip().rstrip("/") or None
         if os.environ.get("OSINT_INTERNAL_TOKEN"):

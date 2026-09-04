@@ -28,6 +28,8 @@ import { getCallRecordingUrl } from "../services/callsApi";
 import { formatApiDateTime, formatDurationMinSec, parseApiUtcDate } from "../utils/dateTime";
 import { getCallIncomingProfile, isCallWithoutMessage, CALL_NO_MESSAGE_LABEL } from "../utils/callProfile";
 import { VgProfileChip } from "./mui/VgProfileChip";
+import { KbIntentBars } from "./kb/KbIntentBars";
+import { getWsBaseUrl } from "../services/httpClient";
 import {
   buildTranscriptCues,
   cuesFromExtraData,
@@ -252,6 +254,9 @@ export function CallDetailModal({
   const [currentTime, setCurrentTime] = useState(0);
   const [audioDuration, setAudioDuration] = useState(0);
   const [fullTextOpen, setFullTextOpen] = useState(false);
+  const [liveTranscript, setLiveTranscript] = useState("");
+  const [liveBelief, setLiveBelief] = useState<Array<{ tag: string; score: number }>>([]);
+  const [liveCommit, setLiveCommit] = useState<string | null>(null);
 
   const recordingUrl = call?.audio_file ? getCallRecordingUrl(call.id) : null;
   const fallbackDuration = call ? getCallDurationSec(call) : 0;
@@ -275,7 +280,68 @@ export function CallDetailModal({
     setCurrentTime(0);
     setAudioDuration(0);
     setFullTextOpen(false);
+    setLiveTranscript("");
+    setLiveBelief([]);
+    setLiveCommit(null);
   }, [call?.id]);
+
+  useEffect(() => {
+    if (!open || !call?.id) return undefined;
+    let ws: WebSocket | null = null;
+    let cancelled = false;
+    const callId = call.id;
+
+    const connect = () => {
+      if (cancelled) return;
+      try {
+        ws = new WebSocket(`${getWsBaseUrl()}/ws/events`);
+      } catch {
+        return;
+      }
+      ws.onmessage = (ev) => {
+        let msg: { type?: string; data?: Record<string, unknown> };
+        try {
+          msg = JSON.parse(String(ev.data)) as { type?: string; data?: Record<string, unknown> };
+        } catch {
+          return;
+        }
+        const data = msg.data || {};
+        const id = Number(data.call_id);
+        if (!Number.isFinite(id) || id !== callId) return;
+        const t = String(msg.type || "");
+        if (t === "call.transcription.partial") {
+          const text = String(data.text || "").trim();
+          if (text) setLiveTranscript(text);
+        }
+        if (t === "call.intent.belief") {
+          const top = Array.isArray(data.top) ? data.top : [];
+          setLiveBelief(
+            top
+              .map((row) => {
+                const r = row as { tag?: string; score?: number };
+                return { tag: String(r.tag || ""), score: Number(r.score || 0) };
+              })
+              .filter((r) => r.tag)
+          );
+        }
+        if (t === "call.intent.commit") {
+          const tag = String(data.tag || "").trim();
+          if (tag) setLiveCommit(tag);
+          const text = String(data.text || "").trim();
+          if (text) setLiveTranscript(text);
+        }
+      };
+    };
+    connect();
+    return () => {
+      cancelled = true;
+      try {
+        ws?.close();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [open, call?.id]);
 
   const onTimeUpdate = useCallback(() => {
     const el = audioRef.current;
@@ -386,6 +452,28 @@ export function CallDetailModal({
           </Box>
 
           <DialogContent sx={{ px: { xs: 0, sm: 0 }, pt: 0, pb: 1 }}>
+            {(liveTranscript || liveBelief.length > 0 || liveCommit) && (
+              <Box sx={{ px: { xs: 2, sm: 3 }, pb: 2 }}>
+                <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.75 }}>
+                  Conversation en direct
+                </Typography>
+                {liveCommit ? (
+                  <Chip size="small" color="success" label={`Intent: ${liveCommit}`} sx={{ mb: 1 }} />
+                ) : null}
+                {liveTranscript ? (
+                  <Typography variant="body2" sx={{ mb: 1.25, whiteSpace: "pre-wrap" }}>
+                    {liveTranscript}
+                  </Typography>
+                ) : null}
+                <Stack spacing={0.75}>
+                  <KbIntentBars
+                    preds={liveBelief}
+                    winner={liveCommit}
+                    animKey={`${liveTranscript || ""}-${liveBelief.map((r) => `${r.tag}:${r.score.toFixed(2)}`).join("|")}`}
+                  />
+                </Stack>
+              </Box>
+            )}
             {noMessage ? (
               <Box
                 sx={{

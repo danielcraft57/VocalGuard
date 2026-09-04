@@ -30,17 +30,18 @@ def test_resolve_profile_decision_voicemail_screened():
     assert resolved.seize_on_ring is True
 
 
-def test_patch_whitelist_ring_only(tmp_path, monkeypatch):
+def test_patch_voicemail_mode_conversation(tmp_path, monkeypatch):
+    """Le mode conversation se persiste et se sync sur Config."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "config").mkdir()
     (tmp_path / "data").mkdir()
     config = Config()
     config.base_path = tmp_path
-    patched = patch_incoming_call_settings(config, {"whitelist_ring_only": True})
-    assert patched.whitelist_ring_only is True
-    assert config.whitelist_ring_only is True
+    patched = patch_incoming_call_settings(config, {"voicemail": {"mode": "conversation"}})
+    assert patched.voicemail.mode == "conversation"
+    assert config.voicemail_mode == "conversation"
     reloaded = load_incoming_call_settings(config)
-    assert reloaded.whitelist_ring_only is True
+    assert reloaded.voicemail.mode == "conversation"
 
 
 def test_policy_reload():

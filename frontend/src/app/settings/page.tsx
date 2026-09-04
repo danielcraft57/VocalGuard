@@ -36,7 +36,7 @@ const TILES: HubTile[] = [
   {
     href: "/settings/incoming-line",
     title: "Ligne entrante",
-    description: "Repondeur, telephone parallele, whitelist ring-only",
+    description: "Repondeur simple/conversation, telephone parallele, whitelist",
     icon: <PhoneInTalkIcon color="primary" />,
     ready: true
   },
@@ -57,7 +57,7 @@ const TILES: HubTile[] = [
   {
     href: "/settings/voicemail",
     title: "Messagerie et DTMF",
-    description: "Filtre anti-robots, duree enregistrement",
+    description: "Mode conversation, filtre anti-robots, duree",
     icon: <VoicemailIcon color="primary" />,
     ready: true
   },

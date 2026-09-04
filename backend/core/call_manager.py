@@ -624,6 +624,7 @@ class CallManager:
             _merge_audio_settings,
             _write_greeting_modem_active_meta,
             greeting_modem_active_wav_path,
+            try_remote_greeting_mix,
         )
 
         self.reload_incoming_policy()
@@ -649,21 +650,33 @@ class CallManager:
                 except OSError as exc:
                     logger.warning("Suppression cache {}: {}", path.name, exc)
 
-        voice_wav = await self._ivr_cache.ensure(greeting, "voicemail_greeting")
-        if not voice_wav or not voice_wav.is_file():
-            raise RuntimeError("Generation TTS accueil echouee")
-
         active_path = greeting_modem_active_wav_path(self.config)
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(
-            None,
-            lambda: _build_modem_greeting_wav_sync(
-                self.config,
-                settings,
-                voice_wav,
-                out_modem=active_path,
-            ),
+        remote = await try_remote_greeting_mix(
+            self.config,
+            settings,
+            greeting,
+            out_path=active_path,
+            output="modem",
         )
+        if remote is None:
+            voice_wav = await self._ivr_cache.ensure(greeting, "voicemail_greeting")
+            if not voice_wav or not voice_wav.is_file():
+                raise RuntimeError("Generation TTS accueil echouee")
+
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: _build_modem_greeting_wav_sync(
+                    self.config,
+                    settings,
+                    voice_wav,
+                    out_modem=active_path,
+                ),
+            )
+        else:
+            # Garde aussi un cache voix seule pour les replays sans intro.
+            await self._ivr_cache.ensure(greeting, "voicemail_greeting")
+
         if not active_path.is_file() or active_path.stat().st_size < 2000:
             raise RuntimeError("Mix accueil modem vide ou absent")
 
@@ -1419,8 +1432,13 @@ class CallManager:
                 logger.warning("max_call_duration atteint juste apres accueil")
                 return
 
-            vm_mode = (getattr(self.config, "voicemail_mode", "simple") or "simple").strip().lower()
-            vm_simple = self.config.voicemail_enabled and vm_mode != "ivr"
+            vm_settings = self._voicemail_settings()
+            vm_mode = (
+                getattr(vm_settings, "mode", None)
+                or getattr(self.config, "voicemail_mode", "simple")
+                or "simple"
+            )
+            vm_mode = str(vm_mode).strip().lower()
 
             if self.config.voicemail_enabled:
                 decision = getattr(self, "_current_incoming_decision", None)
@@ -1432,6 +1450,23 @@ class CallManager:
                     if self._use_modem_voice_serial():
                         await recorder.start(already_in_voice_mode=True)
                     await self._handle_voice_interaction(recorder=recorder)
+                elif vm_mode == "conversation":
+                    if not self._recognition_available:
+                        logger.warning(
+                            "voicemail_mode=conversation mais STT indisponible — "
+                            "repli repondeur simple"
+                        )
+                        self._log_call("repondeur_conversation_fallback_simple")
+                        await self._handle_voicemail_simple(
+                            recorder=recorder,
+                            skip_beep=bool(played),
+                        )
+                    else:
+                        self._log_call("repondeur_conversation")
+                        await self._handle_voicemail_conversation(
+                            recorder=recorder,
+                            skip_beep=bool(played),
+                        )
                 else:
                     self._log_call("repondeur_simple")
                     # Bip deja dans greeting_modem_active (500 ms apres le message).
@@ -1600,6 +1635,501 @@ class CallManager:
                 )
         except Exception as e:
             logger.exception("Erreur mode répondeur simple: %s", e)
+
+    async def _handle_voicemail_conversation(
+        self,
+        recorder: Optional[_IncomingLineRecorder] = None,
+        *,
+        skip_beep: bool = False,
+        max_turns: int = 5,
+    ) -> None:
+        """
+        Repondeur conversationnel : chunks STT → belief intents → WAV cache.
+
+        @param recorder Enregistreur parallele entrant.
+        @param skip_beep True si le bip a deja ete joue apres l'accueil.
+        @param max_turns Nombre max de tours dialogue.
+        """
+        from backend.database import database as db_module
+        from backend.services import intent_repository as intent_repo
+        from backend.voice.intent_belief import IntentBeliefAccumulator
+        from backend.voice.node15_voice_client import Node15VoiceClient
+        from backend.voice.response_picker import (
+            apply_recent_tag_penalty,
+            variant_wav_basename,
+        )
+        from backend.voice.dialogue_persona import resolve_dialogue_reply
+        from backend.voice.slot_collector import start_slot_session
+        from backend.voice.turn_vad import TurnVad, TurnVadConfig
+
+        logger.info("Mode repondeur conversationnel (belief + intents)")
+        rec = recorder or self._incoming_recorder
+        active_call_id = self.current_call_id or 0
+        self._log_call("conversation_debut", max_turns=max_turns, call_id=active_call_id)
+
+        try:
+            if not skip_beep:
+                await self._play_beep_on_line(recorder=rec)
+
+            db = None
+            if db_module.SessionLocal is not None:
+                db = db_module.SessionLocal()
+                try:
+                    base = Path(self.config.base_path) if self.config.base_path else Path(".")
+                    intent_repo.ensure_seeded(db, base)
+                except Exception:
+                    logger.exception("Seed intents conversation ignore")
+
+            client: Optional[Node15VoiceClient] = None
+            stt_url = getattr(self.config, "stt_service_url", None)
+            if stt_url:
+                client = Node15VoiceClient(
+                    stt_url,
+                    token=getattr(self.config, "stt_internal_token", None),
+                    timeout_sec=45.0,
+                )
+
+            turn_silence = float(
+                getattr(self.config, "conversation_turn_silence_sec", 0.65) or 0.65
+            )
+            chunk_sec = float(getattr(self.config, "conversation_chunk_sec", 1.4) or 1.4)
+            transcript_parts: list[str] = []
+            recent_replies: list[str] = []
+            recent_tags: list[str] = []
+            recent_user_texts: list[str] = []
+
+            for turn_idx in range(max_turns):
+                if not self._call_still_active(active_call_id):
+                    break
+                if self.modem.caller_line_finished():
+                    break
+
+                belief = IntentBeliefAccumulator()
+                vad = TurnVad(
+                    TurnVadConfig(turn_silence_ms=turn_silence * 1000.0)
+                )
+                turn_pcm = b""
+                committed: Optional[str] = None
+                silence_ended = False
+
+                while True:
+                    if not self._call_still_active(active_call_id):
+                        break
+                    if self.modem.caller_line_finished():
+                        break
+
+                    pcm_chunk = await self._record_audio(
+                        duration=max(1, int(round(chunk_sec))),
+                        already_in_voice_mode=self._use_modem_voice_serial(),
+                        recorder=rec,
+                        stop_on_remote_hangup=True,
+                        silence_timeout_sec=turn_silence,
+                    )
+                    stop_reason = getattr(self.modem, "last_vrx_stop_reason", "") or ""
+                    if stop_reason == "disconnect_tones":
+                        break
+                    if not pcm_chunk:
+                        silence_ended = True
+                        break
+
+                    turn_pcm += pcm_chunk
+                    speech_ms = (len(pcm_chunk) / 2) / 16.0  # 16 kHz s16
+                    vad.feed_buffer(pcm_chunk, sample_rate=16000, frame_ms=20.0)
+
+                    text = ""
+                    try:
+                        if client is not None:
+                            result = await client.transcribe(turn_pcm, mode="live")
+                            text = (result.get("text") or "").strip()
+                        elif self._recognition_available:
+                            text, _ = await self.voice_recognition.transcribe_with_cues(
+                                turn_pcm, sample_rate=16000
+                            )
+                            text = (text or "").strip()
+                    except Exception as exc:
+                        logger.warning("STT live tour {}: {}", turn_idx, exc)
+
+                    if text:
+                        await event_bus.publish(
+                            Event(
+                                event_type=EventType.CALL_TRANSCRIPTION_PARTIAL,
+                                timestamp=datetime.utcnow(),
+                                data={
+                                    "call_id": active_call_id,
+                                    "text": text,
+                                    "live": True,
+                                    "turn": turn_idx,
+                                },
+                                source="conversation",
+                            )
+                        )
+
+                    scores_map: dict[str, float] = {}
+                    try:
+                        if client is not None and text:
+                            preds = await client.intent_predict(text)
+                            scores_map = {
+                                p["tag"]: float(p["score"]) for p in preds if p.get("tag")
+                            }
+                        elif db is not None and text:
+                            preds = intent_repo.predict_intent_scores(db, text)
+                            scores_map = {
+                                p["tag"]: float(p["score"]) for p in preds if p.get("tag")
+                            }
+                    except Exception as exc:
+                        logger.warning("Predict intent tour {}: {}", turn_idx, exc)
+                        if db is not None and text:
+                            try:
+                                preds = intent_repo.predict_intent_scores(db, text)
+                                scores_map = {
+                                    p["tag"]: float(p["score"]) for p in preds if p.get("tag")
+                                }
+                            except Exception:
+                                logger.exception("Predict local echoue")
+
+                    # predict_intent_scores / node15 incluent deja le boost patterns
+                    if scores_map and recent_tags:
+                        ranked = apply_recent_tag_penalty(
+                            [{"tag": t, "score": s} for t, s in scores_map.items()],
+                            recent_tags,
+                        )
+                        scores_map = {p["tag"]: float(p["score"]) for p in ranked}
+                    belief.update(scores_map, speech_ms=speech_ms)
+                    await event_bus.publish(
+                        Event(
+                            event_type=EventType.CALL_INTENT_BELIEF,
+                            timestamp=datetime.utcnow(),
+                            data=belief.as_event_payload(call_id=active_call_id),
+                            source="conversation",
+                        )
+                    )
+
+                    committed = belief.try_commit(force=False)
+                    if committed:
+                        break
+                    if stop_reason == "silence" or vad.ended:
+                        silence_ended = True
+                        committed = belief.try_commit(force=True)
+                        break
+                    # Garde-fou duree tour
+                    if len(turn_pcm) >= 16_000 * 2 * 12:
+                        committed = belief.try_commit(force=True)
+                        break
+
+                if not committed:
+                    committed = belief.try_commit(force=True) or "incompris"
+
+                final_text = ""
+                if turn_pcm:
+                    try:
+                        if client is not None:
+                            final_text = (
+                                await client.transcribe(turn_pcm, mode="final")
+                            ).get("text") or ""
+                        elif self._recognition_available:
+                            final_text, _ = await self.voice_recognition.transcribe_with_cues(
+                                turn_pcm, sample_rate=16000
+                            )
+                    except Exception:
+                        logger.exception("STT final tour {}", turn_idx)
+                final_text = (final_text or "").strip()
+                if final_text:
+                    transcript_parts.append(final_text)
+
+                await event_bus.publish(
+                    Event(
+                        event_type=EventType.CALL_INTENT_COMMIT,
+                        timestamp=datetime.utcnow(),
+                        data={
+                            "call_id": active_call_id,
+                            "tag": committed,
+                            "turn": turn_idx,
+                            "text": final_text,
+                            "belief": belief.as_event_payload(call_id=active_call_id),
+                        },
+                        source="conversation",
+                    )
+                )
+                self._log_call("conversation_commit", tag=committed, turn=turn_idx)
+
+                if active_call_id and committed:
+                    try:
+                        await self.call_service.set_transcription_and_intent(
+                            int(active_call_id),
+                            transcription=" | ".join(transcript_parts) if transcript_parts else None,
+                            intent_name=committed,
+                        )
+                    except Exception:
+                        logger.exception("Maj intent appel #{}", active_call_id)
+
+                action = None
+                response_text = None
+                response_index = 0
+                wav_basename = f"kb_{committed}"
+                if db is not None and committed:
+                    # Predictions belief → liste pour persona
+                    preds_list = [
+                        {"tag": t, "score": float(s)} for t, s in belief.ranking(8)
+                    ]
+                    if not preds_list and committed:
+                        preds_list = [{"tag": committed, "score": 1.0}]
+
+                    intent = intent_repo.get_intent_by_tag(db, committed)
+                    catalog = []
+                    if intent is not None:
+                        action = intent.action
+                        wav_basename = intent.wav_basename or wav_basename
+                        catalog = [
+                            r.text
+                            for r in sorted(intent.responses, key=lambda r: r.position)
+                        ]
+
+                    user_utt = final_text or ""
+                    resolved = resolve_dialogue_reply(
+                        user_text=user_utt,
+                        predictions=preds_list,
+                        recent_tags=recent_tags,
+                        recent_replies=recent_replies,
+                        recent_user_texts=recent_user_texts,
+                        catalog_responses=catalog,
+                    )
+                    # Si persona change le tag affiche, on suit le commit belief pour l'action
+                    # mais on prend le texte persona
+                    response_text = str(resolved.get("reply") or "") or None
+                    response_index = int(
+                        resolved.get("response_index")
+                        if resolved.get("response_index") is not None
+                        else -1
+                    )
+                    resolved_tag = resolved.get("tag") or committed
+                    if resolved.get("action"):
+                        action = resolved.get("action")
+                    if response_index >= 0 and resolved_tag:
+                        wav_basename = variant_wav_basename(
+                            str(resolved_tag), response_index
+                        )
+                        if response_index == 0 and intent is not None and intent.wav_basename:
+                            if str(resolved_tag) == intent.tag:
+                                wav_basename = intent.wav_basename
+
+                    if user_utt:
+                        recent_user_texts.append(user_utt)
+                        if len(recent_user_texts) > 12:
+                            recent_user_texts = recent_user_texts[-12:]
+
+                if response_text:
+                    recent_replies.append(response_text)
+                    if len(recent_replies) > 12:
+                        recent_replies = recent_replies[-12:]
+                if committed:
+                    recent_tags.append(committed)
+                    if len(recent_tags) > 12:
+                        recent_tags = recent_tags[-12:]
+
+                played = await self._play_intent_wav_or_tts(
+                    wav_basename=wav_basename,
+                    response_text=response_text or "D'accord.",
+                    recorder=rec,
+                )
+                if not played:
+                    logger.warning("Lecture reponse intent {} echouee", committed)
+
+                if committed == "fin" or action == "hangup_soft":
+                    break
+                if action in ("record_message",) or committed in (
+                    "absent_laisser_message",
+                    "urgence",
+                    "rappel_callback",
+                    "parler_humain",
+                ):
+                    await self._handle_voicemail_simple(recorder=rec, skip_beep=False)
+                    break
+
+                # Collecte multi-tours (coords / email / creneau RDV)
+                slot_session = start_slot_session(action, committed or "")
+                if slot_session is not None:
+                    await self._collect_slots_conversation(
+                        slot_session,
+                        db=db,
+                        client=client,
+                        recorder=rec,
+                        call_id=active_call_id,
+                        turn_silence=turn_silence,
+                        chunk_sec=chunk_sec,
+                    )
+                    # Apres collecte, on peut encher un autre tour ou finir
+                    if self.modem.caller_line_finished():
+                        break
+
+                if self.modem.caller_line_finished():
+                    break
+
+            if db is not None:
+                db.close()
+
+            if (
+                self._call_still_active(active_call_id)
+                and not self.modem.caller_line_finished()
+            ):
+                # Goodbye deja joue si intent fin ; sinon court au revoir
+                pass
+        except Exception as e:
+            logger.exception("Erreur mode repondeur conversation: %s", e)
+
+    async def _collect_slots_conversation(
+        self,
+        slot_session,
+        *,
+        db,
+        client,
+        recorder,
+        call_id: int,
+        turn_silence: float,
+        chunk_sec: float,
+        max_retries_per_slot: int = 2,
+    ) -> None:
+        """
+        Dialogue multi-tours pour remplir nom / tel / email / creneau.
+
+        @param slot_session Session de slots active.
+        @param db Session SQLAlchemy (peut etre None).
+        @param client Client node15 optionnel.
+        @param recorder Enregistreur ligne.
+        @param call_id ID appel.
+        @param turn_silence Silence fin de tour (s).
+        @param chunk_sec Duree max chunk (s).
+        @param max_retries_per_slot Tentatives par slot.
+        """
+        from backend.voice.slot_collector import confirmation_text, feed_slot_utterance, persist_call_lead
+
+        while not slot_session.done:
+            if not self._call_still_active(call_id) or self.modem.caller_line_finished():
+                break
+            prompt = slot_session.current_prompt()
+            await self._play_on_line(
+                prompt,
+                already_in_voice_mode=self._use_modem_voice_serial(),
+                recorder=recorder,
+            )
+            filled = False
+            for _attempt in range(max_retries_per_slot):
+                if not self._call_still_active(call_id) or self.modem.caller_line_finished():
+                    break
+                pcm = await self._record_audio(
+                    duration=max(2, int(round(chunk_sec * 2))),
+                    already_in_voice_mode=self._use_modem_voice_serial(),
+                    recorder=recorder,
+                    stop_on_remote_hangup=True,
+                    silence_timeout_sec=turn_silence,
+                )
+                if not pcm:
+                    continue
+                text = ""
+                try:
+                    if client is not None:
+                        text = (await client.transcribe(pcm, mode="live")).get("text") or ""
+                    elif self._recognition_available:
+                        text, _ = await self.voice_recognition.transcribe_with_cues(
+                            pcm, sample_rate=16000
+                        )
+                except Exception as exc:
+                    logger.warning("STT slot: {}", exc)
+                text = (text or "").strip()
+                if text:
+                    await event_bus.publish(
+                        Event(
+                            event_type=EventType.CALL_TRANSCRIPTION_PARTIAL,
+                            timestamp=datetime.utcnow(),
+                            data={
+                                "call_id": call_id,
+                                "text": text,
+                                "live": True,
+                                "slot": slot_session.pending_slots[0]
+                                if slot_session.pending_slots
+                                else None,
+                            },
+                            source="conversation_slots",
+                        )
+                    )
+                if feed_slot_utterance(slot_session, text):
+                    filled = True
+                    break
+                await self._play_on_line(
+                    "Je n'ai pas bien compris. Pouvez-vous repeter ?",
+                    already_in_voice_mode=self._use_modem_voice_serial(),
+                    recorder=recorder,
+                )
+            if not filled:
+                # Skip ce slot pour ne pas bloquer l'appel
+                if slot_session.pending_slots:
+                    slot_session.pending_slots.pop(0)
+
+        if db is not None and slot_session.values:
+            phone = None
+            try:
+                call_row = self.call_service.call_repo.get_by_id(call_id)
+                if call_row:
+                    phone = call_row.phone_number
+            except Exception:
+                pass
+            try:
+                persist_call_lead(
+                    db,
+                    slot_session,
+                    call_id=call_id or None,
+                    phone_number=phone,
+                )
+            except Exception:
+                logger.exception("Echec persist call_lead")
+            await self._play_on_line(
+                confirmation_text(slot_session),
+                already_in_voice_mode=self._use_modem_voice_serial(),
+                recorder=recorder,
+            )
+
+    async def _play_intent_wav_or_tts(
+        self,
+        *,
+        wav_basename: str,
+        response_text: str,
+        recorder: Optional[_IncomingLineRecorder] = None,
+    ) -> bool:
+        """
+        Joue le WAV cache kb_* s'il correspond au texte, sinon regenerate / TTS.
+
+        @param wav_basename Nom sans extension sous ivr_wav/.
+        @param response_text Texte cible (variante anti-repetition).
+        @param recorder Enregistreur a mettre en pause.
+        @returns True si lecture OK.
+        """
+        base = Path(self.config.base_path) if self.config.base_path else Path.cwd()
+        wav_path = base / "ivr_wav" / f"{wav_basename}.wav"
+        # Si le WAV existe mais ne matche pas le texte choisi → rebuild via cache
+        try:
+            if wav_path.is_file() and self._ivr_cache.is_fresh(wav_basename, response_text):
+                return await self._play_wav_file_on_line(
+                    wav_path,
+                    already_in_voice_mode=self._use_modem_voice_serial(),
+                    recorder=recorder,
+                )
+        except Exception:
+            logger.debug("Check fraicheur WAV intent ignore")
+
+        try:
+            path = await self._ivr_cache.ensure(response_text, wav_basename)
+            if path and path.is_file():
+                return await self._play_wav_file_on_line(
+                    path,
+                    already_in_voice_mode=self._use_modem_voice_serial(),
+                    recorder=recorder,
+                )
+        except Exception:
+            logger.exception("Cache IVR intent echoue")
+        return await self._play_on_line(
+            response_text,
+            already_in_voice_mode=self._use_modem_voice_serial(),
+            recorder=recorder,
+        )
 
     async def _transcribe_voicemail_async(self, voicemail_id: int, audio_pcm_16k: bytes) -> None:
         """

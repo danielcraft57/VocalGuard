@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import { Alert, Box, Button, Snackbar } from "@mui/material";
+import { Alert, Box, Button, CircularProgress, Snackbar, Typography } from "@mui/material";
 
 export type VgSaveBarProps = {
   saving?: boolean;
@@ -11,10 +11,12 @@ export type VgSaveBarProps = {
   onSave: () => void;
   onDismissSuccess?: () => void;
   onDismissError?: () => void;
+  /** Si true : pas de bouton, indicateur auto-save seulement. */
+  autoSave?: boolean;
 };
 
 /**
- * Barre d'actions sticky pour enregistrer les parametres.
+ * Barre d'actions sticky pour enregistrer les parametres (manuel ou auto-save).
  */
 export function VgSaveBar({
   saving = false,
@@ -23,8 +25,17 @@ export function VgSaveBar({
   success = null,
   onSave,
   onDismissSuccess,
-  onDismissError
+  onDismissError,
+  autoSave = false
 }: VgSaveBarProps) {
+  const statusLabel = saving
+    ? "Enregistrement…"
+    : dirty
+      ? "Modification en cours…"
+      : success
+        ? "Enregistre"
+        : null;
+
   return (
     <>
       <Box
@@ -33,21 +44,33 @@ export function VgSaveBar({
           bottom: 16,
           display: "flex",
           justifyContent: "flex-end",
-          gap: 1,
+          alignItems: "center",
+          gap: 1.5,
           mt: 2,
           zIndex: 2
         }}
       >
-        <Button
-          variant="contained"
-          color="primary"
-          disabled={!dirty || saving}
-          onClick={onSave}
-        >
-          {saving ? "Enregistrement…" : "Enregistrer"}
-        </Button>
+        {autoSave ? (
+          statusLabel ? (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              {saving ? <CircularProgress size={16} /> : null}
+              <Typography variant="body2" color="text.secondary">
+                {statusLabel}
+              </Typography>
+            </Box>
+          ) : null
+        ) : (
+          <Button
+            variant="contained"
+            color="primary"
+            disabled={!dirty || saving}
+            onClick={onSave}
+          >
+            {saving ? "Enregistrement…" : "Enregistrer"}
+          </Button>
+        )}
       </Box>
-      <Snackbar open={Boolean(success)} autoHideDuration={4000} onClose={onDismissSuccess}>
+      <Snackbar open={Boolean(success)} autoHideDuration={2500} onClose={onDismissSuccess}>
         <Alert severity="success" onClose={onDismissSuccess} sx={{ width: "100%" }}>
           {success}
         </Alert>

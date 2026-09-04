@@ -202,6 +202,7 @@ export default function NumberPatternsSettingsPage() {
           </VgSettingsSection>
 
           <VgSaveBar
+            autoSave
             saving={saving}
             dirty={dirty}
             error={error}

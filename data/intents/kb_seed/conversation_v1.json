@@ -1,0 +1,696 @@
+{
+  "version": 2,
+  "source": "seed",
+  "description": "Catalogue intents repondeur PME (variantes anti-repetition).",
+  "intents": [
+    {
+      "tag": "salutation",
+      "niveau": 1,
+      "priority": 20,
+      "patterns": [
+        "bonjour",
+        "bonsoir",
+        "salut",
+        "hello",
+        "allô",
+        "allo",
+        "bonjour madame",
+        "bonjour monsieur"
+      ],
+      "responses": [
+        "Bonjour, vous etes bien sur la messagerie. Comment puis-je vous aider ?",
+        "Bonjour, bienvenue sur notre messagerie. Que puis-je faire pour vous ?",
+        "Oui, bonjour. Dites-moi en quelques mots ce dont vous avez besoin."
+      ]
+    },
+    {
+      "tag": "absent_laisser_message",
+      "niveau": 1,
+      "priority": 30,
+      "patterns": [
+        "laisser un message",
+        "je voudrais laisser un message",
+        "il est absent",
+        "elle est absente",
+        "personne n'est la",
+        "messagerie",
+        "enregistrer un message",
+        "je laisse un message",
+        "pas disponible",
+        "pas la"
+      ],
+      "responses": [
+        "D'accord. Apres le bip, laissez votre message. Nous vous rappellerons.",
+        "Tres bien. Laissez votre message apres le bip, on vous rappellera.",
+        "OK pour un message. Apres le signal, parlez clairement : nom et motif."
+      ],
+      "action": "record_message"
+    },
+    {
+      "tag": "remerciements",
+      "niveau": 1,
+      "priority": 15,
+      "patterns": [
+        "merci",
+        "merci beaucoup",
+        "je vous remercie",
+        "merci bien",
+        "c'est gentil",
+        "parfait merci"
+      ],
+      "responses": [
+        "Avec plaisir. Bonne journee !",
+        "Je vous en prie. Belle journee !",
+        "Avec plaisir. N'hesitez pas si vous avez besoin d'autre chose."
+      ]
+    },
+    {
+      "tag": "contact_email",
+      "niveau": 1,
+      "priority": 25,
+      "patterns": [
+        "envoyer un mail",
+        "par email",
+        "par e-mail",
+        "ecrire un mail",
+        "adresse mail",
+        "adresse email",
+        "contactez-moi par mail",
+        "envoyez-moi un mail",
+        "je prefererais un email"
+      ],
+      "responses": [
+        "Bien sur. Vous pouvez nous ecrire a l'adresse indiquee sur notre site, ou dictez votre email maintenant pour qu'on vous recontacte.",
+        "Parfait pour l'email. Dictez votre adresse, ou laissez un message avec vos coordonnees.",
+        "On peut vous repondre par mail. Donnez votre adresse email maintenant."
+      ],
+      "action": "collect_email"
+    },
+    {
+      "tag": "prise_rdv",
+      "niveau": 1,
+      "priority": 28,
+      "patterns": [
+        "prendre rendez-vous",
+        "prendre rdv",
+        "rendez-vous",
+        "rdv",
+        "reserver un creneau",
+        "disponibilites",
+        "est-ce qu'on peut prendre rendez-vous",
+        "fixer un rendez-vous",
+        "planifier un rendez-vous"
+      ],
+      "responses": [
+        "Oui, on peut prendre rendez-vous. Indiquez le jour ou le creneau souhaite, ou laissez vos coordonnees pour qu'on vous rappelle.",
+        "Oui pour un rendez-vous. Quelle periode vous arrange, ou laissez vos coordonnees pour un rappel.",
+        "On planifie ca. Indiquez un creneau souhaite, ou un numero pour qu'on vous rappelle."
+      ],
+      "action": "collect_rdv_slot"
+    },
+    {
+      "tag": "prendre_coordonnees",
+      "niveau": 1,
+      "priority": 27,
+      "patterns": [
+        "je vous laisse mon numero",
+        "prenez mes coordonnees",
+        "mon nom c'est",
+        "rappelez-moi au",
+        "voici mon telephone",
+        "mes coordonnees",
+        "noter mon numero",
+        "je m'appelle"
+      ],
+      "responses": [
+        "Parfait. Donnez-moi votre nom, puis votre numero de telephone, et si possible votre email.",
+        "Je prends vos coordonnees. Nom, telephone ou email, a vous.",
+        "OK, dictez votre nom et un moyen de vous joindre."
+      ],
+      "action": "collect_coords"
+    },
+    {
+      "tag": "horaires",
+      "niveau": 1,
+      "priority": 18,
+      "patterns": [
+        "horaires",
+        "heures d'ouverture",
+        "vous etes ouverts",
+        "vous ouvrez",
+        "quand etes-vous disponibles",
+        "jours d'ouverture"
+      ],
+      "responses": [
+        "Nos horaires habituels sont du lundi au vendredi, de neuf heures a dix-huit heures.",
+        "Nos horaires sont indiques sur le site. Pour une question precise, laissez un message.",
+        "On vous rappellera aux heures d'ouverture. Souhaitez-vous laisser un message ?"
+      ]
+    },
+    {
+      "tag": "adresse_acces",
+      "niveau": 1,
+      "priority": 16,
+      "patterns": [
+        "adresse",
+        "ou etes-vous",
+        "ou vous trouver",
+        "localisation",
+        "comment venir",
+        "siege"
+      ],
+      "responses": [
+        "Nous travaillons principalement a distance. Pour un rendez-vous sur place, laissez votre demande et nous vous communiquerons l'adresse.",
+        "Pour l'adresse et l'acces, je peux noter votre demande ou vous renvoyer vers le site.",
+        "Laissez votre question sur l'acces, on vous repondra rapidement."
+      ]
+    },
+    {
+      "tag": "tarifs_devis",
+      "niveau": 1,
+      "priority": 22,
+      "patterns": [
+        "tarif",
+        "tarifs",
+        "prix",
+        "combien ca coute",
+        "devis",
+        "demande de devis",
+        "estimation",
+        "cout"
+      ],
+      "responses": [
+        "Les tarifs dependent du besoin. Decrivez brievement votre projet ou laissez vos coordonnees pour recevoir un devis.",
+        "Pour un devis, decrivez brievement le besoin ou laissez vos coordonnees.",
+        "Oui pour un tarif. Precisez le service vise, on vous recontacte avec une estimation."
+      ]
+    },
+    {
+      "tag": "services_info",
+      "niveau": 1,
+      "priority": 17,
+      "patterns": [
+        "vous faites quoi",
+        "vos services",
+        "presentation",
+        "que proposez-vous",
+        "activite",
+        "offre"
+      ],
+      "responses": [
+        "Nous proposons des services et un accompagnement adaptes aux professionnels. Dites-moi ce qui vous interesse.",
+        "Je peux vous orienter. Dites quel service vous interesse.",
+        "Parlez-moi du sujet, je vous indique la bonne direction."
+      ]
+    },
+    {
+      "tag": "rappel_callback",
+      "niveau": 1,
+      "priority": 24,
+      "patterns": [
+        "rappelez-moi",
+        "me rappeler",
+        "callback",
+        "rappelez moi plus tard",
+        "je veux etre rappele",
+        "un rappel"
+      ],
+      "responses": [
+        "D'accord, nous vous rappellerons. Confirmez votre numero ou laissez un message apres le bip.",
+        "OK pour un rappel. Laissez votre nom et un numero apres le bip.",
+        "On vous rappelle. Dictez un numero joignable, ou enregistrez un message."
+      ],
+      "action": "record_message"
+    },
+    {
+      "tag": "urgence",
+      "niveau": 1,
+      "priority": 32,
+      "patterns": [
+        "c'est urgent",
+        "urgence",
+        "depannage",
+        "probleme grave",
+        "immediatement",
+        "au plus vite"
+      ],
+      "responses": [
+        "Je note que c'est urgent. Laissez votre nom, votre numero et le motif apres le bip, nous traitons en priorite.",
+        "Je comprends l'urgence. Laissez un message clair avec un numero, on priorise le rappel.",
+        "Note prioritaire. Apres le bip : nom, numero, et nature de l'urgence."
+      ],
+      "action": "record_message"
+    },
+    {
+      "tag": "parler_humain",
+      "niveau": 1,
+      "priority": 26,
+      "patterns": [
+        "parler a quelqu'un",
+        "un conseiller",
+        "une personne",
+        "un humain",
+        "operateur",
+        "je veux parler a quelqu'un"
+      ],
+      "responses": [
+        "Personne n'est disponible pour prendre l'appel en direct. Laissez un message ou vos coordonnees, un conseiller vous recontactera.",
+        "Personne n'est disponible a l'instant. Laissez un message, un conseiller vous rappellera.",
+        "Pour joindre quelqu'un, le mieux est de laisser vos coordonnees maintenant."
+      ],
+      "action": "record_message"
+    },
+    {
+      "tag": "deja_client",
+      "niveau": 1,
+      "priority": 19,
+      "patterns": [
+        "je suis client",
+        "deja client",
+        "mon dossier",
+        "client existant",
+        "j'ai un compte"
+      ],
+      "responses": [
+        "Merci. Indiquez votre nom ou numero de dossier, puis precisez votre demande.",
+        "Bienvenue. Precisez votre nom ou numero client, on traite votre demande.",
+        "OK client existant. Dites le motif, ou laissez un message detaille."
+      ]
+    },
+    {
+      "tag": "aide_menu",
+      "niveau": 1,
+      "priority": 21,
+      "patterns": [
+        "aide",
+        "que puis-je dire",
+        "quelles options",
+        "menu",
+        "comment ca marche",
+        "besoin d'aide"
+      ],
+      "responses": [
+        "Vous pouvez demander un rendez-vous, un devis, laisser un message, nos horaires, ou vos coordonnees. Dites simplement ce que vous souhaitez.",
+        "Vous pouvez demander un rendez-vous, un devis, un message, les horaires ou vos coordonnees.",
+        "Exemples : devis, rendez-vous, laisser un message, horaires. Que voulez-vous ?"
+      ]
+    },
+    {
+      "tag": "site_web",
+      "niveau": 1,
+      "priority": 16,
+      "patterns": [
+        "site internet",
+        "site web",
+        "adresse du site",
+        "votre site",
+        "en ligne",
+        "page web"
+      ],
+      "responses": [
+        "Retrouvez toutes les infos sur notre site internet. Vous pouvez aussi laisser un message si vous preferez etre rappele."
+      ]
+    },
+    {
+      "tag": "facture_paiement",
+      "niveau": 1,
+      "priority": 23,
+      "patterns": [
+        "facture",
+        "paiement",
+        "reglement",
+        "avoir",
+        "impaye",
+        "relance facture",
+        "mode de paiement"
+      ],
+      "responses": [
+        "Pour une question de facture ou de paiement, laissez votre nom, le numero de facture et un moyen de vous joindre. Un conseiller traitera votre demande.",
+        "Pour une facture, laissez nom, numero de facture et un contact.",
+        "OK reglement. Donnez les refs utiles apres le bip ou vos coordonnees."
+      ],
+      "action": "record_message"
+    },
+    {
+      "tag": "reclamation",
+      "niveau": 1,
+      "priority": 29,
+      "patterns": [
+        "reclamation",
+        "plainte",
+        "pas content",
+        "mecontent",
+        "probleme avec",
+        "je suis decu"
+      ],
+      "responses": [
+        "Je suis desole pour ce desagrement. Decrivez brievement le probleme apres le bip, ou laissez vos coordonnees pour un rappel prioritaire.",
+        "Desole pour ce desagrement. Decrivez le souci, on traite en priorite.",
+        "Je note votre reclamation. Laissez un message clair avec un numero de rappel."
+      ],
+      "action": "record_message"
+    },
+    {
+      "tag": "sav_technique",
+      "niveau": 1,
+      "priority": 27,
+      "patterns": [
+        "sav",
+        "support technique",
+        "assistance technique",
+        "bug",
+        "panne",
+        "ca ne marche pas",
+        "aide technique"
+      ],
+      "responses": [
+        "Pour le support technique, laissez votre nom, un numero et une description courte du probleme. Nous vous recontactons rapidement.",
+        "Support technique : nom, numero, et une courte description du probleme.",
+        "OK SAV. Apres le bip, expliquez le dysfonctionnement."
+      ],
+      "action": "record_message"
+    },
+    {
+      "tag": "suivi_commande",
+      "niveau": 1,
+      "priority": 22,
+      "patterns": [
+        "suivi de commande",
+        "ou est ma commande",
+        "statut commande",
+        "livraison",
+        "colis",
+        "expedition"
+      ],
+      "responses": [
+        "Pour le suivi, indiquez votre numero de commande ou de client, et un numero de rappel. Nous vous tiendrons informe."
+      ],
+      "action": "collect_coords"
+    },
+    {
+      "tag": "annuler_rdv",
+      "niveau": 1,
+      "priority": 26,
+      "patterns": [
+        "annuler rendez-vous",
+        "annuler rdv",
+        "annulation",
+        "je ne peux pas venir",
+        "annuler mon rendez-vous"
+      ],
+      "responses": [
+        "D'accord pour l'annulation. Precisez la date du rendez-vous et votre nom, ou laissez un message apres le bip.",
+        "Annulation prise en compte des que vous precisez date et nom.",
+        "Pour annuler, laissez un message avec la date du rendez-vous."
+      ],
+      "action": "record_message"
+    },
+    {
+      "tag": "deplacer_rdv",
+      "niveau": 1,
+      "priority": 26,
+      "patterns": [
+        "deplacer rendez-vous",
+        "reporter rdv",
+        "changer de date",
+        "autre creneau",
+        "reprogrammer"
+      ],
+      "responses": [
+        "On peut reporter. Indiquez la date actuelle et le nouveau creneau souhaite, ou laissez vos coordonnees pour qu'on vous rappelle.",
+        "On peut reporter. Indiquez l'ancienne date et le nouveau creneau.",
+        "OK pour un deplacement. Laissez vos dispos ou un numero de rappel."
+      ],
+      "action": "collect_rdv_slot"
+    },
+    {
+      "tag": "confirmer_rdv",
+      "niveau": 1,
+      "priority": 25,
+      "patterns": [
+        "confirmer rendez-vous",
+        "confirmation rdv",
+        "je confirme mon rdv",
+        "est-ce que mon rendez-vous est confirme"
+      ],
+      "responses": [
+        "Pour confirmer, donnez votre nom et la date du rendez-vous. Sinon laissez un message, nous verifierons et vous recontacterons."
+      ]
+    },
+    {
+      "tag": "recrutement",
+      "niveau": 1,
+      "priority": 15,
+      "patterns": [
+        "recrutement",
+        "candidature",
+        "offre d'emploi",
+        "je cherche un job",
+        "poste a pourvoir",
+        "cv"
+      ],
+      "responses": [
+        "Pour une candidature, envoyez votre CV par email via le site, ou laissez vos coordonnees et le poste vise."
+      ],
+      "action": "collect_email"
+    },
+    {
+      "tag": "partenariat",
+      "niveau": 1,
+      "priority": 15,
+      "patterns": [
+        "partenariat",
+        "collaboration",
+        "travailler ensemble",
+        "devenir partenaire",
+        "proposition commerciale"
+      ],
+      "responses": [
+        "Merci pour votre interet. Laissez un message avec votre societe et un moyen de contact, nous etudierons votre proposition."
+      ],
+      "action": "record_message"
+    },
+    {
+      "tag": "spam_demarchage",
+      "niveau": 1,
+      "priority": 8,
+      "patterns": [
+        "je vous appelle pour vous proposer",
+        "offre speciale",
+        "demarchage",
+        "prospection commerciale",
+        "publicite"
+      ],
+      "responses": [
+        "Nous ne prenons pas les appels de demarchage sur cette ligne. Merci de nous contacter uniquement pour un besoin client."
+      ],
+      "action": "hangup_soft"
+    },
+    {
+      "tag": "langue_anglaise",
+      "niveau": 1,
+      "priority": 12,
+      "patterns": [
+        "do you speak english",
+        "english please",
+        "speak english",
+        "in english"
+      ],
+      "responses": [
+        "Sorry, this voicemail is in French. Please leave a message after the beep, or call back later."
+      ],
+      "action": "record_message"
+    },
+    {
+      "tag": "parking_acces",
+      "niveau": 1,
+      "priority": 14,
+      "patterns": [
+        "parking",
+        "stationnement",
+        "comment acceder",
+        "acces batiment",
+        "interphone"
+      ],
+      "responses": [
+        "Pour l'acces et le stationnement, laissez votre demande : nous vous indiquerons les modalites pour votre rendez-vous."
+      ]
+    },
+    {
+      "tag": "catalogue_brochure",
+      "niveau": 1,
+      "priority": 16,
+      "patterns": [
+        "catalogue",
+        "brochure",
+        "documentation",
+        "plaquette",
+        "envoyer une brochure"
+      ],
+      "responses": [
+        "Avec plaisir. Donnez votre email ou votre adresse postale pour recevoir la documentation."
+      ],
+      "action": "collect_email"
+    },
+    {
+      "tag": "essai_demo",
+      "niveau": 1,
+      "priority": 20,
+      "patterns": [
+        "essai gratuit",
+        "demonstration",
+        "demo",
+        "essai",
+        "voir une demo"
+      ],
+      "responses": [
+        "Oui, on peut organiser une demonstration. Indiquez un creneau ou laissez vos coordonnees."
+      ],
+      "action": "collect_rdv_slot"
+    },
+    {
+      "tag": "formation",
+      "niveau": 1,
+      "priority": 17,
+      "patterns": [
+        "formation",
+        "atelier",
+        "webinar",
+        "cours",
+        "apprendre"
+      ],
+      "responses": [
+        "Pour les formations, precisez le sujet qui vous interesse ou laissez un message, nous vous enverrons le programme."
+      ]
+    },
+    {
+      "tag": "cgv_mentions",
+      "niveau": 1,
+      "priority": 10,
+      "patterns": [
+        "conditions generales",
+        "cgv",
+        "mentions legales",
+        "politique de confidentialite",
+        "rgpd"
+      ],
+      "responses": [
+        "Les conditions et mentions legales sont disponibles sur notre site. Pour une question precise, laissez un message."
+      ]
+    },
+    {
+      "tag": "reseaux_sociaux",
+      "niveau": 1,
+      "priority": 9,
+      "patterns": [
+        "facebook",
+        "instagram",
+        "linkedin",
+        "reseaux sociaux",
+        "suivre sur"
+      ],
+      "responses": [
+        "Vous pouvez nous suivre sur les reseaux via les liens indiques sur notre site. Autre chose ?"
+      ]
+    },
+    {
+      "tag": "changement_coordonnees",
+      "niveau": 1,
+      "priority": 18,
+      "patterns": [
+        "changer mon adresse",
+        "nouveau numero",
+        "mise a jour coordonnees",
+        "demenagement",
+        "j'ai change de telephone"
+      ],
+      "responses": [
+        "OK pour mettre a jour vos coordonnees. Donnez votre nom puis le nouvel email ou telephone."
+      ],
+      "action": "collect_coords"
+    },
+    {
+      "tag": "silence_attente",
+      "niveau": 1,
+      "priority": 5,
+      "patterns": [
+        "allô allô",
+        "vous etes la",
+        "hello hello",
+        "y a quelqu'un"
+      ],
+      "responses": [
+        "Oui, je suis la. Dites-moi en quelques mots ce dont vous avez besoin."
+      ]
+    },
+    {
+      "tag": "insulte",
+      "niveau": 1,
+      "priority": 40,
+      "patterns": [
+        "connard",
+        "abruti",
+        "ta gueule",
+        "casse toi",
+        "idiot",
+        "imbecile",
+        "ferme la"
+      ],
+      "responses": [
+        "Je reste courtois. Reformulez sans injure, je pourrai vous aider.",
+        "Les insultes, ca n'avance pas. Motif de l'appel, s'il vous plait.",
+        "Charmant. Quand vous aurez fini, je suis la pour un vrai besoin."
+      ],
+      "action": "hangup_soft"
+    },
+    {
+      "tag": "hors_sujet",
+      "niveau": 1,
+      "priority": 3,
+      "patterns": [
+        "blague",
+        "meteo",
+        "loto",
+        "hors sujet"
+      ],
+      "responses": [
+        "Je suis une messagerie professionnelle. Pour un rendez-vous, un devis ou un message, je peux vous aider."
+      ]
+    },
+    {
+      "tag": "incompris",
+      "niveau": 1,
+      "priority": 1,
+      "patterns": [
+        "je ne comprends pas",
+        "quoi",
+        "repete"
+      ],
+      "responses": [
+        "Desole, je n'ai pas bien compris. Vous pouvez demander un rendez-vous, laisser un message, un devis, ou vos coordonnees.",
+        "Pardon, je n'ai pas saisi. Reformulez : rendez-vous, message, devis ou coordonnees ?",
+        "Je n'ai pas compris. Dites simplement ce que vous souhaitez."
+      ]
+    },
+    {
+      "tag": "fin",
+      "niveau": 1,
+      "priority": 14,
+      "patterns": [
+        "au revoir",
+        "a bientot",
+        "c'est tout",
+        "rien d'autre",
+        "je raccroche",
+        "bonne journee",
+        "bonne soiree"
+      ],
+      "responses": [
+        "Au revoir, et merci de votre appel.",
+        "Merci de votre appel, a bientot.",
+        "Bonne journee, au revoir."
+      ],
+      "action": "hangup_soft"
+    }
+  ]
+}

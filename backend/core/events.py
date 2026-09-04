@@ -24,6 +24,8 @@ class EventType(str, Enum):
     CALL_OUTGOING_ENDED = "call.outgoing.ended"
     CALL_TRANSCRIPTION_PARTIAL = "call.transcription.partial"
     CALL_TRANSCRIPTION_FINAL = "call.transcription.final"
+    CALL_INTENT_BELIEF = "call.intent.belief"
+    CALL_INTENT_COMMIT = "call.intent.commit"
     CALL_SESSION_LOG = "call.session.log"
     
     VOICEMAIL_RECORDED = "voicemail.recorded"

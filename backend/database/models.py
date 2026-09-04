@@ -595,3 +595,123 @@ class MobilePairingSession(Base):
     claimed_device_hint = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+
+class Intent(Base):
+    """
+    Intent conversationnel (repondeur / KB).
+
+    Source de verite runtime : tables normalisees (pas de JSON metier).
+    """
+
+    __tablename__ = "intents"
+    __table_args__ = (Index("ix_intents_enabled_priority", "enabled", "priority"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    tag = Column(String(100), unique=True, nullable=False, index=True)
+    source = Column(String(40), nullable=False, default="seed")
+    niveau = Column(Integer, nullable=False, default=1)
+    enabled = Column(Boolean, nullable=False, default=True)
+    priority = Column(Integer, nullable=False, default=10)
+    wav_basename = Column(String(120), nullable=True)
+    action = Column(String(60), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    patterns = relationship(
+        "IntentPattern",
+        back_populates="intent",
+        cascade="all, delete-orphan",
+    )
+    responses = relationship(
+        "IntentResponse",
+        back_populates="intent",
+        cascade="all, delete-orphan",
+        order_by="IntentResponse.position",
+    )
+    embeddings = relationship(
+        "IntentEmbedding",
+        back_populates="intent",
+        cascade="all, delete-orphan",
+    )
+
+
+class IntentPattern(Base):
+    """Pattern / utterance d'entrainement ou de boost lexical pour un intent."""
+
+    __tablename__ = "intent_patterns"
+
+    id = Column(Integer, primary_key=True, index=True)
+    intent_id = Column(
+        Integer,
+        ForeignKey("intents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    pattern = Column(Text, nullable=False)
+    weight = Column(Float, nullable=False, default=1.0)
+
+    intent = relationship("Intent", back_populates="patterns")
+
+
+class IntentResponse(Base):
+    """Texte de reponse vocale (TTS / WAV cache) pour un intent."""
+
+    __tablename__ = "intent_responses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    intent_id = Column(
+        Integer,
+        ForeignKey("intents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    position = Column(Integer, nullable=False, default=0)
+    text = Column(Text, nullable=False)
+
+    intent = relationship("Intent", back_populates="responses")
+
+
+class IntentEmbedding(Base):
+    """
+    Embedding vectoriel d'un pattern ou d'une reponse.
+
+    Sur Postgres + pgvector : colonne ``embedding`` type vector.
+    En fallback / SQLite tests : ``embedding_json`` (liste de floats).
+    """
+
+    __tablename__ = "intent_embeddings"
+    __table_args__ = (
+        UniqueConstraint("ref_type", "ref_id", name="uq_intent_embeddings_ref"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    intent_id = Column(
+        Integer,
+        ForeignKey("intents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    ref_type = Column(String(20), nullable=False)  # pattern | response
+    ref_id = Column(Integer, nullable=False)
+    # Stockage portable (toujours) ; pgvector lit aussi via SQL natif.
+    embedding_json = Column(JsonbCompat, nullable=False, default=list)
+    dim = Column(Integer, nullable=False, default=384)
+
+    intent = relationship("Intent", back_populates="embeddings")
+
+
+class CallLead(Base):
+    """Coordonnees / lead collecte pendant un appel conversationnel."""
+
+    __tablename__ = "call_leads"
+
+    id = Column(Integer, primary_key=True, index=True)
+    call_id = Column(Integer, ForeignKey("calls.id", ondelete="SET NULL"), nullable=True, index=True)
+    phone_number = Column(String(40), nullable=True, index=True)
+    name = Column(String(255), nullable=True)
+    email = Column(String(255), nullable=True)
+    callback_phone = Column(String(40), nullable=True)
+    notes = Column(Text, nullable=True)
+    intent_tag = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+

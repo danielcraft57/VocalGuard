@@ -205,6 +205,15 @@ ssh "$AppRemoteHost" "cd $RemoteDir && tar -xzf vocalguard_release.tar.gz && rm 
 Remove-Item $ArchivePath -Force -ErrorAction SilentlyContinue
 ssh "$AppRemoteHost" "sudo chown -R ${AppServerUser}:${AppServerUser} $RemoteDir && sudo find $RemoteDir -type d -exec chmod 775 {} \; && sudo find $RemoteDir -type f -exec chmod 664 {} \;" | Out-Null
 ssh "$AppRemoteHost" "cd $RemoteDir && chmod +x run.sh run_backend.sh scripts/*.sh 2>/dev/null || true" | Out-Null
+
+# data/ est exclu de l'archive (runtime) : pousser le catalogue intents seed
+$SeedLocal = Join-Path $ProjectDir "data\intents\kb_seed\conversation_v1.json"
+if (Test-Path $SeedLocal) {
+    ssh "$AppRemoteHost" "mkdir -p $RemoteDir/data/intents/kb_seed"
+    scp -q $SeedLocal "${AppRemoteHost}:$RemoteDir/data/intents/kb_seed/conversation_v1.json"
+    Info "Seed intents KB synchronise"
+}
+
 Ok "Code uploaded"
 
 Step "[6/8] Sync production env (.env.prod -> .env)"

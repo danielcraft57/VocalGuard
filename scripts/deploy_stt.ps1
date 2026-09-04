@@ -100,7 +100,7 @@ set -e
 cd $RemoteRoot
 if [ ! -d venv ]; then python3 -m venv venv; fi
 ./venv/bin/pip install -q --upgrade pip
-./venv/bin/pip install -q 'fastapi>=0.115' 'uvicorn[standard]>=0.30' 'pydantic>=2.10' 'python-multipart>=0.0.9' soundfile loguru httpx pydub audioop-lts numpy
+./venv/bin/pip install -q 'fastapi>=0.115' 'uvicorn[standard]>=0.30' 'pydantic>=2.10' 'python-multipart>=0.0.9' soundfile loguru httpx pydub audioop-lts numpy edge-tts
 "@
 
 $existingTokenRaw = ssh $Remote "grep -E '^STT_INTERNAL_TOKEN=' $RemoteRoot/.env.stt 2>/dev/null || true"

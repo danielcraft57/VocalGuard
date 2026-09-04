@@ -100,6 +100,44 @@ export default function IncomingLineSettingsPage() {
             </Alert>
           </VgSettingsSection>
 
+          {config.incoming_line_mode === "voicemail" ? (
+            <VgSettingsSection
+              title="Type de repondeur"
+              description="Simple = bip + message. Conversation = intents KB (pour tester le dialogue)."
+            >
+              <ToggleButtonGroup
+                exclusive
+                value={
+                  ((config.voicemail as { mode?: string } | undefined)?.mode as
+                    | "simple"
+                    | "ivr"
+                    | "conversation"
+                    | undefined) || "simple"
+                }
+                onChange={(_, v: "simple" | "ivr" | "conversation" | null) => {
+                  if (!v || !config) return;
+                  patchField("voicemail", { ...(config.voicemail || {}), mode: v });
+                }}
+                size="small"
+                sx={{ mb: 1.5, flexWrap: "wrap" }}
+              >
+                <ToggleButton value="simple">Simple</ToggleButton>
+                <ToggleButton value="conversation">Conversation</ToggleButton>
+                <ToggleButton value="ivr">IVR legacy</ToggleButton>
+              </ToggleButtonGroup>
+              {((config.voicemail as { mode?: string })?.mode || "simple") ===
+              "conversation" ? (
+                <Alert severity="warning" sx={{ mb: 0 }}>
+                  Mode test : STT node15 requis. Regenerer les voix sur /kb avant l appel.
+                </Alert>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  Passe en Conversation puis Enregistrer pour tester le dialogue d intents.
+                </Typography>
+              )}
+            </VgSettingsSection>
+          ) : null}
+
           <VgSettingsSection
             title="Whitelist ring-only"
             description="Les numeros en liste blanche font sonner le fixe sans que le modem reponde."
@@ -159,6 +197,7 @@ export default function IncomingLineSettingsPage() {
           </Stack>
 
           <VgSaveBar
+            autoSave
             saving={saving}
             dirty={dirty}
             error={error}

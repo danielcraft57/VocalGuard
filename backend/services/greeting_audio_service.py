@@ -17,6 +17,7 @@ from loguru import logger
 from backend.core.config import Config
 from backend.core.incoming_call_audio import (
     append_record_beep_to_modem_wav,
+    beep_wav_path,
     greeting_intro_path,
     greeting_text,
     resolve_intro_voice_bed_gain_db,
@@ -36,7 +37,10 @@ from backend.voice.audio_utils import (
     tts_source_to_modem_wav,
 )
 from backend.voice.musicscreen_jingles import is_musicscreen_jingle
+from backend.voice.modem_profile import USR_VOICE_PROFILE, resolve_profile_from_config
+from backend.voice.node15_voice_client import Node15VoiceClient
 from backend.voice.synthesis import VoiceSynthesis
+from backend.voice.tts_url import resolve_tts_service_url, resolve_tts_token
 
 if TYPE_CHECKING:
     from backend.core.call_manager import CallManager
@@ -63,9 +67,6 @@ def greeting_modem_active_meta_path(config: Config) -> Path:
     @returns Fichier JSON a cote du WAV actif.
     """
     return greeting_modem_active_wav_path(config).with_suffix(".meta.json")
-
-
-from backend.voice.modem_profile import USR_VOICE_PROFILE, resolve_profile_from_config
 
 
 def greeting_settings_signature(
@@ -190,6 +191,9 @@ async def _synthesize_voice_modem_wav(
     """
     Genere le WAV voix seul (modem 8 kHz) pour apercu.
 
+    Passe par ``TTS_SERVICE_URL`` (node15) si configure, sinon TTS local,
+    puis conversion modem. Le mix intro est applique ensuite.
+
     @param config Configuration.
     @param synthesis Moteur TTS initialise.
     @param greeting Texte accueil.
@@ -313,6 +317,85 @@ def _build_intro_listen_preview_sync(
     return export_raw_listen_preview(intro, out_base)
 
 
+async def try_remote_greeting_mix(
+    config: Config,
+    settings: IncomingCallSettingsData,
+    greeting: str,
+    *,
+    out_path: Path,
+    output: str = "modem",
+) -> Optional[Path]:
+    """
+    Demande a node15 le TTS + mix accueil si ``TTS_SERVICE_URL`` est configure.
+
+    Upload l'intro / bip locaux, recupere le WAV mixe.
+
+    @param config Configuration.
+    @param settings Settings audio effectifs.
+    @param greeting Texte accueil.
+    @param out_path Destination locale du WAV.
+    @param output modem | listen | voice.
+    @returns ``out_path`` si OK, sinon None (repli local).
+    """
+    base_url = resolve_tts_service_url(config)
+    if not base_url:
+        return None
+    audio = settings.audio
+    profile = resolve_profile_from_config(config)
+    intro_mode = str(getattr(audio, "greeting_intro_mode", "none") or "none")
+    intro = greeting_intro_path(config, audio) if intro_mode != "none" else None
+    append_beep = output == "modem" and str(getattr(audio, "record_beep", "wav") or "wav") != "none"
+    beep = beep_wav_path(config, audio) if append_beep else None
+    bed_variant = getattr(audio, "greeting_intro_bed_variant", None)
+    client = Node15VoiceClient(
+        base_url,
+        token=resolve_tts_token(config),
+        timeout_sec=180.0,
+    )
+    try:
+        payload = await client.greeting_mix(
+            greeting,
+            voice=str(getattr(audio, "edge_tts_voice", None) or getattr(config, "edge_tts_voice", None) or "fr-FR-DeniseNeural"),
+            rate=str(getattr(audio, "edge_tts_rate", None) or getattr(config, "edge_tts_rate", None) or "+0%"),
+            pitch=str(getattr(audio, "edge_tts_pitch", None) or getattr(config, "edge_tts_pitch", None) or "+0Hz"),
+            tts_voice_gain_db=float(
+                getattr(audio, "tts_voice_gain_db", None)
+                or getattr(config, "edge_tts_voice_gain_db", -6.0)
+                or -6.0
+            ),
+            intro_mode=intro_mode,
+            intro_variant=str(getattr(audio, "greeting_intro_variant", "tesla") or "tesla"),
+            intro_sec=float(getattr(audio, "greeting_intro_sec", 2.2) or 2.2),
+            crossfade_ms=int(getattr(audio, "greeting_intro_crossfade_ms", 380) or 380),
+            voice_bed_db=float(getattr(audio, "greeting_intro_voice_bed_db", -18.0) or -18.0),
+            voice_mix_gain_db=float(getattr(audio, "greeting_intro_voice_gain_db", 0.0) or 0.0),
+            track_duck_db=float(getattr(audio, "greeting_intro_track_duck_db", 0.0) or 0.0),
+            music_offset_sec=float(getattr(audio, "greeting_intro_music_offset_sec", 0.0) or 0.0),
+            bed_variant=str(bed_variant) if bed_variant else None,
+            sample_rate=int(profile.sample_rate),
+            sample_width=int(profile.sample_width),
+            append_beep=append_beep,
+            output=output,
+            intro_path=intro if intro and intro.is_file() else None,
+            beep_path=beep if beep and beep.is_file() else None,
+        )
+    except Exception as exc:
+        logger.warning("greeting-mix distant KO ({}), repli local: {}", base_url, exc)
+        return None
+    if not payload or len(payload) < 200:
+        logger.warning("greeting-mix distant: payload trop court")
+        return None
+    out_path = Path(out_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(payload)
+    logger.info(
+        "Accueil mixe via node15 ({} octets, output={})",
+        len(payload),
+        output,
+    )
+    return out_path
+
+
 async def build_greeting_listen_preview(
     config: Config,
     *,
@@ -321,6 +404,8 @@ async def build_greeting_listen_preview(
 ) -> Path:
     """
     Genere un WAV ecoute PC (44.1 kHz) de l'accueil selon les parametres.
+
+    Preferre ``TTS_SERVICE_URL`` /greeting-mix (TTS+mix sur node15), sinon local.
 
     @param config Configuration projet.
     @param audio_override Patch audio UI (non sauvegarde).
@@ -340,14 +425,10 @@ async def build_greeting_listen_preview(
     preview_dir.mkdir(parents=True, exist_ok=True)
     modem_tmp = preview_dir / "_preview_modem.wav"
     listen_base = preview_dir / "greeting_listen_preview"
+    listen_out = listen_base.with_suffix(".wav")
     loop = asyncio.get_running_loop()
 
     mode = (preview_mode or "full").strip().lower()
-    if mode == "voice":
-        voice_wav = await _synthesize_voice_modem_wav(config, synthesis, greeting)
-        listen_out = listen_base.with_suffix(".wav")
-        export_listen_preview_wav(voice_wav, listen_out, target_peak=None)
-        return listen_out
     if mode == "intro":
         return await loop.run_in_executor(
             None,
@@ -358,8 +439,23 @@ async def build_greeting_listen_preview(
             ),
         )
 
+    remote_output = "voice" if mode == "voice" else "listen"
+    remote = await try_remote_greeting_mix(
+        config,
+        settings,
+        greeting,
+        out_path=listen_out,
+        output=remote_output,
+    )
+    if remote is not None:
+        return remote
+
+    if mode == "voice":
+        voice_wav = await _synthesize_voice_modem_wav(config, synthesis, greeting)
+        export_listen_preview_wav(voice_wav, listen_out, target_peak=None)
+        return listen_out
+
     voice_wav = await _synthesize_voice_modem_wav(config, synthesis, greeting)
-    listen_out = listen_base.with_suffix(".wav")
     await loop.run_in_executor(
         None,
         lambda: _build_modem_greeting_wav_sync(

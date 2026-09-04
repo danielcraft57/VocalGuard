@@ -121,6 +121,8 @@ class IncomingCallAudioConfig(BaseModel):
 class IncomingVoicemailConfig(BaseModel):
   """Messagerie vocale et filtre DTMF anti-robots."""
 
+  # simple = bip+message ; ivr = dialogue keywords ; conversation = belief+intents KB
+  mode: Literal["simple", "ivr", "conversation"] = "simple"
   require_dtmf: bool = False
   dtmf_digit: str = Field(default="1", min_length=1, max_length=1)
   dtmf_prompt_source: AudioSource = "tts"

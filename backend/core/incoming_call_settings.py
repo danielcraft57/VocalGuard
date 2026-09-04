@@ -188,6 +188,9 @@ def apply_incoming_call_settings(config: Config, settings: IncomingCallSettingsD
   if vm:
     config.voicemail_max_duration = int(vm.max_record_sec)
     config.voicemail_silence_timeout_sec = int(vm.silence_end_sec)
+    mode = (getattr(vm, "mode", None) or "simple").strip().lower()
+    if mode in ("simple", "ivr", "conversation"):
+      config.voicemail_mode = mode
   if hasattr(config, "incoming_call_settings"):
     config.incoming_call_settings = settings  # type: ignore[attr-defined]
 
