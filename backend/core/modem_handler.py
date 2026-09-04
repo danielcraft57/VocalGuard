@@ -825,9 +825,12 @@ class ModemHandler:
 
     def _fast_cleanup_after_remote_hangup_sync(self) -> bool:
         """
-        Nettoyage court quand l'appelant a deja raccroche (evite ATH bloque sur PCM).
+        Remet le modem on-hook et en mode data apres un appel.
 
-        @returns True si le port est pret pour la surveillance RING.
+        Important USR5637 : ``AT+FCLASS=0`` seul NE raccroche PAS si on est
+        encore en voix (AT+VLS=1). Il faut ATH / ATH0, sinon la ligne reste OQP.
+
+        @returns True si ATH ou FCLASS a repondu OK.
         """
         self._voice_abort = True
         self.log_voice_session("fast_cleanup_debut")
@@ -838,15 +841,57 @@ class ModemHandler:
         try:
             if self._vtx_active:
                 end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
-                self.serial_connection.write(end_seq)
-                self.serial_connection.flush()
-                time.sleep(0.05)
+                try:
+                    self.serial_connection.write(end_seq)
+                    self.serial_connection.flush()
+                    time.sleep(0.05)
+                except (OSError, serial.SerialException):
+                    pass
                 self._vtx_active = False
-            self._flush_serial_rx_sync(max_sec=0.15)
-            ok = self._send_command_sync("AT+FCLASS=0", timeout=1.0)
+            try:
+                self._vrx_transparent_close_sync()
+            except Exception:
+                pass
+            self._flush_serial_rx_sync(max_sec=0.2)
+
+            ath_ok = False
+            for cmd in ("ATH", "ATH0"):
+                try:
+                    self.serial_connection.write(f"{cmd}\r\n".encode())
+                    self.serial_connection.flush()
+                    deadline = time.monotonic() + 1.5
+                    buf = b""
+                    while time.monotonic() < deadline:
+                        if self.serial_connection.in_waiting > 0:
+                            buf += self.serial_connection.read(
+                                min(256, self.serial_connection.in_waiting)
+                            )
+                            if b"OK" in buf or b"ERROR" in buf:
+                                break
+                        time.sleep(0.05)
+                    if b"OK" in buf:
+                        ath_ok = True
+                        break
+                except (OSError, serial.SerialException) as exc:
+                    logger.warning("[MODEM] fast_cleanup {}: {}", cmd, exc)
+                    break
+
+            fclass_ok = self._send_command_sync("AT+FCLASS=0", timeout=1.0)
             self._send_command_sync("AT+VCID=1", timeout=1.0)
+            self._incoming_line_seized = False
+            self._incoming_seize_ok = False
             self._reset_voice_session_flags()
-            self.log_voice_session("fast_cleanup_ok", fclass=int(ok))
+            ok = bool(ath_ok or fclass_ok)
+            self.log_voice_session(
+                "fast_cleanup_ok",
+                ath=int(ath_ok),
+                fclass=int(bool(fclass_ok)),
+            )
+            if not ath_ok:
+                logger.warning(
+                    "[MODEM] fast_cleanup sans ATH OK — risque ligne OQP (fclass={})",
+                    int(bool(fclass_ok)),
+                )
             return ok
         except (OSError, serial.SerialException) as exc:
             logger.warning("[MODEM] fast_cleanup: {}", exc)
@@ -893,6 +938,15 @@ class ModemHandler:
                 await asyncio.sleep(0.6)
                 await self.send_command("AT", _retry=False)
                 await self.send_command("ATE0", _retry=False)
+                # On-hook avant FCLASS : evite ligne OQP apres seize voix.
+                try:
+                    await self.send_command("ATH", _retry=False)
+                except Exception:
+                    pass
+                try:
+                    await self.send_command("ATH0", _retry=False)
+                except Exception:
+                    pass
                 await self.send_command("AT+FCLASS=0", _retry=False)
                 await self.send_command("AT+VCID=1", _retry=False)
                 try:
@@ -1435,6 +1489,10 @@ class ModemHandler:
         self._playback_interrupted = False
         self._voice_line_ready = False
         self._vtx_ignore_interrupt_until = 0.0
+        # Ne pas garder un "silence" du tour / appel precedent
+        # (sinon caller_line_finished() coupe la conversation au demarrage).
+        self.last_vrx_stop_reason = None
+        self.last_vrx_heard_speech = False
 
     def voice_session_diag(self) -> dict[str, Any]:
         """
@@ -1794,6 +1852,7 @@ class ModemHandler:
                     return False
             if not self._send_command_sync(_VOICE_RX, expect="CONNECT", timeout=10.0):
                 logger.warning("record_wav_serial: AT+VRX (CONNECT) a echoue")
+                self.last_vrx_stop_reason = "vrx_error"
                 return False
             vrx_opened = True
             if stop_on_remote_hangup or silence_timeout_sec > 0:
@@ -2212,9 +2271,12 @@ class ModemHandler:
 
     def caller_line_finished(self) -> bool:
         """
-        True si l'appelant a probablement quitte la ligne (y compris silence prolonge).
+        True si l'appelant a probablement quitte la ligne.
 
-        @returns True pour couper le message de fin et eviter un ATH long.
+        Le motif ``silence`` n'est PAS un raccrochage : c'est la fin d'un tour
+        d'ecoute. L'inclure faisait sauter le mode conversation au tour suivant.
+
+        @returns True pour hangup distant / perte port / bips operateur.
         """
         return self.last_vrx_stop_reason in (
             "hangup_marker",
@@ -2222,7 +2284,6 @@ class ModemHandler:
             "port_closed",
             "io_error",
             "disconnect_tones",
-            "silence",
         )
 
     async def play_wav_via_serial(

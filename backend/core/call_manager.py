@@ -315,7 +315,7 @@ class CallManager:
 
     async def _modem_release_background(self, reason: str) -> None:
         """
-        Nettoyage serie en arriere-plan (ne bloque pas l'event loop ni /health).
+        Raccroche le modem en arriere-plan (ATH obligatoire apres VLS=1).
 
         @param reason Motif log.
         @returns None
@@ -327,16 +327,24 @@ class CallManager:
             hangup_ok = False
             try:
                 self._log_call("release_modem_rapide", raison=reason)
+                # ATH d'abord : FCLASS=0 seul laisse la ligne OQP apres seize voix.
                 hangup_ok = bool(
-                    await m.run_modem_sync(
-                        m._fast_cleanup_after_remote_hangup_sync,
-                        timeout=2.5,
-                    )
+                    await m.run_modem_sync(m._force_hangup_sync, timeout=4.0)
                 )
             except asyncio.TimeoutError:
-                logger.warning("[APPEL] modem release timeout ({})", reason)
+                logger.warning("[APPEL] force hangup timeout ({})", reason)
             except Exception as exc:
-                logger.warning("[APPEL] modem release echoue ({}): {}", reason, exc)
+                logger.warning("[APPEL] force hangup echoue ({}): {}", reason, exc)
+            if not hangup_ok:
+                try:
+                    hangup_ok = bool(
+                        await m.run_modem_sync(
+                            m._fast_cleanup_after_remote_hangup_sync,
+                            timeout=3.0,
+                        )
+                    )
+                except Exception as exc:
+                    logger.warning("[APPEL] fast_cleanup echoue ({}): {}", reason, exc)
             if not hangup_ok:
                 try:
                     await m.run_modem_sync(m._force_serial_reset_sync, timeout=1.0)
@@ -345,6 +353,14 @@ class CallManager:
                 try:
                     ok = await m.reconnect(attempts=6)
                     if ok:
+                        # Reconnect n'envoie plus ATH : on force encore on-hook.
+                        try:
+                            await m.run_modem_sync(
+                                m._fast_cleanup_after_remote_hangup_sync,
+                                timeout=3.0,
+                            )
+                        except Exception:
+                            pass
                         logger.info("[MODEM] reconnect OK apres release ({})", reason)
                     else:
                         logger.warning("[MODEM] reconnect echoue apres release ({})", reason)
@@ -1010,11 +1026,16 @@ class CallManager:
         """
         Journalise un appel sans repondeur modem (fixe gere la ligne).
 
+        Aucune greffe modem (pas d'ATH1/VLS) : enregistrement impossible en parallele
+        sur USR5637 sans casser la voix. On journalise CID + statut seulement.
+
         @param caller_id Numero.
         @param caller_name Nom CID.
         @param rings Sonneries configurees pour l'attente.
         @param reason Motif log (policy ignore, mode telephone).
         """
+        import time as _time
+
         call = await self.call_service.create_incoming_call(
             phone_number=caller_id,
             caller_name=caller_name,
@@ -1033,15 +1054,42 @@ class CallManager:
         if hasattr(self, "incoming_policy"):
             cycle = float(getattr(self.incoming_policy.settings, "ring_cycle_sec", 8.0) or 8.0)
         wait_sec = max(12.0, float(max(rings, 1)) * cycle)
+        t0 = _time.monotonic()
         outcome = await self._wait_phone_mode_rings_end(max_wait_sec=wait_sec)
+        ring_sec = max(1, int(_time.monotonic() - t0))
         caller_id = self._pending_cid or caller_id
         caller_name = self._pending_cname or caller_name
         if caller_id or caller_name:
             await self.call_service.set_call_caller_info(
                 call.id, phone_number=caller_id, caller_name=caller_name
             )
-        await self.call_service.miss_call(call.id)
-        logger.info("Fin journalisation appel #{} ({})", call.id, outcome)
+
+        if outcome == "answered_elsewhere":
+            # Fixe (ou distant) a pris la ligne : plus de RING. Pas d'audio modem.
+            await self.call_service.answer_call(call.id)
+            await self.call_service.complete_call(call.id, duration=ring_sec)
+            self._log_call(
+                "phone_parallel_repondu",
+                call_id=call.id,
+                duree_sonnerie_s=ring_sec,
+            )
+            logger.info(
+                "Fin journalisation appel #{} (repondu ailleurs, sonnerie ~{}s)",
+                call.id,
+                ring_sec,
+            )
+        else:
+            await self.call_service.miss_call(call.id)
+            self._log_call(
+                "phone_parallel_manque",
+                call_id=call.id,
+                duree_sonnerie_s=ring_sec,
+            )
+            logger.info(
+                "Fin journalisation appel #{} (manque / timeout, sonnerie ~{}s)",
+                call.id,
+                ring_sec,
+            )
         self.current_call_id = None
 
     async def handle_incoming_call(self, caller_id: Optional[str] = None, caller_name: Optional[str] = None):
@@ -1625,6 +1673,8 @@ class CallManager:
 
             if self.modem.caller_line_finished():
                 logger.info("Appelant a raccroche — fin immediate sans message de fin")
+            elif getattr(self, "_skip_incoming_recording_save", False):
+                self._log_call("repondeur_fin_sans_au_revoir", raison="pas_de_message")
             elif not self._call_still_active(active_call_id):
                 self._log_call("repondeur_fin_sans_au_revoir", raison="appel_deja_libere")
             else:
@@ -1644,7 +1694,10 @@ class CallManager:
         max_turns: int = 5,
     ) -> None:
         """
-        Repondeur conversationnel : chunks STT → belief intents → WAV cache.
+        Repondeur conversationnel : 1 VRX par tour → STT node15 → belief intents → WAV.
+
+        Important USR5637 : ne pas rouvrir VRX par petits chunks ni faire du STT
+        pendant l'ecoute (sinon le port serie meurt).
 
         @param recorder Enregistreur parallele entrant.
         @param skip_beep True si le bip a deja ete joue apres l'accueil.
@@ -1660,12 +1713,17 @@ class CallManager:
         )
         from backend.voice.dialogue_persona import resolve_dialogue_reply
         from backend.voice.slot_collector import start_slot_session
-        from backend.voice.turn_vad import TurnVad, TurnVadConfig
 
         logger.info("Mode repondeur conversationnel (belief + intents)")
         rec = recorder or self._incoming_recorder
         active_call_id = self.current_call_id or 0
         self._log_call("conversation_debut", max_turns=max_turns, call_id=active_call_id)
+        # Efface un motif VRX (ex. silence) laisse par l'appel precedent.
+        try:
+            self.modem.last_vrx_stop_reason = None
+            self.modem.last_vrx_heard_speech = False
+        except Exception:
+            pass
 
         try:
             if not skip_beep:
@@ -1689,10 +1747,15 @@ class CallManager:
                     timeout_sec=45.0,
                 )
 
+            # Silence un peu plus long qu'en mode chunk : une seule prise continue.
             turn_silence = float(
                 getattr(self.config, "conversation_turn_silence_sec", 0.65) or 0.65
             )
-            chunk_sec = float(getattr(self.config, "conversation_chunk_sec", 1.4) or 1.4)
+            turn_silence = max(1.2, turn_silence)
+            max_turn_sec = int(
+                getattr(self.config, "conversation_max_turn_sec", 12) or 12
+            )
+            max_turn_sec = max(4, min(30, max_turn_sec))
             transcript_parts: list[str] = []
             recent_replies: list[str] = []
             recent_tags: list[str] = []
@@ -1705,136 +1768,109 @@ class CallManager:
                     break
 
                 belief = IntentBeliefAccumulator()
-                vad = TurnVad(
-                    TurnVadConfig(turn_silence_ms=turn_silence * 1000.0)
-                )
-                turn_pcm = b""
                 committed: Optional[str] = None
-                silence_ended = False
+                final_text = ""
 
-                while True:
-                    if not self._call_still_active(active_call_id):
-                        break
-                    if self.modem.caller_line_finished():
-                        break
-
-                    pcm_chunk = await self._record_audio(
-                        duration=max(1, int(round(chunk_sec))),
-                        already_in_voice_mode=self._use_modem_voice_serial(),
-                        recorder=rec,
-                        stop_on_remote_hangup=True,
-                        silence_timeout_sec=turn_silence,
+                # Un seul VRX pour tout le tour (comme le repondeur simple).
+                turn_pcm = await self._record_audio(
+                    duration=max_turn_sec,
+                    already_in_voice_mode=self._use_modem_voice_serial(),
+                    recorder=rec,
+                    stop_on_remote_hangup=True,
+                    silence_timeout_sec=turn_silence,
+                )
+                stop_reason = getattr(self.modem, "last_vrx_stop_reason", "") or ""
+                if stop_reason == "disconnect_tones":
+                    break
+                if not turn_pcm:
+                    logger.info(
+                        "Conversation tour {} : pas d'audio ({})",
+                        turn_idx,
+                        stop_reason or "vide",
                     )
-                    stop_reason = getattr(self.modem, "last_vrx_stop_reason", "") or ""
-                    if stop_reason == "disconnect_tones":
+                    if stop_reason in ("vrx_error", "vtx_error", "io_error", "port_closed"):
                         break
-                    if not pcm_chunk:
-                        silence_ended = True
-                        break
-
-                    turn_pcm += pcm_chunk
-                    speech_ms = (len(pcm_chunk) / 2) / 16.0  # 16 kHz s16
-                    vad.feed_buffer(pcm_chunk, sample_rate=16000, frame_ms=20.0)
-
-                    text = ""
+                    committed = "incompris"
+                else:
+                    if rec:
+                        try:
+                            await rec.pause()
+                        except Exception:
+                            pass
                     try:
                         if client is not None:
-                            result = await client.transcribe(turn_pcm, mode="live")
-                            text = (result.get("text") or "").strip()
+                            result = await client.transcribe(turn_pcm, mode="final")
+                            final_text = (result.get("text") or "").strip()
+                            logger.info(
+                                "STT node15 tour {} : {} car. ({})",
+                                turn_idx,
+                                len(final_text),
+                                result.get("engine") or "?",
+                            )
                         elif self._recognition_available:
-                            text, _ = await self.voice_recognition.transcribe_with_cues(
+                            final_text, _ = await self.voice_recognition.transcribe_with_cues(
                                 turn_pcm, sample_rate=16000
                             )
-                            text = (text or "").strip()
-                    except Exception as exc:
-                        logger.warning("STT live tour {}: {}", turn_idx, exc)
-
-                    if text:
+                            final_text = (final_text or "").strip()
+                    except Exception:
+                        logger.exception("STT final tour {}", turn_idx)
+                        final_text = ""
+                    if final_text:
+                        transcript_parts.append(final_text)
                         await event_bus.publish(
                             Event(
                                 event_type=EventType.CALL_TRANSCRIPTION_PARTIAL,
                                 timestamp=datetime.utcnow(),
                                 data={
                                     "call_id": active_call_id,
-                                    "text": text,
-                                    "live": True,
+                                    "text": final_text,
+                                    "live": False,
                                     "turn": turn_idx,
                                 },
                                 source="conversation",
                             )
                         )
 
+                    speech_ms = (len(turn_pcm) / 2) / 16.0
                     scores_map: dict[str, float] = {}
-                    try:
-                        if client is not None and text:
-                            preds = await client.intent_predict(text)
-                            scores_map = {
-                                p["tag"]: float(p["score"]) for p in preds if p.get("tag")
-                            }
-                        elif db is not None and text:
-                            preds = intent_repo.predict_intent_scores(db, text)
-                            scores_map = {
-                                p["tag"]: float(p["score"]) for p in preds if p.get("tag")
-                            }
-                    except Exception as exc:
-                        logger.warning("Predict intent tour {}: {}", turn_idx, exc)
-                        if db is not None and text:
-                            try:
-                                preds = intent_repo.predict_intent_scores(db, text)
+                    if final_text:
+                        try:
+                            if db is not None:
+                                preds = intent_repo.predict_intent_scores(db, final_text)
                                 scores_map = {
-                                    p["tag"]: float(p["score"]) for p in preds if p.get("tag")
+                                    p["tag"]: float(p["score"])
+                                    for p in preds
+                                    if p.get("tag")
                                 }
-                            except Exception:
-                                logger.exception("Predict local echoue")
-
-                    # predict_intent_scores / node15 incluent deja le boost patterns
+                            elif client is not None:
+                                preds = await client.intent_predict(final_text)
+                                scores_map = {
+                                    p["tag"]: float(p["score"])
+                                    for p in preds
+                                    if p.get("tag")
+                                }
+                        except Exception as exc:
+                            logger.warning("Predict intent tour {}: {}", turn_idx, exc)
                     if scores_map and recent_tags:
                         ranked = apply_recent_tag_penalty(
                             [{"tag": t, "score": s} for t, s in scores_map.items()],
                             recent_tags,
                         )
                         scores_map = {p["tag"]: float(p["score"]) for p in ranked}
-                    belief.update(scores_map, speech_ms=speech_ms)
-                    await event_bus.publish(
-                        Event(
-                            event_type=EventType.CALL_INTENT_BELIEF,
-                            timestamp=datetime.utcnow(),
-                            data=belief.as_event_payload(call_id=active_call_id),
-                            source="conversation",
+                    if scores_map or speech_ms:
+                        belief.update(scores_map, speech_ms=speech_ms)
+                        await event_bus.publish(
+                            Event(
+                                event_type=EventType.CALL_INTENT_BELIEF,
+                                timestamp=datetime.utcnow(),
+                                data=belief.as_event_payload(call_id=active_call_id),
+                                source="conversation",
+                            )
                         )
-                    )
-
-                    committed = belief.try_commit(force=False)
-                    if committed:
-                        break
-                    if stop_reason == "silence" or vad.ended:
-                        silence_ended = True
-                        committed = belief.try_commit(force=True)
-                        break
-                    # Garde-fou duree tour
-                    if len(turn_pcm) >= 16_000 * 2 * 12:
-                        committed = belief.try_commit(force=True)
-                        break
-
-                if not committed:
                     committed = belief.try_commit(force=True) or "incompris"
 
-                final_text = ""
-                if turn_pcm:
-                    try:
-                        if client is not None:
-                            final_text = (
-                                await client.transcribe(turn_pcm, mode="final")
-                            ).get("text") or ""
-                        elif self._recognition_available:
-                            final_text, _ = await self.voice_recognition.transcribe_with_cues(
-                                turn_pcm, sample_rate=16000
-                            )
-                    except Exception:
-                        logger.exception("STT final tour {}", turn_idx)
-                final_text = (final_text or "").strip()
-                if final_text:
-                    transcript_parts.append(final_text)
+                if not committed:
+                    committed = "incompris"
 
                 await event_bus.publish(
                     Event(
@@ -1932,7 +1968,11 @@ class CallManager:
                     recorder=rec,
                 )
                 if not played:
-                    logger.warning("Lecture reponse intent {} echouee", committed)
+                    logger.warning(
+                        "Lecture reponse intent {} echouee — on arrete (modem voix KO?)",
+                        committed,
+                    )
+                    break
 
                 if committed == "fin" or action == "hangup_soft":
                     break
@@ -1955,7 +1995,7 @@ class CallManager:
                         recorder=rec,
                         call_id=active_call_id,
                         turn_silence=turn_silence,
-                        chunk_sec=chunk_sec,
+                        chunk_sec=float(max_turn_sec),
                     )
                     # Apres collecte, on peut encher un autre tour ou finir
                     if self.modem.caller_line_finished():
@@ -2016,18 +2056,18 @@ class CallManager:
                 if not self._call_still_active(call_id) or self.modem.caller_line_finished():
                     break
                 pcm = await self._record_audio(
-                    duration=max(2, int(round(chunk_sec * 2))),
+                    duration=max(4, int(round(chunk_sec))),
                     already_in_voice_mode=self._use_modem_voice_serial(),
                     recorder=recorder,
                     stop_on_remote_hangup=True,
-                    silence_timeout_sec=turn_silence,
+                    silence_timeout_sec=max(1.2, turn_silence),
                 )
                 if not pcm:
                     continue
                 text = ""
                 try:
                     if client is not None:
-                        text = (await client.transcribe(pcm, mode="live")).get("text") or ""
+                        text = (await client.transcribe(pcm, mode="final")).get("text") or ""
                     elif self._recognition_available:
                         text, _ = await self.voice_recognition.transcribe_with_cues(
                             pcm, sample_rate=16000
