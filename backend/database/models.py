@@ -715,3 +715,23 @@ class CallLead(Base):
     intent_tag = Column(String(100), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
+
+class KbChatSession(Base):
+    """
+    Session de tchatche KB (historique reprisable).
+
+    Le payload messages / contexte dialogue est stocke en JSON pour coller a l'UI.
+    """
+
+    __tablename__ = "kb_chat_sessions"
+    __table_args__ = (Index("ix_kb_chat_sessions_updated_at", "updated_at"),)
+
+    id = Column(String(80), primary_key=True)
+    title = Column(String(255), nullable=False, default="Conversation")
+    messages = Column(JsonbCompat, nullable=False, default=list)
+    recent_replies = Column(JsonbCompat, nullable=False, default=list)
+    recent_tags = Column(JsonbCompat, nullable=False, default=list)
+    recent_user_texts = Column(JsonbCompat, nullable=False, default=list)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+

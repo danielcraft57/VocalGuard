@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from backend.database import database as db_module
 from backend.services import intent_repository as intent_repo
+from backend.services import kb_chat_store
 from backend.services.kb_tts_prefetch import prefetch_intent_voices
 from backend.voice.node15_voice_client import Node15VoiceClient
 from backend.voice.response_picker import (
@@ -70,6 +71,25 @@ class PrefetchBody(BaseModel):
 
     force: bool = False
     tags: Optional[List[str]] = None
+
+
+class ChatSessionUpsertBody(BaseModel):
+    """Session tchatche complete (upsert)."""
+
+    id: str = Field(..., min_length=2, max_length=80)
+    title: str = Field(default="Conversation", max_length=255)
+    messages: List[Dict[str, Any]] = Field(default_factory=list)
+    recentReplies: List[str] = Field(default_factory=list)
+    recentTags: List[str] = Field(default_factory=list)
+    recentUserTexts: List[str] = Field(default_factory=list)
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
+
+
+class ChatImportBody(BaseModel):
+    """Import lot (migration localStorage)."""
+
+    sessions: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 def _db():
@@ -438,5 +458,80 @@ async def seed_intents(request: Request, replace: bool = False) -> Dict[str, Any
         catalog = intent_repo.load_seed_catalog(path)
         n = intent_repo.seed_intents_from_catalog(db, catalog, replace=replace)
         return {"seeded": n, "replace": replace, "path": str(path)}
+    finally:
+        db.close()
+
+
+@router.get("/chats")
+async def list_chats(limit: int = 30) -> Dict[str, Any]:
+    """
+    Liste les sessions tchatche en base.
+
+    @param limit Nombre max.
+    """
+    db = _db()
+    try:
+        items = kb_chat_store.list_sessions(db, limit=limit)
+        return {"sessions": items, "count": len(items)}
+    finally:
+        db.close()
+
+
+@router.get("/chats/{session_id}")
+async def get_chat(session_id: str) -> Dict[str, Any]:
+    """Detail d'une session tchatche."""
+    db = _db()
+    try:
+        row = kb_chat_store.get_session(db, session_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Session introuvable")
+        return row
+    finally:
+        db.close()
+
+
+@router.put("/chats/{session_id}")
+async def put_chat(session_id: str, body: ChatSessionUpsertBody) -> Dict[str, Any]:
+    """
+    Cree / met a jour une session (reprise possible).
+
+    @param session_id Doit matcher body.id.
+    """
+    if body.id.strip() != session_id.strip():
+        raise HTTPException(status_code=400, detail="id URL != body.id")
+    db = _db()
+    try:
+        try:
+            return kb_chat_store.upsert_session(db, body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        db.close()
+
+
+@router.delete("/chats/{session_id}")
+async def delete_chat(session_id: str) -> Dict[str, Any]:
+    """Supprime une session tchatche."""
+    db = _db()
+    try:
+        ok = kb_chat_store.delete_session(db, session_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="Session introuvable")
+        return {"deleted": True, "id": session_id}
+    finally:
+        db.close()
+
+
+@router.post("/chats/import")
+async def import_chats(body: ChatImportBody) -> Dict[str, Any]:
+    """
+    Importe un lot de sessions (ex. migration depuis localStorage).
+
+    @param body sessions[].
+    """
+    db = _db()
+    try:
+        n = kb_chat_store.import_sessions(db, body.sessions or [])
+        return {"imported": n}
     finally:
         db.close()

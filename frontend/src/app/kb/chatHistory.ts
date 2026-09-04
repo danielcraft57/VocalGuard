@@ -127,6 +127,61 @@ export function titleFromMessages(messages: ChatMsg[]): string {
 }
 
 /**
+ * Convertit une session API → type UI.
+ *
+ * @param dto Payload API.
+ * @returns ChatSession.
+ */
+export function sessionFromDto(dto: {
+  id: string;
+  title?: string;
+  messages?: ChatMsg[];
+  recentReplies?: string[];
+  recentTags?: string[];
+  recentUserTexts?: string[];
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}): ChatSession {
+  return {
+    id: dto.id,
+    title: dto.title || "Conversation",
+    createdAt: dto.createdAt || new Date().toISOString(),
+    updatedAt: dto.updatedAt || new Date().toISOString(),
+    messages: Array.isArray(dto.messages) ? (dto.messages as ChatMsg[]) : [],
+    recentReplies: Array.isArray(dto.recentReplies) ? dto.recentReplies : [],
+    recentTags: Array.isArray(dto.recentTags) ? dto.recentTags : [],
+    recentUserTexts: Array.isArray(dto.recentUserTexts) ? dto.recentUserTexts : []
+  };
+}
+
+/**
+ * Convertit une session UI → DTO API.
+ *
+ * @param session Session locale.
+ */
+export function sessionToDto(session: ChatSession): {
+  id: string;
+  title: string;
+  messages: ChatMsg[];
+  recentReplies: string[];
+  recentTags: string[];
+  recentUserTexts: string[];
+  createdAt: string;
+  updatedAt: string;
+} {
+  return {
+    id: session.id,
+    title: session.title,
+    messages: session.messages,
+    recentReplies: session.recentReplies,
+    recentTags: session.recentTags,
+    recentUserTexts: session.recentUserTexts || [],
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt
+  };
+}
+
+/**
  * Cree une nouvelle session avec le message d'accueil.
  *
  * @param welcome Texte bot initial.

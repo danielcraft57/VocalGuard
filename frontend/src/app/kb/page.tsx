@@ -43,11 +43,15 @@ import { VgSettingsSection } from "../../components/mui/VgSettingsSection";
 import {
   chatKb,
   createKbIntent,
+  deleteKbChat,
   deleteKbIntent,
+  fetchKbChats,
   fetchKbIntents,
   getKbIntentVoiceUrl,
+  importKbChats,
   patchKbIntent,
   regenerateKbVoices,
+  upsertKbChat,
   type KbIntent
 } from "../../services/kbApi";
 import {
@@ -57,6 +61,8 @@ import {
   loadChatWelcome,
   saveChatSessions,
   saveChatWelcome,
+  sessionFromDto,
+  sessionToDto,
   titleFromMessages,
   type ChatMsg,
   type ChatSession
@@ -158,22 +164,58 @@ export default function KnowledgeBasePage(): React.ReactElement {
 
   useEffect(() => {
     setWelcomeText(loadChatWelcome());
-    setSessions(loadChatSessions());
+    void (async () => {
+      try {
+        const local = loadChatSessions();
+        if (local.length > 0) {
+          // Migration one-shot localStorage → BDD
+          await importKbChats(local.map(sessionToDto));
+          try {
+            localStorage.removeItem("vg_kb_chat_history_v1");
+          } catch {
+            /* ignore */
+          }
+        }
+        const remote = await fetchKbChats(30);
+        setSessions(remote.map(sessionFromDto));
+      } catch {
+        // Fallback local si API KO
+        setSessions(loadChatSessions());
+      }
+    })();
   }, []);
 
-  const persistSessions = useCallback((next: ChatSession[]) => {
-    setSessions(next);
-    saveChatSessions(next);
+  const persistToDb = useCallback(async (session: ChatSession) => {
+    try {
+      await upsertKbChat(sessionToDto(session));
+    } catch {
+      // Garde aussi un miroir local en secours
+      const locals = loadChatSessions();
+      saveChatSessions([session, ...locals.filter((s) => s.id !== session.id)]);
+    }
   }, []);
 
-  const upsertActive = useCallback((session: ChatSession) => {
-    setActiveSession(session);
-    setSessions((prev) => {
-      const next = [session, ...prev.filter((s) => s.id !== session.id)];
+  const persistSessions = useCallback(
+    (next: ChatSession[]) => {
+      setSessions(next);
+      // Miroir local leger (offline)
       saveChatSessions(next);
-      return next;
-    });
-  }, []);
+    },
+    []
+  );
+
+  const upsertActive = useCallback(
+    (session: ChatSession) => {
+      setActiveSession(session);
+      setSessions((prev) => {
+        const next = [session, ...prev.filter((s) => s.id !== session.id)];
+        saveChatSessions(next);
+        return next;
+      });
+      void persistToDb(session);
+    },
+    [persistToDb]
+  );
 
   const playVoice = useCallback((tag: string) => {
     const url = getKbIntentVoiceUrl(tag);
@@ -220,7 +262,8 @@ export default function KnowledgeBasePage(): React.ReactElement {
     setEditingMsgId(null);
     setChatOpen(true);
     persistSessions([session, ...sessions.filter((s) => s.id !== session.id)]);
-  }, [welcomeText, sessions, persistSessions]);
+    void persistToDb(session);
+  }, [welcomeText, sessions, persistSessions, persistToDb]);
 
   const openHistorySession = useCallback((session: ChatSession) => {
     stickToBottomRef.current = false;
@@ -239,10 +282,11 @@ export default function KnowledgeBasePage(): React.ReactElement {
       };
       const others = sessions.filter((s) => s.id !== updated.id);
       persistSessions([updated, ...others]);
+      void persistToDb(updated);
     }
     setChatOpen(false);
     setEditingMsgId(null);
-  }, [activeSession, sessions, persistSessions]);
+  }, [activeSession, sessions, persistSessions, persistToDb]);
 
   const scrollIfNeeded = useCallback(() => {
     if (!stickToBottomRef.current) return;
@@ -507,6 +551,9 @@ export default function KnowledgeBasePage(): React.ReactElement {
   const deleteSession = useCallback(
     (id: string) => {
       persistSessions(sessions.filter((s) => s.id !== id));
+      void deleteKbChat(id).catch(() => {
+        /* ignore */
+      });
       if (activeSession?.id === id) {
         setActiveSession(null);
         setChatOpen(false);
@@ -568,7 +615,7 @@ export default function KnowledgeBasePage(): React.ReactElement {
 
       <VgSettingsSection
         title="Tchatche"
-        description="Ouvre une conversation dans une modale. Plus de scroll sauvage sur la page. Clique une bulle bot pour editer la reponse."
+        description="Ouvre une conversation dans une modale. Historique sauve en base (reprise possible). Clique une bulle bot pour editer la reponse."
       >
         <Stack spacing={2}>
           <TextField

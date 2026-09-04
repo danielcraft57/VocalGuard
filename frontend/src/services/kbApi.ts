@@ -213,3 +213,79 @@ export async function regenerateKbVoices(force = false): Promise<{
 export function getKbIntentVoiceUrl(tag: string): string {
   return `${getApiBaseUrl()}/kb/intents/${encodeURIComponent(tag)}/voice`;
 }
+
+import type { ChatMsg } from "../app/kb/chatHistory";
+
+export type KbChatSessionDto = {
+  id: string;
+  title: string;
+  messages: ChatMsg[];
+  recentReplies: string[];
+  recentTags: string[];
+  recentUserTexts: string[];
+  createdAt?: string | null;
+  updatedAt?: string | null;
+};
+
+/**
+ * Liste les sessions tchatche (BDD).
+ *
+ * @param limit Cap.
+ */
+export async function fetchKbChats(limit = 30): Promise<KbChatSessionDto[]> {
+  const res = await fetch(`${getApiBaseUrl()}/kb/chats?limit=${limit}`);
+  if (!res.ok) {
+    throw new Error(`KB chats HTTP ${res.status}`);
+  }
+  const body = (await res.json()) as { sessions?: KbChatSessionDto[] };
+  return Array.isArray(body.sessions) ? body.sessions : [];
+}
+
+/**
+ * Sauve / met a jour une session tchatche.
+ *
+ * @param session Payload.
+ */
+export async function upsertKbChat(session: KbChatSessionDto): Promise<KbChatSessionDto> {
+  const res = await fetch(`${getApiBaseUrl()}/kb/chats/${encodeURIComponent(session.id)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(session)
+  });
+  if (!res.ok) {
+    throw new Error(`KB chat save HTTP ${res.status}`);
+  }
+  return (await res.json()) as KbChatSessionDto;
+}
+
+/**
+ * Supprime une session tchatche.
+ *
+ * @param id Id session.
+ */
+export async function deleteKbChat(id: string): Promise<void> {
+  const res = await fetch(`${getApiBaseUrl()}/kb/chats/${encodeURIComponent(id)}`, {
+    method: "DELETE"
+  });
+  if (!res.ok) {
+    throw new Error(`KB chat delete HTTP ${res.status}`);
+  }
+}
+
+/**
+ * Importe un lot (migration localStorage → BDD).
+ *
+ * @param sessions Sessions locales.
+ */
+export async function importKbChats(sessions: KbChatSessionDto[]): Promise<number> {
+  const res = await fetch(`${getApiBaseUrl()}/kb/chats/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessions })
+  });
+  if (!res.ok) {
+    throw new Error(`KB chat import HTTP ${res.status}`);
+  }
+  const body = (await res.json()) as { imported?: number };
+  return Number(body.imported || 0);
+}
