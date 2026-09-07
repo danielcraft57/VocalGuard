@@ -39,6 +39,8 @@ rings_before_answer: 0
 instant_seize_cid_grace_sec: 0.35
 # Sonneries laissees au fixe en mode telephone (UI topbar).
 phone_mode_rings: 4
+# WIP : greffe silencieuse + enregistrement / STT apres decroche fixe (audio encore a stabiliser).
+phone_mode_record: true
 cid_wait_sec: 2.5
 max_call_duration: 300  # secondes
 # true = repondeur modem. false = journalise l'appel, le telephone parallele repond seul

@@ -621,6 +621,7 @@ class IncomingCallConfigResponse(BaseModel):
     ring_quiet_abort_sec: float = 6.0
     max_incoming_wait_sec: float = 45.0
     phone_mode_rings: int = 4
+    phone_mode_record: bool = True
     whitelist_ring_only: bool = False
     whitelist_match: Literal["exact", "prefix", "e164_normalize"] = "exact"
     screened_when_unknown: bool = True
@@ -645,6 +646,7 @@ class IncomingCallConfigPatch(BaseModel):
     ring_quiet_abort_sec: Optional[float] = Field(None, ge=2.0, le=20.0)
     max_incoming_wait_sec: Optional[float] = Field(None, ge=10.0, le=120.0)
     phone_mode_rings: Optional[int] = Field(None, ge=0, le=20)
+    phone_mode_record: Optional[bool] = None
     whitelist_ring_only: Optional[bool] = None
     whitelist_match: Optional[Literal["exact", "prefix", "e164_normalize"]] = None
     screened_when_unknown: Optional[bool] = None

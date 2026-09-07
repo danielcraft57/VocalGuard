@@ -1335,6 +1335,53 @@ class ModemHandler:
             logger.error("Erreur decrochage rapide: {}", e)
             return (False, caller_id, caller_name)
     
+
+    async def join_line_for_listen(self) -> bool:
+        """
+        Greffe silencieuse sur une ligne deja prise (fixe parallele).
+
+        Contrairement a ``answer_call``, on tente encore ``AT+VLS=1`` apres
+        echec ATH1 pour ecouter / enregistrer sans jamais jouer de VTX.
+
+        @returns True si le modem est en mode voix off-hook.
+        """
+        if not self.supports_voice_serial:
+            logger.warning("join_line_for_listen: voix serie indisponible")
+            return False
+        try:
+            response = await self.send_command_full("ATH1", timeout=5.0)
+            raw = response.decode("utf-8", errors="ignore").strip().replace("\r\n", " | ")
+            logger.info("join_line_for_listen ATH1 -> {}", raw or "(vide)")
+            ath_ok = b"OK" in response
+
+            if not ath_ok:
+                r_cls = await self.send_command_full(_VOICE_MODE, timeout=3.0)
+                logger.info(
+                    "join_line_for_listen FCLASS=8 -> {}",
+                    r_cls.decode("utf-8", errors="ignore").strip().replace("\r\n", " | ")
+                    or "(vide)",
+                )
+                r_vls = await self.send_command_full(_TAD_OFF_HOOK, timeout=3.0)
+                raw_vls = r_vls.decode("utf-8", errors="ignore").strip().replace("\r\n", " | ")
+                logger.info("join_line_for_listen VLS=1 -> {}", raw_vls or "(vide)")
+                if b"OK" not in r_vls:
+                    logger.warning("join_line_for_listen: greffe echouee")
+                    return False
+            else:
+                r_cls = await self.send_command_full(_VOICE_MODE, timeout=3.0)
+                if b"OK" in r_cls:
+                    await self.send_command_full(_TAD_OFF_HOOK, timeout=3.0)
+
+            await self.prepare_voice_line_after_seize()
+            self._incoming_line_seized = True
+            self._incoming_seize_ok = True
+            self._voice_line_ready = True
+            logger.info("join_line_for_listen: modem en ecoute silencieuse")
+            return True
+        except Exception as exc:
+            logger.exception("join_line_for_listen: {}", exc)
+            return False
+
     async def hangup(self) -> bool:
         """
         Raccroche l'appel. Sort d'abord du mode voix transparent si besoin, sinon ATH

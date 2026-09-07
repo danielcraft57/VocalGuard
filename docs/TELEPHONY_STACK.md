@@ -44,7 +44,7 @@ Sur une meme machine (ex. Raspberry Pi), les deux peuvent coexister avec `TELEPH
 | Mode | Comportement |
 |------|----------------|
 | **Repondeur** (`incoming_auto_answer: true`, UI Repondeur) | Decrochage **immediat** si `rings_before_answer: 0` (seize voix) ; CID en parallele / via ATA ; message d'accueil + enregistrement. |
-| **Telephone** (`incoming_auto_answer: false`, UI Telephone) | Journalise l'appel + CID, pas de ATA ; le fixe sonne ; fin des RING detectee sans sleep fixe. |
+| **Telephone** (`incoming_auto_answer: false`, UI Telephone) | Journalise l'appel + CID ; le fixe sonne. Si `phone_mode_record: true` (WIP) : greffe silencieuse apres decroche + WAV/STT - audio conversation encore a stabiliser (souvent silence/bips). |
 | **Planning** (`incoming_line_schedule` dans YAML) | Si `enabled: true`, ecrase le switch UI sur des creneaux (voir `config.example.yaml`). |
 | **Whitelist ring-only** | Si `whitelist_ring_only: true`, un numero en liste blanche sonne au fixe sans ATA modem. |
 

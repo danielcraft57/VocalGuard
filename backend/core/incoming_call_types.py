@@ -161,6 +161,7 @@ class IncomingCallSettingsData(BaseModel):
   ring_quiet_abort_sec: float = Field(default=6.0, ge=2.0, le=20.0)
   max_incoming_wait_sec: float = Field(default=45.0, ge=10.0, le=120.0)
   phone_mode_rings: int = Field(default=4, ge=0, le=20)
+  phone_mode_record: bool = True
   whitelist_ring_only: bool = False
   whitelist_match: WhitelistMatchMode = "exact"
   screened_when_unknown: bool = True

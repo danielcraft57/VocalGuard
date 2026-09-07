@@ -100,6 +100,8 @@ class Config(BaseSettings):
     instant_seize_cid_grace_sec: float = Field(default=0.35)
     # Nombre de sonneries laissees au fixe en mode telephone (UI topbar).
     phone_mode_rings: int = Field(default=4)
+    # Mode telephone : apres decroche fixe, greffe silencieuse + enregistrement / STT.
+    phone_mode_record: bool = Field(default=True)
     max_call_duration: int = Field(default=300)  # secondes
     # True = le modem decroche (repondeur). False = CID/historique seulement, le fixe gere l'appel.
     incoming_auto_answer: bool = Field(default=True)

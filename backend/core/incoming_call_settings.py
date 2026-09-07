@@ -160,6 +160,9 @@ def load_incoming_call_settings(config: Config) -> IncomingCallSettingsData:
   data.phone_mode_rings = int(
       getattr(config, "phone_mode_rings", data.phone_mode_rings) or data.phone_mode_rings
   )
+  data.phone_mode_record = bool(
+      getattr(config, "phone_mode_record", data.phone_mode_record)
+  )
   data.whitelist_ring_only = bool(
       getattr(config, "whitelist_ring_only", data.whitelist_ring_only)
   )
@@ -179,6 +182,7 @@ def apply_incoming_call_settings(config: Config, settings: IncomingCallSettingsD
   config.cid_wait_sec = float(settings.cid_wait_sec)
   config.instant_seize_cid_grace_sec = float(settings.instant_seize_cid_grace_sec)
   config.phone_mode_rings = int(settings.phone_mode_rings)
+  config.phone_mode_record = bool(settings.phone_mode_record)
   config.whitelist_ring_only = bool(settings.whitelist_ring_only)
   if settings.audio and settings.audio.edge_tts_rate:
     config.edge_tts_rate = str(settings.audio.edge_tts_rate)

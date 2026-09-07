@@ -10,6 +10,7 @@ export type IncomingCallConfig = {
   ring_quiet_abort_sec: number;
   max_incoming_wait_sec: number;
   phone_mode_rings: number;
+  phone_mode_record: boolean;
   whitelist_ring_only: boolean;
   whitelist_match: "exact" | "prefix" | "e164_normalize";
   screened_when_unknown: boolean;
@@ -34,6 +35,7 @@ export type IncomingCallConfigPatch = Partial<
     | "ring_quiet_abort_sec"
     | "max_incoming_wait_sec"
     | "phone_mode_rings"
+    | "phone_mode_record"
     | "whitelist_ring_only"
     | "whitelist_match"
     | "screened_when_unknown"

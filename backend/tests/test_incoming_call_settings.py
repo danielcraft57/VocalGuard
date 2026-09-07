@@ -62,6 +62,20 @@ def test_whitelist_ring_only_ignore():
     assert decision.should_answer is False
 
 
+def test_patch_phone_mode_record(tmp_path, monkeypatch):
+    """phone_mode_record se persiste et se sync sur Config."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "data").mkdir()
+    config = Config()
+    config.base_path = tmp_path
+    assert config.phone_mode_record is True
+    patched = patch_incoming_call_settings(config, {"phone_mode_record": False})
+    assert patched.phone_mode_record is False
+    assert config.phone_mode_record is False
+    reloaded = load_incoming_call_settings(config)
+    assert reloaded.phone_mode_record is False
+
+
 def test_patch_voicemail_sync_config(tmp_path, monkeypatch):
     """max_record_sec et silence_end_sec synchronises sur Config."""
     monkeypatch.chdir(tmp_path)

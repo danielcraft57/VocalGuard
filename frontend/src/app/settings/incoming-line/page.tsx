@@ -96,9 +96,26 @@ export default function IncomingLineSettingsPage() {
             <Alert severity="info" sx={{ mb: 0 }}>
               {config.incoming_line_mode === "voicemail"
                 ? "Le modem decroche tout de suite (rings=0) pour couper la sonnerie et activer le repondeur VocalGuard."
-                : "Le modem journalise l'appel sans decrocher : le telephone fixe gere la sonnerie."}
+                : "Le modem laisse sonner le fixe. Si l'enregistrement est actif, greffe silencieuse apres decroche + WAV/STT."}
             </Alert>
           </VgSettingsSection>
+
+          {config.incoming_line_mode === "phone" ? (
+            <VgSettingsSection
+              title="Enregistrement mode telephone"
+              description="Apres decroche du fixe : greffe silencieuse modem, WAV jusqu'au raccrochage, STT final."
+            >
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={Boolean(config.phone_mode_record)}
+                    onChange={(_, v) => patchField("phone_mode_record", v)}
+                  />
+                }
+                label="Enregistrer et transcrire les conversations"
+              />
+            </VgSettingsSection>
+          ) : null}
 
           {config.incoming_line_mode === "voicemail" ? (
             <VgSettingsSection

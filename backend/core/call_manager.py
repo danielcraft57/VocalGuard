@@ -15,7 +15,7 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from backend.core.config import Config
-from backend.core.modem_handler import ModemHandler
+from backend.core.modem_handler import ModemHandler, _vrx_buffer_has_hangup_marker
 from backend.core.events import Event, EventType, event_bus
 from backend.core.phone_cid import classify_cid_outcome, normalize_cid_value
 from backend.core.incoming_line_schedule import apply_schedule_to_auto_answer
@@ -46,6 +46,8 @@ from backend.voice.audio_utils import (
     default_bed_variant_for_jingle,
     export_wav_8k_8bit,
     load_wav_as_16k16bit_pcm,
+    pcm_chunk_peak,
+    pcm_modem_to_s16le_16k,
     trim_leading_trailing_silence,
     tts_source_to_modem_wav,
     write_beep_wav_8k,
@@ -1026,8 +1028,8 @@ class CallManager:
         """
         Journalise un appel sans repondeur modem (fixe gere la ligne).
 
-        Aucune greffe modem (pas d'ATH1/VLS) : enregistrement impossible en parallele
-        sur USR5637 sans casser la voix. On journalise CID + statut seulement.
+        Si ``phone_mode_record`` et decroche parallele : greffe silencieuse +
+        enregistrement VRX jusqu'au raccrochage, puis STT final.
 
         @param caller_id Numero.
         @param caller_name Nom CID.
@@ -1064,8 +1066,39 @@ class CallManager:
                 call.id, phone_number=caller_id, caller_name=caller_name
             )
 
+        record = bool(getattr(self.config, "phone_mode_record", True))
+        if outcome == "answered_elsewhere" and not record:
+            logger.info(
+                "Appel #{} repondu ailleurs — phone_mode_record=false, pas d'enregistrement",
+                call.id,
+            )
+        if outcome == "answered_elsewhere" and record:
+            joined = False
+            try:
+                joined = await self.modem.join_line_for_listen()
+            except Exception:
+                logger.exception("phone_record_join_failed appel #{}", call.id)
+            if joined:
+                if decision is not None:
+                    try:
+                        await self.call_service.annotate_incoming_policy(
+                            call.id,
+                            profile=decision.profile,
+                            source=decision.source,
+                            rings_before_answer=int(decision.rings_before_answer),
+                            ignored=False,
+                        )
+                    except Exception:
+                        pass
+                await self._record_phone_parallel_conversation(call.id)
+                return
+            self._log_call("phone_record_join_failed", call_id=call.id, reason=reason)
+            logger.warning(
+                "Greffe silencieuse echouee (appel #{}) — journalisation sans audio",
+                call.id,
+            )
+
         if outcome == "answered_elsewhere":
-            # Fixe (ou distant) a pris la ligne : plus de RING. Pas d'audio modem.
             await self.call_service.answer_call(call.id)
             await self.call_service.complete_call(call.id, duration=ring_sec)
             self._log_call(
@@ -1091,6 +1124,173 @@ class CallManager:
                 ring_sec,
             )
         self.current_call_id = None
+
+    async def _save_pcm16_call_wav(self, call_id: int, pcm16: bytes) -> Optional[str]:
+        """
+        Ecrit un WAV 16 kHz mono pour un appel telephone parallele.
+
+        @param call_id ID appel.
+        @param pcm16 PCM s16le 16 kHz.
+        @returns Chemin relatif ou None.
+        """
+        if not pcm16:
+            return None
+        base = Path(self.config.base_path) if self.config.base_path else Path.cwd()
+        recordings_dir = base / "recordings"
+        recordings_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        wav_rel = f"recordings/call_phone_{call_id}_{ts}.wav"
+        wav_path = base / wav_rel
+        with wave.open(str(wav_path), "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(16000)
+            wf.writeframes(pcm16)
+        await self.call_service.set_audio_file(call_id, wav_rel)
+        logger.info("Appel telephone parallele enregistre: {} ({} octets)", wav_rel, len(pcm16))
+        return wav_rel
+
+    async def _transcribe_call_async(self, call_id: int, audio_pcm_16k: bytes) -> None:
+        """
+        Transcrit un enregistrement d'appel (STT) sans bloquer la ligne.
+
+        @param call_id ID de l'appel.
+        @param audio_pcm_16k PCM 16 kHz 16-bit mono.
+        """
+        try:
+            text, cues = await self.voice_recognition.transcribe_with_cues(
+                audio_pcm_16k, sample_rate=16000
+            )
+            text = (text or "").strip()
+            if not text:
+                logger.info("STT appel #{} : vide / inaudible", call_id)
+                return
+            await self.call_service.set_transcription_and_intent(
+                int(call_id), transcription=text, cues=cues or None
+            )
+            await event_bus.publish(
+                Event(
+                    event_type=EventType.CALL_TRANSCRIPTION_FINAL,
+                    timestamp=datetime.utcnow(),
+                    data={"call_id": call_id, "text": text},
+                )
+            )
+            logger.info("STT appel #{} : {}", call_id, text[:120])
+        except Exception:
+            logger.exception("STT appel #{} echoue", call_id)
+
+    async def _record_phone_parallel_conversation(self, call_id: int) -> None:
+        """
+        Enregistre la conversation apres greffe silencieuse (VRX continu).
+
+        Utilise ``_IncomingLineRecorder`` (flux VRX permanent) plutot que des
+        tranches ``_record_audio`` 1s qui coupaient trop tot. STT final async.
+        Release via ATH force (fix ligne OQP).
+
+        @param call_id ID de l'appel deja cree.
+        """
+        self.current_call_id = call_id
+        self._call_db_finalized = False
+        self._line_already_answered = True
+        self._arm_call_deadline()
+        self._active_call_monotonic = time.monotonic()
+        await self.call_service.answer_call(call_id)
+        self._log_call("phone_record_debut", call_id=call_id)
+
+        max_sec = int(getattr(self.config, "max_call_duration", 300) or 300)
+        recorder = _IncomingLineRecorder(self)
+        self._incoming_recorder = recorder
+        pcm_all = b""
+        stop_reason = "ok"
+        try:
+            await recorder.start(already_in_voice_mode=self._use_modem_voice_serial())
+            if not recorder._session:
+                stop_reason = "vrx_open_failed"
+                logger.warning("phone_record: VRX non ouvert (appel #{})", call_id)
+            else:
+                deadline = time.monotonic() + max(30, max_sec)
+                last_bytes = 0
+                idle_since: Optional[float] = None
+                while time.monotonic() < deadline and self._call_still_active(call_id):
+                    await asyncio.sleep(0.35)
+                    raw_tail = b"".join(recorder.chunks[-30:]) if recorder.chunks else b""
+                    if raw_tail and _vrx_buffer_has_hangup_marker(raw_tail):
+                        stop_reason = "hangup_marker"
+                        break
+                    cur = sum(len(c) for c in recorder.chunks)
+                    if cur > last_bytes:
+                        last_bytes = cur
+                        idle_since = None
+                    else:
+                        if idle_since is None:
+                            idle_since = time.monotonic()
+                        elif last_bytes > 4000 and (time.monotonic() - idle_since) >= 20.0:
+                            stop_reason = "vrx_idle"
+                            break
+                if time.monotonic() >= deadline and stop_reason == "ok":
+                    stop_reason = "max_duration"
+
+            await recorder.pause()
+            modem_pcm = b"".join(recorder.chunks)
+            if modem_pcm:
+                profile = self.modem.voice_profile
+                peak = pcm_chunk_peak(modem_pcm, sample_width=profile.sample_width)
+                logger.info(
+                    "phone_record modem PCM: {} o peak={} rate={} width={}",
+                    len(modem_pcm),
+                    peak,
+                    profile.sample_rate,
+                    profile.sample_width,
+                )
+                pcm_all = pcm_modem_to_s16le_16k(modem_pcm, profile)
+            self._log_call(
+                "phone_record_vrx_fin",
+                call_id=call_id,
+                octets=len(pcm_all or b""),
+                raison=stop_reason,
+            )
+        except Exception:
+            logger.exception("phone_record erreur appel #{}", call_id)
+            stop_reason = "exception"
+            try:
+                await recorder.pause()
+            except Exception:
+                pass
+        finally:
+            self._incoming_recorder = None
+            if pcm_all:
+                try:
+                    await self._save_pcm16_call_wav(call_id, pcm_all)
+                except Exception:
+                    logger.exception("Sauvegarde WAV phone #{} echouee", call_id)
+                if self._recognition_available or getattr(self.config, "stt_service_url", None):
+                    asyncio.create_task(
+                        self._transcribe_call_async(call_id, pcm_all),
+                        name=f"stt_phone_{call_id}",
+                    )
+            else:
+                logger.warning(
+                    "phone_record appel #{} : aucun PCM (raison={})",
+                    call_id,
+                    stop_reason,
+                )
+            if self._active_call_monotonic is not None:
+                self._pending_call_duration_sec = max(
+                    1, int(time.monotonic() - self._active_call_monotonic)
+                )
+            duration = self._pending_call_duration_sec
+            await self.release_active_call(
+                reason="phone_record_fin",
+                complete=True,
+                call_id=call_id,
+            )
+            self._log_call(
+                "phone_record_fin",
+                call_id=call_id,
+                octets=len(pcm_all or b""),
+                duration=duration or 0,
+                raison=stop_reason,
+            )
 
     async def handle_incoming_call(self, caller_id: Optional[str] = None, caller_name: Optional[str] = None):
         """

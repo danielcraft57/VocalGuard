@@ -165,6 +165,7 @@ def _incoming_call_payload(config: Config) -> IncomingCallConfigResponse:
         ring_quiet_abort_sec=float(settings.ring_quiet_abort_sec),
         max_incoming_wait_sec=float(settings.max_incoming_wait_sec),
         phone_mode_rings=int(settings.phone_mode_rings),
+        phone_mode_record=bool(settings.phone_mode_record),
         whitelist_ring_only=bool(settings.whitelist_ring_only),
         whitelist_match=settings.whitelist_match,
         screened_when_unknown=bool(settings.screened_when_unknown),
