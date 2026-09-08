@@ -25,10 +25,15 @@ ONESHOT_TAGS = frozenset(
 
 # Apres ces tags, on privilegie une suite utile.
 FOLLOW_UP_BOOST: Dict[str, Tuple[str, ...]] = {
-    "salutation": ("aide_menu", "services_info", "prise_rdv", "tarifs_devis", "absent_laisser_message"),
+    "salutation": ("aide_menu", "services_info", "prise_rdv", "tarifs_devis", "absent_laisser_message", "contacter_personne"),
     "aide_menu": ("prise_rdv", "tarifs_devis", "absent_laisser_message", "prendre_coordonnees"),
     "remerciements": ("fin", "aide_menu"),
     "incompris": ("aide_menu", "prise_rdv", "absent_laisser_message"),
+    "contacter_personne": ("presence_demande", "absent_laisser_message", "rappel_callback"),
+    "pour_personne": ("presence_demande", "absent_laisser_message", "rappel_callback"),
+    "parler_direction": ("presence_demande", "absent_laisser_message", "rappel_callback"),
+    "parler_humain": ("absent_laisser_message", "rappel_callback", "prendre_coordonnees"),
+    "presence_demande": ("absent_laisser_message", "rappel_callback", "prendre_coordonnees"),
 }
 
 # Salutations / fillers detectes cote utilisateur.
@@ -36,10 +41,30 @@ _GREETING_RE = re.compile(
     r"\b(bonjour|bonsoir|salut|hello|all[oô]|hey|coucou)\b",
     re.IGNORECASE,
 )
+# Soft openers souvent colles avant le vrai motif (ice breaker).
+_SOFT_OPENER_RE = re.compile(
+    r"\b(oui|ouais|ok|okay|d[' ]accord|ben|alors|donc|eh bien|s'il vous plait|svp)\b",
+    re.IGNORECASE,
+)
 _THANKS_RE = re.compile(r"\b(merci|thanks)\b", re.IGNORECASE)
 _FILLER_RE = re.compile(
     r"^\s*(euh+|hum+|all[oô]\s*all[oô]|y\s*a\s*quelqu.?un|vous\s*[eê]tes\s*l[aà])\s*[.?!]*\s*$",
     re.IGNORECASE,
+)
+# Intents utiles a booster quand "bonjour + vraie demande".
+_GREETING_FOLLOW_TAGS = (
+    "aide_menu",
+    "services_info",
+    "prise_rdv",
+    "tarifs_devis",
+    "absent_laisser_message",
+    "pour_personne",
+    "parler_humain",
+    "parler_direction",
+    "contacter_personne",
+    "presence_demande",
+    "rappel_callback",
+    "prendre_coordonnees",
 )
 
 # Insultes FR courantes (detection lexicale, pas de reponse toxique en retour).
@@ -154,6 +179,61 @@ def normalize_utterance(text: str) -> str:
     return t
 
 
+def substance_after_ice_breaker(text: str) -> str:
+    """
+    Retire salutation / soft openers pour isoler le vrai motif.
+
+    Ex. "oui bonjour, j'aimerais laisser un message" → "j aimerais laisser un message".
+
+    @param text Message user.
+    @returns Substance (peut etre vide).
+    """
+    t = normalize_utterance(text or "")
+    if not t:
+        return ""
+    t = _GREETING_RE.sub(" ", t)
+    t = _SOFT_OPENER_RE.sub(" ", t)
+    t = re.sub(r"\s+", " ", t).strip(" ,.;:-")
+    return t
+
+
+def is_ice_breaker_only(text: str) -> bool:
+    """
+    True si le message n'est qu'une salutation / ice breaker, sans vraie demande.
+
+    @param text Message user.
+    @returns True si ice breaker seul.
+    """
+    substance = substance_after_ice_breaker(text)
+    if not substance:
+        return True
+    words = substance.split()
+    # Residu trop court ("monsieur", "madame") = encore de la politesse.
+    if len(words) <= 1 and len(substance) <= 12:
+        return True
+    return False
+
+
+def predict_text_for_intent(user_text: str, recent_tags: Sequence[str]) -> str:
+    """
+    Texte a scorner pour l'intent : si ice breaker + motif apres une salutation,
+    on predit sur la substance seule.
+
+    @param user_text Message brut.
+    @param recent_tags Tags deja commits.
+    @returns Texte pour predict.
+    """
+    seen = {str(t) for t in (recent_tags or []) if t}
+    if "salutation" not in seen:
+        return user_text or ""
+    if is_ice_breaker_only(user_text):
+        return user_text or ""
+    substance = substance_after_ice_breaker(user_text)
+    if len(substance.split()) >= 2:
+        return substance
+    return user_text or ""
+
+
 def count_user_repeats(text: str, recent_user_texts: Sequence[str]) -> int:
     """
     Compte les enonces user consecutifs (fin) proches du texte courant.
@@ -199,7 +279,12 @@ def compute_mood(
     hit += 0.18 * max(0, effective_streak - 1)
     oneshot_hits = sum(1 for t in recent_tags[-6:] if t in ONESHOT_TAGS)
     hit += 0.08 * oneshot_hits
-    if _GREETING_RE.search(user_text or "") and "salutation" in recent_tags:
+    # Agacement salutation : seulement si ice breaker seul (pas "bonjour + motif").
+    if (
+        _GREETING_RE.search(user_text or "")
+        and "salutation" in recent_tags
+        and is_ice_breaker_only(user_text)
+    ):
         hit += 0.25 + 0.15 * user_repeat
     if contains_insult(user_text or ""):
         hit += 0.35 + 0.12 * max(0, count_insult_turns(recent_user_texts, user_text) - 1)
@@ -256,9 +341,8 @@ def reshape_predictions(
     seen = {str(t) for t in recent_tags if t}
     last = str(recent_tags[-1]) if recent_tags else ""
     greeting_again = bool(_GREETING_RE.search(user_text or "")) and "salutation" in seen
-    only_greeting = bool(_GREETING_RE.fullmatch(normalize_utterance(user_text) or "x") or (
-        _GREETING_RE.search(user_text or "") and len(normalize_utterance(user_text).split()) <= 3
-    ))
+    ice_only = is_ice_breaker_only(user_text)
+    only_greeting = ice_only and bool(_GREETING_RE.search(user_text or ""))
 
     adjusted: List[Dict[str, Any]] = []
     for row in predictions:
@@ -277,8 +361,50 @@ def reshape_predictions(
         # Suite naturelle apres salutation
         if last in FOLLOW_UP_BOOST and tag in FOLLOW_UP_BOOST[last]:
             bonus += 0.18
-        if greeting_again and tag in ("aide_menu", "services_info", "prise_rdv"):
+        # Ice breaker seul → pousse le menu. Ice breaker + motif → intents utiles.
+        if greeting_again and ice_only and tag in ("aide_menu", "services_info", "prise_rdv"):
             bonus += 0.25
+        if greeting_again and not ice_only and tag in _GREETING_FOLLOW_TAGS:
+            bonus += 0.28
+        # Nudge lexical (substance apres ice breaker, ou texte brut).
+        substance = substance_after_ice_breaker(user_text) or normalize_utterance(user_text)
+        if re.search(r"\b(laisser|message|messagerie|bip|enregistrer)\b", substance, re.I):
+            if tag == "absent_laisser_message":
+                bonus += 0.4
+        if re.search(
+            r"\b(contacter|joindre|chercher\s+a|pour\s+loic|parler\s+a\s+loic|\bloic\b|\bdaniel\b)\b",
+            substance,
+            re.I,
+        ):
+            if tag == "contacter_personne":
+                bonus += 0.55
+            if tag in ("pour_personne", "parler_direction", "parler_humain"):
+                bonus += 0.2
+            if tag in ("prise_rdv", "contact_sms"):
+                malus += 0.35
+        if re.search(
+            r"\b(il\s+est\s+l[aà]|elle\s+est\s+l[aà]|est[- ]il\s+l[aà]|est[- ]elle\s+l[aà]|disponible)\b",
+            substance,
+            re.I,
+        ):
+            if tag == "presence_demande":
+                bonus += 0.55
+            if tag == "absent_laisser_message":
+                malus += 0.25
+        if re.search(r"\b(rappel+e?[- ]?moi|rapell+e?[- ]?moi|me\s+rappel|un\s+rappel)\b", substance, re.I):
+            if tag == "rappel_callback":
+                bonus += 0.5
+            if tag == "prendre_coordonnees":
+                bonus += 0.2
+            if tag == "contact_sms":
+                malus += 0.45
+        if re.search(
+            r"\b(est\s+l[aà]|joindre|parler|monsieur|madame|\bmr\b|\bmme\b)\b",
+            substance,
+            re.I,
+        ):
+            if tag in ("pour_personne", "parler_humain", "parler_direction", "contacter_personne"):
+                bonus += 0.2
         if only_greeting and "salutation" in seen and tag == "aide_menu":
             bonus += 0.2
 
@@ -322,17 +448,28 @@ def persona_override(
     if _FILLER_RE.match(text.strip()):
         return _pick_persona("filler", intensity, recent_replies), "filler", None
 
-    if _GREETING_RE.search(text) and "salutation" in seen:
+    # "bonjour" rejoue → persona. "bonjour + laisser un message" → catalogue (ice breaker).
+    if _GREETING_RE.search(text) and "salutation" in seen and is_ice_breaker_only(text):
         return _pick_persona("repeat_hello", intensity, recent_replies), "repeat_hello", None
 
     if _THANKS_RE.search(text) and "remerciements" in seen:
-        return _pick_persona("repeat_thanks", intensity, recent_replies), "repeat_thanks", None
+        residual = substance_after_ice_breaker(_THANKS_RE.sub(" ", text))
+        if not residual or (len(residual.split()) <= 1 and len(residual) <= 10):
+            return (
+                _pick_persona("repeat_thanks", intensity, recent_replies),
+                "repeat_thanks",
+                None,
+            )
 
     if mood.user_repeat >= 1:
         return _pick_persona("repeat_same", intensity, recent_replies), "repeat_same", None
 
     # Apres un vrai bonjour, si on retombe encore sur salutation malgre reshape
-    if predicted_tag == "salutation" and "salutation" in seen:
+    if (
+        predicted_tag == "salutation"
+        and "salutation" in seen
+        and is_ice_breaker_only(text)
+    ):
         return _pick_persona("nudge_after_hello", intensity, recent_replies), "nudge_after_hello", None
 
     if predicted_tag in ONESHOT_TAGS and predicted_tag in seen and mood.tag_streak >= 1:

@@ -50,7 +50,9 @@ from backend.voice.audio_utils import (
     pcm_modem_to_s16le_16k,
     trim_leading_trailing_silence,
     tts_source_to_modem_wav,
+    wav_matches_modem_profile,
     write_beep_wav_8k,
+    write_talk_cue_wav_8k,
 )
 from backend.voice.ivr_cache import IvrAudioCache
 from backend.voice.modem_profile import resolve_profile_from_config
@@ -82,7 +84,19 @@ class _IncomingLineRecorder:
         self._session = False
 
     async def start(self, already_in_voice_mode: bool = True) -> None:
+        """
+        Ouvre le flux VRX et demarre la capture PCM ligne.
+
+        Idempotent : si deja actif, no-op ; si session en pause, resume.
+
+        @param already_in_voice_mode True si FCLASS=8 / VLS=1 deja faits.
+        """
         if not self._cm._use_modem_voice_serial():
+            return
+        if self._session and self._active:
+            return
+        if self._session and not self._active:
+            await self.resume(already_in_voice_mode=already_in_voice_mode)
             return
         ok = await self._cm.modem.start_outgoing_vrx_stream(already_in_voice_mode=already_in_voice_mode)
         if not ok:
@@ -97,6 +111,9 @@ class _IncomingLineRecorder:
         max_chunks = 9000  # ~ ~30 min a ~2 ko/chunk ; coupe les pics memoire
         while not self._stop.is_set():
             chunk = await self._cm.modem.read_outgoing_vrx_chunk(2048)
+            if self._cm.modem.caller_line_finished():
+                logger.info("Enregistrement entrant: raccrochage distant (VRX)")
+                break
             if chunk:
                 self.chunks.append(chunk)
                 if len(self.chunks) > max_chunks:
@@ -123,6 +140,31 @@ class _IncomingLineRecorder:
             await self._cm.modem.end_outgoing_vrx_stream()
         except Exception:
             pass
+        self._active = False
+        self._stop.clear()
+
+    async def detach_reader(self) -> None:
+        """
+        Arrete la boucle lecture sans fermer le flux VRX.
+
+        Utile en debut de conversation : l'enregistreur tourne deja depuis le
+        seize ; on passe la main a l'ecoute STT sans creer un trou audio.
+
+        @returns None
+        """
+        if not self._session or not self._active:
+            return
+        self._stop.set()
+        if self._task:
+            try:
+                await asyncio.wait_for(self._task, timeout=2.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                self._task.cancel()
+                try:
+                    await self._task
+                except asyncio.CancelledError:
+                    pass
+            self._task = None
         self._active = False
         self._stop.clear()
 
@@ -566,6 +608,284 @@ class CallManager:
             return self.incoming_policy.settings.voicemail
         return load_incoming_call_settings(self.config).voicemail
 
+    def _is_conversation_mode(self) -> bool:
+        """
+        True si le repondeur est en mode dialogue intents KB.
+
+        @returns Mode conversation actif.
+        """
+        vm = self._voicemail_settings()
+        mode = (
+            getattr(vm, "mode", None)
+            or getattr(self.config, "voicemail_mode", "simple")
+            or "simple"
+        )
+        return str(mode).strip().lower() == "conversation"
+
+    def _conversation_salutation_text(self) -> str:
+        """
+        Texte d'ouverture style tchat KB (intent salutation).
+
+        @returns Premiere reponse catalogue, ou defaut chat-like.
+        """
+        default = (
+            "Bonjour, assistante de monsieur Daniel. "
+            "Comment puis-je vous aider ?"
+        )
+        try:
+            from backend.database import database as db_module
+            from backend.services import intent_repository as intent_repo
+
+            if db_module.SessionLocal is None:
+                return default
+            db = db_module.SessionLocal()
+            try:
+                intent = intent_repo.get_intent_by_tag(db, "salutation")
+                if intent is not None and intent.responses:
+                    texts = [
+                        (r.text or "").strip()
+                        for r in sorted(intent.responses, key=lambda x: x.position)
+                    ]
+                    texts = [t for t in texts if t]
+                    if texts:
+                        preferred = (
+                            "Bonjour, assistante de monsieur Daniel. "
+                            "Comment puis-je vous aider ?"
+                        )
+                        for t in texts:
+                            if "assistante de monsieur daniel" in t.lower():
+                                return t
+                        if preferred in texts:
+                            return preferred
+                        return texts[0]
+            finally:
+                db.close()
+        except Exception:
+            logger.debug("Texte salutation KB indisponible — defaut")
+        return default
+
+    def _conversation_greeting_wav(self) -> Optional[Path]:
+        """
+        WAV precharge de l'intent salutation (meme voix que le catalogue KB).
+
+        Preferre le cache IVR frais (texte KB courant), sinon fichier historique.
+
+        @returns Chemin ivr_wav/kb_salutation.wav si present.
+        """
+        text = self._conversation_salutation_text()
+        fresh = self._ivr_cache.get_if_fresh(text, "kb_salutation")
+        if fresh is not None and fresh.is_file() and fresh.stat().st_size >= 2000:
+            return fresh
+        base = Path(self.config.base_path) if self.config.base_path else Path.cwd()
+        path = base / "ivr_wav" / "kb_salutation.wav"
+        if path.is_file() and path.stat().st_size >= 2000:
+            return path
+        return None
+
+    async def _play_conversation_opening(
+        self,
+        *,
+        already_in_voice_mode: bool = True,
+        recorder: Optional["_IncomingLineRecorder"] = None,
+    ) -> bool:
+        """
+        Joue l'ouverture dialogue (salutation KB), sans message 'laissez un message'.
+
+        @param already_in_voice_mode Ligne deja en mode voix.
+        @param recorder Enregistreur parallele.
+        @returns True si lecture OK.
+        """
+        wav = self._conversation_greeting_wav()
+        if wav is not None:
+            self._log_call("accueil_conversation", fichier=wav.name)
+            return await self._play_wav_file_on_line(
+                wav,
+                already_in_voice_mode=already_in_voice_mode,
+                recorder=recorder,
+            )
+        text = self._conversation_salutation_text()
+        self._log_call("accueil_conversation", source="tts")
+        return await self._play_on_line(
+            text,
+            already_in_voice_mode=already_in_voice_mode,
+            recorder=recorder,
+        )
+
+    def _resolve_conversation_wait_wav(self) -> Optional[Path]:
+        """
+        Jingle / bed d'attente pendant STT (assets projet deja presents).
+
+        Priorite : bed modem lab (bouclable) > sting mini > generation cache.
+
+        @returns Chemin WAV 8 kHz modem, ou None.
+        """
+        base = Path(self.config.base_path) if self.config.base_path else Path.cwd()
+        candidates = [
+            base / "ivr_wav" / "conversation_wait.wav",
+            base / "resources" / "voice" / "lab" / "beds" / "bed_calm_wave_MODEM.wav",
+            base / "resources" / "voice" / "lab" / "jingles" / "sting_mini_MODEM.wav",
+            base / "resources" / "voice" / "intros" / "sting_mini.wav",
+            base / "resources" / "voice" / "intros" / "sting_marimba.wav",
+        ]
+        for path in candidates:
+            try:
+                if path.is_file() and path.stat().st_size >= 1500:
+                    return path
+            except OSError:
+                continue
+        # Genere un sting court dans le cache IVR si rien n'est dispo.
+        out = base / "ivr_wav" / "conversation_wait.wav"
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            from backend.voice.audio_utils import write_stinger_intro_wav
+
+            write_stinger_intro_wav(out, variant="sting_mini", duration_ms=1800)
+            if out.is_file() and out.stat().st_size >= 1500:
+                return out
+        except Exception:
+            logger.debug("Generation jingle attente conversation ignoree")
+        return None
+
+    async def _transcribe_with_wait_jingle(
+        self,
+        turn_pcm: bytes,
+        *,
+        client,
+        recorder: Optional["_IncomingLineRecorder"],
+        turn_idx: int,
+    ) -> str:
+        """
+        STT final avec jingle d'attente en parallele (remplit le silence ligne).
+
+        Le STT n'utilise pas le port serie ; le play oui. On coupe le jingle
+        des que la transcription est prete. Audio trimme + plafonne pour
+        limiter la latence Whisper.
+
+        @param turn_pcm PCM 16 kHz 16-bit du tour.
+        @param client Client node15 (peut etre None → fallback local).
+        @param recorder Enregistreur ligne.
+        @param turn_idx Index de tour (logs).
+        @returns Texte transcrit (peut etre vide).
+        """
+        pcm_for_stt = self._prepare_conversation_stt_pcm(turn_pcm)
+        wait_wav = self._resolve_conversation_wait_wav()
+        done = asyncio.Event()
+        result_box: dict[str, object] = {"text": "", "engine": "?"}
+
+        async def _run_stt() -> None:
+            try:
+                if client is not None:
+                    # live = sans timestamps, plus rapide sur whisper-server
+                    result = await client.transcribe(pcm_for_stt, mode="final")
+                    result_box["text"] = (result.get("text") or "").strip()
+                    result_box["engine"] = result.get("engine") or "whisper"
+                elif self._recognition_available:
+                    text, _ = await self.voice_recognition.transcribe_with_cues(
+                        pcm_for_stt, sample_rate=16000
+                    )
+                    result_box["text"] = (text or "").strip()
+                    result_box["engine"] = "local"
+            except Exception:
+                logger.exception("STT final tour {}", turn_idx)
+                result_box["text"] = ""
+            finally:
+                done.set()
+                # Coupe le VTX jingle si encore en cours.
+                try:
+                    self.modem._voice_abort = True
+                except Exception:
+                    pass
+
+        stt_task = asyncio.create_task(_run_stt(), name=f"stt_wait_{turn_idx}")
+        try:
+            if wait_wav is not None:
+                self._log_call("attente_jingle", fichier=wait_wav.name, turn=turn_idx)
+                # Boucle courte tant que le STT n'a pas fini.
+                while not done.is_set():
+                    if self.modem.caller_line_finished():
+                        break
+                    try:
+                        self.modem._voice_abort = False
+                    except Exception:
+                        pass
+                    await self._play_wav_file_on_line(
+                        wait_wav,
+                        already_in_voice_mode=self._use_modem_voice_serial(),
+                        recorder=recorder,
+                    )
+                    if done.is_set():
+                        break
+                    await asyncio.sleep(0.05)
+            else:
+                await done.wait()
+        finally:
+            try:
+                self.modem._voice_abort = False
+            except Exception:
+                pass
+            if not stt_task.done():
+                await stt_task
+            else:
+                # Drain exceptions deja loggees.
+                try:
+                    stt_task.result()
+                except Exception:
+                    pass
+
+        final_text = str(result_box.get("text") or "").strip()
+        logger.info(
+            "STT node15 tour {} : {} car. ({}) [wait_jingle={} pcm={}→{}]",
+            turn_idx,
+            len(final_text),
+            result_box.get("engine") or "?",
+            wait_wav.name if wait_wav else "off",
+            len(turn_pcm),
+            len(pcm_for_stt),
+        )
+        return final_text
+
+    def _prepare_conversation_stt_pcm(
+        self, turn_pcm: bytes, *, max_sec: float = 6.0
+    ) -> bytes:
+        """
+        Reduit le PCM avant Whisper : trim silence + plafond duree.
+
+        @param turn_pcm PCM 16 kHz 16-bit.
+        @param max_sec Plafond (live ~3.2 s, final ~6 s).
+        @returns PCM optimise (jamais vide si entree non vide).
+        """
+        if not turn_pcm:
+            return turn_pcm
+        pcm = turn_pcm
+        # Trim silence tete/queue (threshold bas pour modem bruyant).
+        try:
+            import array
+
+            samples = array.array("h")
+            samples.frombytes(pcm)
+            if len(samples) > 800:  # >50 ms
+                thr = 400
+                n = len(samples)
+                start = 0
+                while start < n and abs(samples[start]) < thr:
+                    start += 1
+                end = n - 1
+                while end > start and abs(samples[end]) < thr:
+                    end -= 1
+                # Garde 80 ms de marge
+                pad = 1280
+                start = max(0, start - pad)
+                end = min(n - 1, end + pad)
+                if end > start + 1600:
+                    pcm = samples[start : end + 1].tobytes()
+        except Exception:
+            logger.debug("Trim STT conversation ignore")
+        # Plafond : Whisper base, latence ~lineaire a la duree.
+        max_bytes = int(16000 * 2 * max(1.0, float(max_sec)))
+        if len(pcm) > max_bytes:
+            pcm = pcm[-max_bytes:]
+        return pcm or turn_pcm
+
     def _needs_dtmf_gate(self, decision=None) -> bool:
         """
         True si le filtre DTMF anti-robots doit s'executer avant enregistrement.
@@ -614,6 +934,15 @@ class CallManager:
         refresh_modem_voice_assets(self.config, settings)
         greeting = await self._ivr_cache.ensure(self._greeting_text(), "voicemail_greeting")
         goodbye = await self._ivr_cache.ensure(VOICEMAIL_GOODBYE, "voicemail_goodbye")
+        if self._is_conversation_mode():
+            salutation = await self._ivr_cache.ensure(
+                self._conversation_salutation_text(), "kb_salutation"
+            )
+            if salutation:
+                # Croche colle a l'annonce : bip immediat apres la phrase (pas 3s plus tard).
+                self._append_talk_cue_to_wav(salutation, gap_ms=220)
+                logger.info("IVR pret (conversation): {}", salutation.name)
+            self._ensure_talk_cue_wav()
         beep_path = self._ensure_ivr_wav_dir() / "voicemail_beep.wav"
         if not beep_path.is_file() or not beep_path.stat().st_size:
             write_beep_wav_8k(beep_path, profile=getattr(self.modem, "voice_profile", None))
@@ -823,21 +1152,48 @@ class CallManager:
         self._refresh_instant_ring_seize()
 
     def _refresh_instant_ring_seize(self) -> None:
-        """Active le seize sync au RING si repondeur + rings=0 effectifs (policy)."""
+        """
+        Active le seize sync au RING si repondeur coupe-sonnerie (rings<=0).
+
+        rings=-1 : coupe max (grace CID 0, seize des metas DATE/NMBR si possible).
+        """
         auto = bool(getattr(self.config, "incoming_auto_answer", True))
+        raw_rings = getattr(self.config, "rings_before_answer", 0)
+        try:
+            min_answer_rings = int(raw_rings) if raw_rings is not None else 0
+        except (TypeError, ValueError):
+            min_answer_rings = 0
         whitelist_ring_only = bool(getattr(self.config, "whitelist_ring_only", False))
-        min_answer_rings = int(getattr(self.config, "rings_before_answer", 0) or 0)
-        if hasattr(self, "incoming_policy"):
-            answer_rings: list[int] = []
-            for profile in ("screened", "blocked", "permitted"):
-                resolved = resolve_profile_decision(self.incoming_policy.settings, profile)  # type: ignore[arg-type]
-                if "answer" in resolved.actions:
-                    answer_rings.append(int(resolved.rings_before_answer))
-            if answer_rings:
-                min_answer_rings = min(answer_rings)
+        answer_rings: list[int] = []
+        try:
+            if hasattr(self, "incoming_policy"):
+                for profile in ("screened", "blocked", "permitted"):
+                    resolved = resolve_profile_decision(
+                        self.incoming_policy.settings, profile
+                    )
+                    if "answer" in resolved.actions:
+                        answer_rings.append(int(resolved.rings_before_answer))
+                if answer_rings:
+                    min_answer_rings = min(answer_rings)
+        except Exception:
+            pass
         self.modem.instant_ring_seize = bool(
             auto and min_answer_rings <= 0 and not whitelist_ring_only
         )
+        # -1 = agressif : pas d'attente CID avant VLS.
+        if min_answer_rings < 0:
+            self.modem.instant_seize_cid_grace_sec = 0.0
+            self.modem.pre_ring_seize_on_cid_meta = True
+            self.modem.ultra_fast_seize = True
+        else:
+            try:
+                self.modem.instant_seize_cid_grace_sec = float(
+                    getattr(self.config, "instant_seize_cid_grace_sec", 0.35) or 0.35
+                )
+            except (TypeError, ValueError):
+                self.modem.instant_seize_cid_grace_sec = 0.35
+            self.modem.pre_ring_seize_on_cid_meta = False
+            self.modem.ultra_fast_seize = False
         logger.info(
             "instant_ring_seize={} (auto_answer={}, min_answer_rings={}, whitelist_ring_only={})",
             self.modem.instant_ring_seize,
@@ -865,6 +1221,11 @@ class CallManager:
         )
 
         settings = self._incoming_settings()
+        # Mode conversation : meme ouverture que le tchat KB (pas le message repondeur).
+        if self._is_conversation_mode():
+            conv = self._conversation_greeting_wav()
+            if conv is not None:
+                return conv
         greeting = greeting_text(self.config, settings)
         active = greeting_modem_active_wav_path(self.config)
         if active.is_file() and active.stat().st_size >= 4000:
@@ -902,6 +1263,29 @@ class CallManager:
         else:
             logger.debug("Accueil immediat: pas de WAV cache pret")
 
+    def _seed_recorder_with_early_greeting(self, recorder: "_IncomingLineRecorder") -> None:
+        """
+        Recolle l'accueil post-seize dans l'enregistrement d'appel.
+
+        Pendant VTX l'audio n'est pas capturable en VRX : on injecte le WAV joué.
+
+        @param recorder Enregistreur ligne a alimenter.
+        """
+        path = getattr(self.modem, "early_greeting_wav", None)
+        if not path:
+            return
+        wav_path = Path(path)
+        if not wav_path.is_file():
+            return
+        try:
+            with wave.open(str(wav_path), "rb") as wf:
+                pcm = wf.readframes(wf.getnframes())
+            if pcm:
+                recorder.append_pcm(pcm)
+                self._log_call("record_seed_accueil", octets=len(pcm))
+        except Exception as exc:
+            logger.warning("Seed accueil enregistrement: {}", exc)
+
     def reload_incoming_policy(self) -> None:
         """
         Recharge incoming_call_settings + policy apres PATCH API settings.
@@ -913,6 +1297,7 @@ class CallManager:
         if hasattr(self, "incoming_policy"):
             self.incoming_policy.reload()
         self._refresh_instant_ring_seize()
+        self._refresh_early_greeting_wav()
 
     def _arm_call_deadline(self) -> None:
         """Pose une deadline wall-clock pour max_call_duration."""
@@ -1355,7 +1740,14 @@ class CallManager:
 
         try:
             auto_answer_cfg = apply_schedule_to_auto_answer(self.config)
-            rings = int(getattr(self.config, "rings_before_answer", 0) or 0)
+            raw_rings = getattr(self.config, "rings_before_answer", 0)
+            try:
+                rings = int(raw_rings) if raw_rings is not None else 0
+            except (TypeError, ValueError):
+                rings = 0
+            cut_max = rings < 0
+            if cut_max:
+                rings = 0
             whitelist_ring_only = bool(getattr(self.config, "whitelist_ring_only", False))
             cid_wait = float(getattr(self.config, "cid_wait_sec", 2.5) or 2.5)
             timed_out = False
@@ -1365,8 +1757,11 @@ class CallManager:
                 or rings > 0
                 or (auto_answer_cfg and whitelist_ring_only)
             )
+            # rings=-1 / 0 : pas d'attente CID avant decision (modale plus tot).
             immediate_answer = bool(
-                auto_answer_cfg and rings <= 0 and not need_cid_before_action
+                auto_answer_cfg
+                and rings <= 0
+                and (cut_max or not need_cid_before_action)
             )
             if immediate_answer:
                 timeout_sec = 0.0
@@ -1416,6 +1811,9 @@ class CallManager:
             )
             self._current_incoming_decision = decision
             rings = int(decision.rings_before_answer)
+            if rings < 0 or cut_max:
+                cut_max = True
+                rings = 0
             auto_answer = bool(auto_answer_cfg and decision.should_answer)
             logger.info(
                 "Policy: profile={} source={} ignore={} answer={} rings={} actions={}",
@@ -1619,6 +2017,7 @@ class CallManager:
 
             greeting = self._greeting_text()
             audio = self._audio_settings()
+            conversation_mode = self._is_conversation_mode()
             early_mode = bool(getattr(self.modem, "early_greeting_was_scheduled", lambda: False)())
             await self.modem.wait_early_greeting_done()
             played = bool(getattr(self.modem, "_greeting_played_on_seize", False))
@@ -1632,39 +2031,73 @@ class CallManager:
                 )
                 logger.info("Appelant a raccroche pendant l'accueil — pas de repondeur")
                 return
+
+            # Accueil VTX fini : demarre l'enregistrement ligne tout de suite (seize).
+            # L'accueil early n'est pas capturable en VRX → on le recolle depuis le WAV.
+            if self._use_modem_voice_serial():
+                if played:
+                    self._seed_recorder_with_early_greeting(recorder)
+                await recorder.start(already_in_voice_mode=True)
+                self._log_call(
+                    "record_start_seize",
+                    session=int(bool(recorder._session)),
+                    seed_accueil=int(bool(played)),
+                )
+
             if played:
                 self._log_call("accueil_deja_joue")
-                logger.info("Accueil deja joue au seize — suite repondeur")
+                logger.info(
+                    "Accueil deja joue au seize — suite {}",
+                    "conversation" if conversation_mode else "repondeur",
+                )
             elif early_mode:
                 if not played:
                     logger.warning("Accueil immediat echoue — un seul reessai apres reprise ligne")
                     self.modem._playback_interrupted = False
                     self.modem._voice_abort = False
                     await self.modem.prepare_voice_line_after_seize()
+                    if conversation_mode:
+                        played = await self._play_conversation_opening(
+                            already_in_voice_mode=True,
+                            recorder=recorder,
+                        )
+                    else:
+                        played = await self._play_greeting_sequence(
+                            greeting=greeting,
+                            audio=audio,
+                            already_in_voice_mode=True,
+                            recorder=recorder,
+                        )
+                    interrupted = bool(getattr(self.modem, "_playback_interrupted", False))
+            else:
+                if conversation_mode:
+                    played = await self._play_conversation_opening(
+                        already_in_voice_mode=True,
+                        recorder=recorder,
+                    )
+                else:
                     played = await self._play_greeting_sequence(
                         greeting=greeting,
                         audio=audio,
                         already_in_voice_mode=True,
-                        recorder=None,
+                        recorder=recorder,
                     )
-                    interrupted = bool(getattr(self.modem, "_playback_interrupted", False))
-            else:
-                played = await self._play_greeting_sequence(
-                    greeting=greeting,
-                    audio=audio,
-                    already_in_voice_mode=True,
-                    recorder=None,
-                )
                 interrupted = bool(getattr(self.modem, "_playback_interrupted", False))
             if not played and skip_modem_answer and not early_mode and not interrupted:
                 logger.warning("Accueil echoue apres seize — reprise ligne voix puis nouvel essai")
                 await self.modem.prepare_voice_line_after_seize()
-                played = await self._play_greeting_sequence(
-                    greeting=greeting,
-                    audio=audio,
-                    already_in_voice_mode=True,
-                    recorder=None,
-                )
+                if conversation_mode:
+                    played = await self._play_conversation_opening(
+                        already_in_voice_mode=True,
+                        recorder=recorder,
+                    )
+                else:
+                    played = await self._play_greeting_sequence(
+                        greeting=greeting,
+                        audio=audio,
+                        already_in_voice_mode=True,
+                        recorder=recorder,
+                    )
                 interrupted = bool(getattr(self.modem, "_playback_interrupted", False))
             if interrupted or played is False:
                 self._log_call(
@@ -1695,8 +2128,6 @@ class CallManager:
                         logger.info("Filtre DTMF non valide — fin sans enregistrement")
                         return
                 if vm_mode == "ivr" and self._recognition_available:
-                    if self._use_modem_voice_serial():
-                        await recorder.start(already_in_voice_mode=True)
                     await self._handle_voice_interaction(recorder=recorder)
                 elif vm_mode == "conversation":
                     if not self._recognition_available:
@@ -1894,10 +2325,11 @@ class CallManager:
         max_turns: int = 5,
     ) -> None:
         """
-        Repondeur conversationnel : 1 VRX par tour → STT node15 → belief intents → WAV.
+        Repondeur conversationnel : VRX continu + STT live par chunks → belief → WAV.
 
-        Important USR5637 : ne pas rouvrir VRX par petits chunks ni faire du STT
-        pendant l'ecoute (sinon le port serie meurt).
+        Important USR5637 : un seul VRX ouvert pour le tour (pas de re-open
+        par petit record). Le STT part en tache de fond sur le buffer cumule
+        (port serie non touche).
 
         @param recorder Enregistreur parallele entrant.
         @param skip_beep True si le bip a deja ete joue apres l'accueil.
@@ -1913,6 +2345,8 @@ class CallManager:
         )
         from backend.voice.dialogue_persona import resolve_dialogue_reply
         from backend.voice.slot_collector import start_slot_session
+        from backend.voice.turn_vad import TurnVad, TurnVadConfig
+        from backend.voice.audio_utils import pcm_modem_to_s16le_16k
 
         logger.info("Mode repondeur conversationnel (belief + intents)")
         rec = recorder or self._incoming_recorder
@@ -1926,17 +2360,10 @@ class CallManager:
             pass
 
         try:
-            if not skip_beep:
-                await self._play_beep_on_line(recorder=rec)
-
+            # Seed deja fait au demarrage API — ne pas bloquer 3-4s ici.
             db = None
             if db_module.SessionLocal is not None:
                 db = db_module.SessionLocal()
-                try:
-                    base = Path(self.config.base_path) if self.config.base_path else Path(".")
-                    intent_repo.ensure_seeded(db, base)
-                except Exception:
-                    logger.exception("Seed intents conversation ignore")
 
             client: Optional[Node15VoiceClient] = None
             stt_url = getattr(self.config, "stt_service_url", None)
@@ -1947,19 +2374,40 @@ class CallManager:
                     timeout_sec=45.0,
                 )
 
-            # Silence un peu plus long qu'en mode chunk : une seule prise continue.
+            # Chunks live : silence fin de tour + periode STT (config override).
             turn_silence = float(
-                getattr(self.config, "conversation_turn_silence_sec", 0.65) or 0.65
+                getattr(self.config, "conversation_turn_silence_sec", 0.55) or 0.55
             )
-            turn_silence = max(1.2, turn_silence)
+            turn_silence = max(0.35, min(2.0, turn_silence))
+            chunk_sec = float(
+                getattr(self.config, "conversation_chunk_sec", 0.9) or 0.9
+            )
+            chunk_sec = max(0.6, min(2.5, chunk_sec))
+            first_chunk_sec = float(
+                getattr(self.config, "conversation_first_chunk_sec", 0.7) or 0.7
+            )
+            first_chunk_sec = max(0.5, min(chunk_sec, first_chunk_sec))
+            live_stt_sec = float(
+                getattr(self.config, "conversation_live_stt_sec", 3.2) or 3.2
+            )
+            live_stt_sec = max(2.0, min(6.0, live_stt_sec))
             max_turn_sec = int(
                 getattr(self.config, "conversation_max_turn_sec", 12) or 12
             )
             max_turn_sec = max(4, min(30, max_turn_sec))
+            stt_every_bytes = int(16000 * 2 * chunk_sec)
+            first_stt_bytes = int(16000 * 2 * first_chunk_sec)
+            # Silence raccourci quand la belief a deja un leader clair.
+            early_silence_ms = max(280.0, turn_silence * 1000.0 * 0.55)
             transcript_parts: list[str] = []
-            recent_replies: list[str] = []
-            recent_tags: list[str] = []
+            # Comme le tchat : l'ouverture salutation compte deja comme 1er tour bot.
+            welcome = self._conversation_salutation_text()
+            recent_replies: list[str] = [welcome]
+            recent_tags: list[str] = ["salutation"]
             recent_user_texts: list[str] = []
+            voice_profile = getattr(self.modem, "voice_profile", None)
+            # Accueil early / ouverture deja jouee avec croche colle → pas de 2e bip tour 0.
+            opening_cue_done = bool(skip_beep)
 
             for turn_idx in range(max_turns):
                 if not self._call_still_active(active_call_id):
@@ -1968,72 +2416,342 @@ class CallManager:
                     break
 
                 belief = IntentBeliefAccumulator()
+                vad = TurnVad(
+                    TurnVadConfig(turn_silence_ms=turn_silence * 1000.0)
+                )
                 committed: Optional[str] = None
                 final_text = ""
+                turn_pcm = bytearray()
+                live_text = ""
+                stt_task: Optional[asyncio.Task] = None
+                last_stt_len = 0
+                heard_speech = False
 
-                # Un seul VRX pour tout le tour (comme le repondeur simple).
-                turn_pcm = await self._record_audio(
-                    duration=max_turn_sec,
-                    already_in_voice_mode=self._use_modem_voice_serial(),
-                    recorder=rec,
-                    stop_on_remote_hangup=True,
-                    silence_timeout_sec=turn_silence,
-                )
-                stop_reason = getattr(self.modem, "last_vrx_stop_reason", "") or ""
-                if stop_reason == "disconnect_tones":
-                    break
-                if not turn_pcm:
-                    logger.info(
-                        "Conversation tour {} : pas d'audio ({})",
-                        turn_idx,
-                        stop_reason or "vide",
-                    )
-                    if stop_reason in ("vrx_error", "vtx_error", "io_error", "port_closed"):
-                        break
-                    committed = "incompris"
-                else:
+                # Tour 0 apres accueil early (croche deja dans le WAV) :
+                # reutilise le VRX ouvert au seize → zero trou avant parole.
+                vrx_ok = False
+                if (
+                    turn_idx == 0
+                    and opening_cue_done
+                    and rec is not None
+                    and getattr(rec, "_active", False)
+                ):
+                    try:
+                        await rec.detach_reader()
+                        vrx_ok = True
+                        self._log_call("listen_reuse_vrx", turn=0)
+                    except Exception:
+                        vrx_ok = False
+
+                if not vrx_ok:
                     if rec:
                         try:
                             await rec.pause()
                         except Exception:
                             pass
-                    try:
-                        if client is not None:
-                            result = await client.transcribe(turn_pcm, mode="final")
-                            final_text = (result.get("text") or "").strip()
-                            logger.info(
-                                "STT node15 tour {} : {} car. ({})",
-                                turn_idx,
-                                len(final_text),
-                                result.get("engine") or "?",
-                            )
-                        elif self._recognition_available:
-                            final_text, _ = await self.voice_recognition.transcribe_with_cues(
-                                turn_pcm, sample_rate=16000
-                            )
-                            final_text = (final_text or "").strip()
-                    except Exception:
-                        logger.exception("STT final tour {}", turn_idx)
-                        final_text = ""
-                    if final_text:
-                        transcript_parts.append(final_text)
-                        await event_bus.publish(
-                            Event(
-                                event_type=EventType.CALL_TRANSCRIPTION_PARTIAL,
-                                timestamp=datetime.utcnow(),
-                                data={
-                                    "call_id": active_call_id,
-                                    "text": final_text,
-                                    "live": False,
-                                    "turn": turn_idx,
-                                },
-                                source="conversation",
-                            )
-                        )
+                    if not (turn_idx == 0 and opening_cue_done):
+                        try:
+                            await self._play_talk_cue_on_line(recorder=rec)
+                        except Exception:
+                            logger.warning("Talk cue tour {} ignore", turn_idx)
 
-                    speech_ms = (len(turn_pcm) / 2) / 16.0
-                    scores_map: dict[str, float] = {}
-                    if final_text:
+                self._log_call(
+                    "conversation_listen",
+                    turn=turn_idx,
+                    chunk_s=chunk_sec,
+                    first_chunk_s=first_chunk_sec,
+                    silence_s=turn_silence,
+                    live_stt_s=live_stt_sec,
+                )
+                if not vrx_ok:
+                    vrx_ok = await self.modem.start_outgoing_vrx_stream(
+                        already_in_voice_mode=self._use_modem_voice_serial()
+                    )
+                if not vrx_ok:
+                    logger.warning("Conversation tour {} : VRX stream KO", turn_idx)
+                    committed = "incompris"
+                else:
+                    deadline = time.monotonic() + float(max_turn_sec)
+                    # Sans parole : coupe vite (raccrochage FR souvent = silence, pas DLE).
+                    no_speech_limit = 5.0 if turn_idx == 0 else 3.0
+                    no_speech_hangup_at = time.monotonic() + no_speech_limit
+                    try:
+                        while time.monotonic() < deadline:
+                            if not self._call_still_active(active_call_id):
+                                break
+                            if self.modem.caller_line_finished():
+                                break
+                            if (
+                                not heard_speech
+                                and time.monotonic() >= no_speech_hangup_at
+                            ):
+                                logger.info(
+                                    "Conversation tour {} : silence {:.1f}s sans parole — hangup",
+                                    turn_idx,
+                                    no_speech_limit,
+                                )
+                                self.modem.last_vrx_stop_reason = (
+                                    self.modem.last_vrx_stop_reason or "silence_hangup"
+                                )
+                                break
+
+                            # Recupere un STT live termine sans bloquer l'ecoute.
+                            if stt_task is not None and stt_task.done():
+                                try:
+                                    result = stt_task.result()
+                                    live_text = (
+                                        (result.get("text") or "").strip()
+                                        if isinstance(result, dict)
+                                        else str(result or "").strip()
+                                    )
+                                except Exception as exc:
+                                    logger.warning(
+                                        "STT live tour {} KO: {}", turn_idx, exc
+                                    )
+                                    live_text = live_text or ""
+                                stt_task = None
+                                if live_text:
+                                    await event_bus.publish(
+                                        Event(
+                                            event_type=EventType.CALL_TRANSCRIPTION_PARTIAL,
+                                            timestamp=datetime.utcnow(),
+                                            data={
+                                                "call_id": active_call_id,
+                                                "text": live_text,
+                                                "live": True,
+                                                "turn": turn_idx,
+                                            },
+                                            source="conversation",
+                                        )
+                                    )
+                                    scores_map: dict[str, float] = {}
+                                    try:
+                                        if db is not None:
+                                            preds = intent_repo.predict_intent_scores(
+                                                db, live_text
+                                            )
+                                            scores_map = {
+                                                p["tag"]: float(p["score"])
+                                                for p in preds
+                                                if p.get("tag")
+                                            }
+                                        elif client is not None:
+                                            preds = await client.intent_predict(
+                                                live_text
+                                            )
+                                            scores_map = {
+                                                p["tag"]: float(p["score"])
+                                                for p in preds
+                                                if p.get("tag")
+                                            }
+                                    except Exception as exc:
+                                        logger.warning(
+                                            "Predict live tour {}: {}", turn_idx, exc
+                                        )
+                                    if scores_map and recent_tags:
+                                        ranked = apply_recent_tag_penalty(
+                                            [
+                                                {"tag": t, "score": s}
+                                                for t, s in scores_map.items()
+                                            ],
+                                            recent_tags,
+                                        )
+                                        scores_map = {
+                                            p["tag"]: float(p["score"]) for p in ranked
+                                        }
+                                    speech_ms = max(
+                                        0.0,
+                                        ((len(turn_pcm) - last_stt_len) / 2) / 16.0,
+                                    )
+                                    if scores_map or speech_ms:
+                                        belief.update(scores_map, speech_ms=speech_ms)
+                                        await event_bus.publish(
+                                            Event(
+                                                event_type=EventType.CALL_INTENT_BELIEF,
+                                                timestamp=datetime.utcnow(),
+                                                data=belief.as_event_payload(
+                                                    call_id=active_call_id
+                                                ),
+                                                source="conversation",
+                                            )
+                                        )
+                                    committed = belief.try_commit(force=False)
+                                    if committed:
+                                        # "Oui" / mono-mot : ne pas couper pendant que
+                                        # l'appelant enchaine (cas appel #43).
+                                        words = [
+                                            w
+                                            for w in (live_text or "")
+                                            .replace(",", " ")
+                                            .split()
+                                            if w
+                                        ]
+                                        too_short = len(words) <= 2 and len(
+                                            live_text or ""
+                                        ) < 20
+                                        if too_short and not vad.ended:
+                                            committed = None
+                                        else:
+                                            logger.info(
+                                                "Conversation tour {} : commit precoce {}",
+                                                turn_idx,
+                                                committed,
+                                            )
+                                            break
+
+                            raw = await self.modem.read_outgoing_vrx_chunk(2048)
+                            if self.modem.caller_line_finished():
+                                logger.info(
+                                    "Conversation tour {} : raccrochage distant (VRX)",
+                                    turn_idx,
+                                )
+                                break
+                            if not raw:
+                                await asyncio.sleep(0.01)
+                                continue
+                            try:
+                                pcm16 = pcm_modem_to_s16le_16k(raw, voice_profile)
+                            except Exception:
+                                pcm16 = b""
+                            if not pcm16:
+                                continue
+                            turn_pcm.extend(pcm16)
+                            if rec:
+                                try:
+                                    rec.append_pcm(raw)
+                                except Exception:
+                                    pass
+                            vad.feed_buffer(pcm16, sample_rate=16000, frame_ms=20.0)
+                            if vad.heard_speech:
+                                heard_speech = True
+
+                            # Lance un STT live sur fenetre recente (1 tache a la fois).
+                            need_bytes = (
+                                first_stt_bytes
+                                if last_stt_len == 0
+                                else stt_every_bytes
+                            )
+                            if (
+                                heard_speech
+                                and client is not None
+                                and stt_task is None
+                                and len(turn_pcm) - last_stt_len >= need_bytes
+                            ):
+                                snap = self._prepare_conversation_stt_pcm(
+                                    bytes(turn_pcm), max_sec=live_stt_sec
+                                )
+                                last_stt_len = len(turn_pcm)
+
+                                async def _live_stt(pcm: bytes = snap) -> dict:
+                                    return await client.transcribe(pcm, mode="live")
+
+                                stt_task = asyncio.create_task(
+                                    _live_stt(), name=f"stt_live_{turn_idx}"
+                                )
+
+                            # Fin de tour : silence normal, ou plus court si belief claire.
+                            if heard_speech and not committed:
+                                top = belief.ranking(1)
+                                leader = top[0][1] if top else 0.0
+                                if vad.ended:
+                                    break
+                                if (
+                                    leader >= 0.55
+                                    and belief.state.chunks >= 1
+                                    and vad.silence_ms >= early_silence_ms
+                                ):
+                                    logger.info(
+                                        "Conversation tour {} : silence court (belief={:.2f})",
+                                        turn_idx,
+                                        leader,
+                                    )
+                                    break
+                            elif vad.ended and heard_speech:
+                                break
+                            if len(turn_pcm) >= 16000 * 2 * max_turn_sec:
+                                break
+                    finally:
+                        try:
+                            await self.modem.end_outgoing_vrx_stream()
+                        except Exception:
+                            logger.exception("Fin VRX conversation tour {}", turn_idx)
+                        # Drain / annule dernier STT en vol
+                        if stt_task is not None:
+                            if committed:
+                                stt_task.cancel()
+                                try:
+                                    await stt_task
+                                except (asyncio.CancelledError, Exception):
+                                    pass
+                            else:
+                                try:
+                                    result = await asyncio.wait_for(
+                                        stt_task, timeout=8.0
+                                    )
+                                    live_text = (
+                                        (result.get("text") or "").strip()
+                                        if isinstance(result, dict)
+                                        else live_text
+                                    )
+                                except Exception:
+                                    logger.warning(
+                                        "STT live drain tour {} ignore", turn_idx
+                                    )
+                            stt_task = None
+
+                    # Hangup possible entre ecoute et reponse (TTS / DB).
+                    try:
+                        await self.modem.poll_remote_hangup(max_sec=0.25)
+                    except Exception:
+                        pass
+                    if self.modem.caller_line_finished():
+                        logger.info(
+                            "Conversation tour {} : raccrochage apres ecoute",
+                            turn_idx,
+                        )
+                        break
+                    if not self._call_still_active(active_call_id):
+                        break
+
+                    final_text = (live_text or "").strip()
+                    # Passage final sur le tour complet : le live tronque a ~3.2s
+                    # et peut s'arreter sur "Oui." alors que la phrase continue.
+                    if heard_speech and turn_pcm and client is not None:
+                        try:
+                            snap = self._prepare_conversation_stt_pcm(
+                                bytes(turn_pcm), max_sec=8.0
+                            )
+                            result = await client.transcribe(snap, mode="final")
+                            final_candidate = (
+                                (result.get("text") or "").strip()
+                                if isinstance(result, dict)
+                                else ""
+                            )
+                            if final_candidate:
+                                logger.info(
+                                    "STT final tour {} : {} car. (live={} car.)",
+                                    turn_idx,
+                                    len(final_candidate),
+                                    len(final_text),
+                                )
+                                final_text = final_candidate
+                        except Exception:
+                            logger.exception("STT final tour {} ignore", turn_idx)
+                    if heard_speech and not final_text and turn_pcm:
+                        # Repli : un STT avec jingle si les chunks n'ont rien donne.
+                        try:
+                            final_text = await self._transcribe_with_wait_jingle(
+                                bytes(turn_pcm),
+                                client=client,
+                                recorder=rec,
+                                turn_idx=turn_idx,
+                            )
+                        except Exception:
+                            logger.exception("STT repli tour {}", turn_idx)
+                            final_text = ""
+                    if heard_speech and final_text:
+                        # Predict final sur le texte complet (pas le live tronque).
+                        scores_map = {}
                         try:
                             if db is not None:
                                 preds = intent_repo.predict_intent_scores(db, final_text)
@@ -2042,32 +2760,48 @@ class CallManager:
                                     for p in preds
                                     if p.get("tag")
                                 }
-                            elif client is not None:
-                                preds = await client.intent_predict(final_text)
-                                scores_map = {
-                                    p["tag"]: float(p["score"])
-                                    for p in preds
-                                    if p.get("tag")
-                                }
                         except Exception as exc:
-                            logger.warning("Predict intent tour {}: {}", turn_idx, exc)
-                    if scores_map and recent_tags:
-                        ranked = apply_recent_tag_penalty(
-                            [{"tag": t, "score": s} for t, s in scores_map.items()],
-                            recent_tags,
-                        )
-                        scores_map = {p["tag"]: float(p["score"]) for p in ranked}
-                    if scores_map or speech_ms:
-                        belief.update(scores_map, speech_ms=speech_ms)
-                        await event_bus.publish(
-                            Event(
-                                event_type=EventType.CALL_INTENT_BELIEF,
-                                timestamp=datetime.utcnow(),
-                                data=belief.as_event_payload(call_id=active_call_id),
-                                source="conversation",
+                            logger.warning("Predict final tour {}: {}", turn_idx, exc)
+                        if scores_map and recent_tags:
+                            ranked = apply_recent_tag_penalty(
+                                [{"tag": t, "score": s} for t, s in scores_map.items()],
+                                recent_tags,
                             )
+                            scores_map = {
+                                p["tag"]: float(p["score"]) for p in ranked
+                            }
+                        if scores_map:
+                            belief.update(scores_map, speech_ms=200.0)
+                            # Recalcule le commit avec le texte complet.
+                            committed = belief.try_commit(force=True) or committed
+
+                    if not heard_speech or not turn_pcm:
+                        logger.info(
+                            "Conversation tour {} : silence sans parole — fin d'appel",
+                            turn_idx,
                         )
-                    committed = belief.try_commit(force=True) or "incompris"
+                        self.modem.last_vrx_stop_reason = (
+                            self.modem.last_vrx_stop_reason or "silence_hangup"
+                        )
+                        break
+                    else:
+                        if final_text:
+                            transcript_parts.append(final_text)
+                            await event_bus.publish(
+                                Event(
+                                    event_type=EventType.CALL_TRANSCRIPTION_PARTIAL,
+                                    timestamp=datetime.utcnow(),
+                                    data={
+                                        "call_id": active_call_id,
+                                        "text": final_text,
+                                        "live": False,
+                                        "turn": turn_idx,
+                                    },
+                                    source="conversation",
+                                )
+                            )
+                        if not committed:
+                            committed = belief.try_commit(force=True) or "incompris"
 
                 if not committed:
                     committed = "incompris"
@@ -2162,16 +2896,39 @@ class CallManager:
                     if len(recent_tags) > 12:
                         recent_tags = recent_tags[-12:]
 
+                try:
+                    await self.modem.poll_remote_hangup(max_sec=0.15)
+                except Exception:
+                    pass
+                if (
+                    not self._call_still_active(active_call_id)
+                    or self.modem.caller_line_finished()
+                ):
+                    logger.info(
+                        "Conversation tour {} : raccrochage avant reponse",
+                        turn_idx,
+                    )
+                    break
+
                 played = await self._play_intent_wav_or_tts(
                     wav_basename=wav_basename,
                     response_text=response_text or "D'accord.",
                     recorder=rec,
                 )
                 if not played:
-                    logger.warning(
-                        "Lecture reponse intent {} echouee — on arrete (modem voix KO?)",
-                        committed,
-                    )
+                    if self.modem.caller_line_finished() or getattr(
+                        self.modem, "_playback_interrupted", False
+                    ):
+                        logger.info(
+                            "Conversation tour {} : raccrochage pendant reponse ({})",
+                            turn_idx,
+                            committed,
+                        )
+                    else:
+                        logger.warning(
+                            "Lecture reponse intent {} echouee — on arrete (modem voix KO?)",
+                            committed,
+                        )
                     break
 
                 if committed == "fin" or action == "hangup_soft":
@@ -2207,6 +2964,12 @@ class CallManager:
             if db is not None:
                 db.close()
 
+            if client is not None:
+                try:
+                    await client.aclose()
+                except Exception:
+                    pass
+
             if (
                 self._call_still_active(active_call_id)
                 and not self.modem.caller_line_finished()
@@ -2214,7 +2977,7 @@ class CallManager:
                 # Goodbye deja joue si intent fin ; sinon court au revoir
                 pass
         except Exception as e:
-            logger.exception("Erreur mode repondeur conversation: %s", e)
+            logger.exception("Erreur mode repondeur conversation: {}", e)
 
     async def _collect_slots_conversation(
         self,
@@ -2342,6 +3105,14 @@ class CallManager:
         @param recorder Enregistreur a mettre en pause.
         @returns True si lecture OK.
         """
+        if not self._call_still_active(self.current_call_id) or self.modem.caller_line_finished():
+            return False
+        try:
+            await self.modem.poll_remote_hangup(max_sec=0.1)
+        except Exception:
+            pass
+        if self.modem.caller_line_finished():
+            return False
         base = Path(self.config.base_path) if self.config.base_path else Path.cwd()
         wav_path = base / "ivr_wav" / f"{wav_basename}.wav"
         # Si le WAV existe mais ne matche pas le texte choisi → rebuild via cache
@@ -2429,6 +3200,107 @@ class CallManager:
             await self.modem.prepare_voice_line_after_seize()
         return await self._play_wav_file_on_line(
             beep_path,
+            already_in_voice_mode=True,
+            recorder=recorder,
+        )
+
+    def _ensure_talk_cue_wav(self) -> Path:
+        """
+        Croche legere a deux notes (signal « a vous de parler »).
+
+        Regen si absent, trop court, ou format incompatible avec le profil modem
+        (ex. fichier 11 kHz alors que le daemon tourne en 8 kHz u8).
+
+        @returns Chemin ivr_wav/talk_cue.wav.
+        """
+        path = self._ensure_ivr_wav_dir() / "talk_cue.wav"
+        profile = getattr(self.modem, "voice_profile", None)
+        need = (
+            (not path.is_file())
+            or path.stat().st_size < 800
+            or not wav_matches_modem_profile(path, profile=profile)
+        )
+        if need:
+            write_talk_cue_wav_8k(path, profile=profile)
+        return path
+
+    def _append_talk_cue_to_wav(self, wav_path: Path, *, gap_ms: int = 220) -> None:
+        """
+        Colle la croche « a vous » a la fin d'un WAV (accueil early).
+
+        Evite le trou de plusieurs secondes entre l'annonce et le bip si le
+        bip etait joue apres le setup DB/STT.
+
+        @param wav_path Fichier a enrichir sur place.
+        @param gap_ms Silence court avant la croche.
+        """
+        if not wav_path.is_file() or wav_path.stat().st_size < 1000:
+            return
+        profile = getattr(self.modem, "voice_profile", None)
+        marker = wav_path.with_suffix(wav_path.suffix + ".talkcue")
+        cue = self._ensure_talk_cue_wav()
+        # Si l'accueil n'est plus au bon format (ex. 11 kHz vs 8 kHz), repartir
+        # de la voix nue avant de recoller la croche.
+        bare = wav_path.with_name(wav_path.stem + "_voice.wav")
+        if bare.is_file() and not wav_matches_modem_profile(wav_path, profile=profile):
+            try:
+                import shutil
+
+                shutil.copy2(bare, wav_path)
+                if marker.is_file():
+                    marker.unlink()
+            except OSError as exc:
+                logger.warning("Restore {} depuis voix nue echoue: {}", wav_path.name, exc)
+        # Evite de coller deux fois la croche a chaque warmup.
+        if (
+            marker.is_file()
+            and marker.stat().st_mtime >= wav_path.stat().st_mtime
+            and marker.stat().st_mtime >= cue.stat().st_mtime
+            and wav_matches_modem_profile(wav_path, profile=profile)
+        ):
+            return
+        # Si deja colle avec une ancienne croche, restaurer la voix nue.
+        if bare.is_file() and marker.is_file():
+            try:
+                import shutil
+
+                shutil.copy2(bare, wav_path)
+            except OSError:
+                pass
+        try:
+            combine_modem_wav_files(
+                [wav_path, cue],
+                wav_path,
+                gap_ms=max(80, int(gap_ms)),
+                normalize=False,
+                profile=profile,
+            )
+            marker.write_text("ok\n", encoding="utf-8")
+            logger.info(
+                "Talk cue colle sur {} (gap={} ms)",
+                wav_path.name,
+                gap_ms,
+            )
+        except Exception as exc:
+            logger.warning("Append talk cue sur {} echoue: {}", wav_path.name, exc)
+
+    async def _play_talk_cue_on_line(
+        self, recorder: Optional[_IncomingLineRecorder] = None
+    ) -> bool:
+        """
+        Joue la croche « a vous » apres l'accueil conversation.
+
+        @param recorder Enregistreur a pauser pendant la lecture.
+        @returns True si lecture OK.
+        """
+        if not self.modem.is_initialized:
+            return False
+        cue = self._ensure_talk_cue_wav()
+        self._log_call("talk_cue", fichier=cue.name)
+        if self._use_modem_voice_serial() and not getattr(self.modem, "_voice_line_ready", False):
+            await self.modem.prepare_voice_line_after_seize()
+        return await self._play_wav_file_on_line(
+            cue,
             already_in_voice_mode=True,
             recorder=recorder,
         )

@@ -31,12 +31,32 @@ class Node15VoiceClient:
         self.base_url = (base_url or "").rstrip("/")
         self.token = (token or "").strip() or None
         self.timeout_sec = float(timeout_sec)
+        self._http: Optional[httpx.AsyncClient] = None
 
     def _headers(self) -> Dict[str, str]:
         headers: Dict[str, str] = {}
         if self.token:
             headers["X-STT-Token"] = self.token
         return headers
+
+    async def _client(self) -> httpx.AsyncClient:
+        """
+        Client HTTP reutilise (keep-alive) pour enchainement STT live.
+
+        @returns AsyncClient ouvert.
+        """
+        if self._http is None or self._http.is_closed:
+            self._http = httpx.AsyncClient(
+                timeout=self.timeout_sec,
+                headers=self._headers(),
+            )
+        return self._http
+
+    async def aclose(self) -> None:
+        """Ferme le client HTTP persistant."""
+        if self._http is not None and not self._http.is_closed:
+            await self._http.aclose()
+        self._http = None
 
     async def health(self) -> Dict[str, Any]:
         """
@@ -47,10 +67,13 @@ class Node15VoiceClient:
         if not self.base_url:
             return {"status": "error", "detail": "base_url vide"}
         try:
-            async with httpx.AsyncClient(timeout=min(5.0, self.timeout_sec)) as client:
-                r = await client.get(f"{self.base_url}/health")
-                r.raise_for_status()
-                return r.json()
+            client = await self._client()
+            r = await client.get(
+                f"{self.base_url}/health",
+                timeout=min(5.0, self.timeout_sec),
+            )
+            r.raise_for_status()
+            return r.json()
         except Exception as exc:
             return {"status": "error", "detail": str(exc)}
 
@@ -81,13 +104,11 @@ class Node15VoiceClient:
         buf.seek(0)
         url = f"{self.base_url}/v1/transcribe"
         params = {"mode": mode}
-        async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
-            files = {"file": ("audio.wav", buf.read(), "audio/wav")}
-            response = await client.post(
-                url, files=files, headers=self._headers(), params=params
-            )
-            response.raise_for_status()
-            payload = response.json()
+        client = await self._client()
+        files = {"file": ("audio.wav", buf.read(), "audio/wav")}
+        response = await client.post(url, files=files, params=params)
+        response.raise_for_status()
+        payload = response.json()
         return {
             "text": (payload.get("text") or "").strip(),
             "cues": payload.get("cues") if isinstance(payload.get("cues"), list) else [],
@@ -104,10 +125,10 @@ class Node15VoiceClient:
         """
         url = f"{self.base_url}/v1/intent-predict"
         body = {"text": text, "top_k": int(top_k)}
-        async with httpx.AsyncClient(timeout=self.timeout_sec) as client:
-            response = await client.post(url, json=body, headers=self._headers())
-            response.raise_for_status()
-            payload = response.json()
+        client = await self._client()
+        response = await client.post(url, json=body)
+        response.raise_for_status()
+        payload = response.json()
         preds = payload.get("top_predictions") or payload.get("predictions") or []
         if not isinstance(preds, list):
             return []

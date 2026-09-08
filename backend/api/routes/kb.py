@@ -22,6 +22,7 @@ from backend.voice.response_picker import (
     variant_wav_basename,
 )
 from backend.voice.dialogue_persona import resolve_dialogue_reply
+from backend.voice.stt_remote import check_stt_service_health
 
 router = APIRouter(prefix="/kb", tags=["kb"])
 
@@ -153,6 +154,61 @@ async def get_intents(request: Request, enabled_only: bool = False) -> Dict[str,
         return {"intents": items, "count": len(items)}
     finally:
         db.close()
+
+
+@router.get("/conversation-status")
+async def conversation_status(request: Request) -> Dict[str, Any]:
+    """
+    Etat de readiness du mode conversation (STT node15 + intents + voix).
+
+    Utilise par l'UI settings pour afficher un statut produit, pas un bandeau
+    "mode test".
+
+    @param request Contexte FastAPI (config + base_path).
+    @returns Dict ready / stt / comptes intents et WAV.
+    """
+    config = getattr(request.app.state, "config", None)
+    stt_url = (getattr(config, "stt_service_url", None) or "").strip() if config else ""
+    stt_configured = bool(stt_url)
+    stt_ok = False
+    stt_detail: Optional[str] = None
+    if stt_configured:
+        stt_ok = await check_stt_service_health(stt_url, timeout_sec=2.5)
+        if not stt_ok:
+            client = Node15VoiceClient(
+                stt_url,
+                token=getattr(config, "stt_internal_token", None) if config else None,
+                timeout_sec=5.0,
+            )
+            health = await client.health()
+            stt_detail = str(health.get("detail") or health.get("status") or "injoignable")
+    else:
+        stt_detail = "STT_SERVICE_URL non configure"
+
+    intents_enabled = 0
+    voices_ready = 0
+    db = _db()
+    try:
+        intent_repo.ensure_seeded(db, _base_path(request))
+        items = intent_repo.list_intents_detailed(db, enabled_only=True)
+        items = _enrich_has_wav(_base_path(request), items)
+        intents_enabled = len(items)
+        voices_ready = sum(1 for item in items if item.get("has_wav"))
+    finally:
+        db.close()
+
+    # STT obligatoire ; voix prechargees recommandees (sinon TTS a la volee).
+    ready = stt_ok and intents_enabled > 0
+    voices_complete = intents_enabled > 0 and voices_ready >= intents_enabled
+    return {
+        "ready": ready,
+        "stt_configured": stt_configured,
+        "stt_ok": stt_ok,
+        "stt_detail": stt_detail,
+        "intents_enabled": intents_enabled,
+        "voices_ready": voices_ready,
+        "voices_complete": voices_complete,
+    }
 
 
 @router.get("/intents/{tag}")
@@ -293,10 +349,17 @@ async def kb_chat(body: ChatBody, request: Request) -> Dict[str, Any]:
     preds: List[Dict[str, Any]] = []
     source = "local"
 
+    from backend.voice.dialogue_persona import (
+        predict_text_for_intent,
+        reshape_predictions,
+    )
+
+    predict_text = predict_text_for_intent(body.text, body.recent_tags)
+
     if stt_url:
         client = Node15VoiceClient(stt_url, token=token, timeout_sec=30.0)
         try:
-            preds = await client.intent_predict(body.text, top_k=body.top_k)
+            preds = await client.intent_predict(predict_text, top_k=body.top_k)
             source = "node15"
         except Exception as exc:
             logger.warning("Chat predict node15 KO, fallback local: {}", exc)
@@ -305,7 +368,7 @@ async def kb_chat(body: ChatBody, request: Request) -> Dict[str, Any]:
     try:
         intent_repo.ensure_seeded(db, _base_path(request))
         if not preds:
-            preds = intent_repo.predict_intent_scores(db, body.text, top_k=body.top_k)
+            preds = intent_repo.predict_intent_scores(db, predict_text, top_k=body.top_k)
             source = "local"
 
         raw_preds = list(preds)
@@ -325,8 +388,6 @@ async def kb_chat(body: ChatBody, request: Request) -> Dict[str, Any]:
                 "persona_reason": None,
                 "source": source,
             }
-
-        from backend.voice.dialogue_persona import reshape_predictions
 
         reshaped = reshape_predictions(
             preds, recent_tags=body.recent_tags, user_text=body.text

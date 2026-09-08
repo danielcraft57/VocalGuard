@@ -24,6 +24,7 @@ import { VgAudioSourcePicker } from "../../../components/mui/VgAudioSourcePicker
 import { VgPageHeader } from "../../../components/mui/VgPageHeader";
 import { VgSaveBar } from "../../../components/mui/VgSaveBar";
 import { VgSettingsSection } from "../../../components/mui/VgSettingsSection";
+import { VgConversationModeStatus } from "../../../components/mui/VgConversationModeStatus";
 import { useIncomingCallConfig } from "../../../hooks/useIncomingCallConfig";
 
 type VoicemailBlock = {
@@ -89,7 +90,7 @@ export default function VoicemailSettingsPage() {
         <>
           <VgSettingsSection
             title="Mode repondeur"
-            description="Simple = message classique. Conversation = intents KB (STT node15). IVR = ancien dialogue keywords."
+            description="Simple = message classique. Conversation = dialogue intents KB. IVR = ancien keywords."
           >
             <FormControl size="small" sx={{ minWidth: 260 }}>
               <InputLabel id="vm-mode-label">Mode</InputLabel>
@@ -109,9 +110,9 @@ export default function VoicemailSettingsPage() {
               </Select>
             </FormControl>
             {(vm.mode || "simple") === "conversation" ? (
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1.5 }}>
-                Necessite STT (node15) et des voix regenerees depuis /kb.
-              </Typography>
+              <Box sx={{ mt: 1.5 }}>
+                <VgConversationModeStatus />
+              </Box>
             ) : null}
           </VgSettingsSection>
 

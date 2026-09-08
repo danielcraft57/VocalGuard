@@ -45,7 +45,8 @@ _TAD_OFF_HOOK = "AT+VLS=1"
 _VOICE_TX = "AT+VTX"
 _VOICE_RX = "AT+VRX"
 _DLE = 0x10
-_DTE_END_VOICE_TX = (chr(16) + chr(3)).encode()  # DLE ETX (USR)
+_DTE_END_VOICE_TX = (chr(16) + chr(3)).encode()  # DLE ETX (USR) — fin VTX
+_DTE_END_VOICE_RX_USR = (chr(16) + "!").encode()  # DLE ! (USR) — fin etat receive / VRX
 _DTE_END_VOICE_TX_CONEXANT = (chr(16) * 3 + chr(3)).encode()   # DLE DLE DLE ETX (Conexant)
 _DTE_END_VOICE_RX_CONEXANT = (chr(16) * 3 + chr(33)).encode()   # DLE DLE DLE ! (Conexant)
 _VRX_SAMPLE_RATE = USR_VOICE_PROFILE.sample_rate
@@ -316,6 +317,10 @@ class _VrxDisconnectToneScanner:
         self.heard_speech = False
         self._pending = b""
         self._nontone_loud_sec = 0.0
+        # Note continue 440 Hz (invitation a composer / ligne morte FR) : pas une
+        # cadence on/off. Au-dela de ce delai → hangup (voir appel #38).
+        self._continuous_tone_sec = 0.0
+        self._min_continuous_tone_sec = 0.85
 
     def _reset_sequence(self) -> None:
         """Oublie la cadence en cours (parole ou trop d'ecart)."""
@@ -397,12 +402,20 @@ class _VrxDisconnectToneScanner:
             self._quiet_sec = 0.0
             self._nontone_loud_sec = 0.0
             self._loud_sec += dur
+            self._continuous_tone_sec += dur
+            # Tonalite continue (ex. 440 Hz apres raccrochage) : hangup sans
+            # attendre une cadence bip/silence (max_burst resettait trop tot).
+            if self._continuous_tone_sec >= self._min_continuous_tone_sec:
+                self.trim_sec = self._continuous_tone_sec
+                return True
             if self._loud_sec > self._max_burst_sec:
                 self._reset_sequence()
                 self._armed = False
                 self._gap_sec = 0.0
                 self._loud_sec = 0.0
             return False
+        # Coupe la piste "note continue" des qu'on sort de la tonalite.
+        self._continuous_tone_sec = 0.0
         # Fin de tonalite : une fenetre de bord encore un peu forte ne doit
         # pas casser le cycle (peak residuel, Goertzel deja bas).
         if self._loud_sec > 0:
@@ -563,6 +576,12 @@ class ModemHandler:
         self._serial_io_lock = asyncio.Lock()
         self._serial_sync_lock = threading.RLock()
         self._outgoing_owns_serial = False
+        # True pendant AT+VRX streaming (conversation chunks) : monitor ne doit
+        # pas lire/purger le PCM (sinon silence + « purge PCM orphelin »).
+        self._vrx_stream_active = False
+        self._vrx_stream_hangup_scanner: Optional[_VrxHangupScanner] = None
+        self._vrx_stream_tone_scanner: Optional[_VrxDisconnectToneScanner] = None
+        self._vrx_stream_opened_at: float = 0.0
         self._vrx_saved_timeout: Optional[float] = None
         # True pendant AT+VTX (talkspurt micro) : pas de lecture VRX.
         self._vtx_active = False
@@ -609,6 +628,10 @@ class ModemHandler:
         self._vtx_event_scanner: Optional[_VrxHangupScanner] = None
         # Secondes max apres RING avant VLS=1 (laisse passer NMBR= ETSI).
         self.instant_seize_cid_grace_sec: float = 0.35
+        # True si rings=-1 : seize des que DATE=/NMBR= (avant RING si possible).
+        self.pre_ring_seize_on_cid_meta: bool = False
+        # True : pipeline FCLASS+VLS ultra-court (coupe sonnerie plus tot).
+        self.ultra_fast_seize: bool = False
         # Attente DTMF entrant (gate anti-robots).
         self._dtmf_wait_expected: Optional[str] = None
         self._dtmf_last_digit: Optional[str] = None
@@ -1783,10 +1806,22 @@ class ModemHandler:
             else:
                 # Apres VRX (bip / enregistrement) : fermer le flux transparent avant VTX.
                 self._vrx_transparent_close_sync()
-                self._flush_serial_rx_sync(max_sec=0.3)
+                self._flush_serial_rx_sync(max_sec=0.55)
+                time.sleep(0.12)
             if not self._send_command_sync(_VOICE_TX, expect="CONNECT", timeout=10.0):
-                logger.warning("play_wav_serial: AT+VTX (CONNECT) a echoue")
-                return False
+                logger.warning(
+                    "play_wav_serial: AT+VTX (CONNECT) a echoue — retry apres rearm"
+                )
+                self._vrx_transparent_close_sync()
+                self._flush_serial_rx_sync(max_sec=0.8)
+                time.sleep(0.2)
+                vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
+                self._send_command_sync(vsd)
+                self._apply_voice_gains_sync()
+                self._apply_vsm_sync()
+                if not self._send_command_sync(_VOICE_TX, expect="CONNECT", timeout=10.0):
+                    logger.warning("play_wav_serial: AT+VTX (CONNECT) retry KO")
+                    return False
             self._vtx_active = True
             self._playback_interrupted = False
             self._vtx_event_scanner = _VrxHangupScanner()
@@ -2015,7 +2050,11 @@ class ModemHandler:
                         break
                 if not io_error and self.serial_connection and self.serial_connection.is_open:
                     try:
-                        end_rx = _DTE_END_VOICE_RX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
+                        end_rx = (
+                            _DTE_END_VOICE_RX_CONEXANT
+                            if self._is_conexant
+                            else _DTE_END_VOICE_RX_USR
+                        )
                         self.serial_connection.write(end_rx)
                         self.serial_connection.flush()
                         time.sleep(0.1)
@@ -2115,16 +2154,25 @@ class ModemHandler:
                     pass
 
     def _vrx_transparent_close_sync(self) -> None:
-        """Sort du flux transparent AT+VRX (donnees PCM) sans quitter le mode voix."""
+        """
+        Sort du flux transparent AT+VRX (donnees PCM) sans quitter le mode voix.
+
+        USR5637 : fin receive = DLE ! (pas DLE ETX, reserve a la fin VTX).
+        Un mauvais marqueur laisse le modem en flux binaire → AT+VTX CONNECT echoue.
+        """
         if not self.serial_connection or not self.serial_connection.is_open:
             return
         try:
-            end_rx = _DTE_END_VOICE_RX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
+            end_rx = (
+                _DTE_END_VOICE_RX_CONEXANT if self._is_conexant else _DTE_END_VOICE_RX_USR
+            )
             self.serial_connection.write(end_rx)
             self.serial_connection.flush()
-            time.sleep(0.1)
-            while self.serial_connection.in_waiting > 0:
+            time.sleep(0.12)
+            deadline = time.monotonic() + 0.35
+            while time.monotonic() < deadline and self.serial_connection.in_waiting > 0:
                 self.serial_connection.read(self.serial_connection.in_waiting)
+                time.sleep(0.02)
         except (OSError, serial.SerialException):
             pass
 
@@ -2150,13 +2198,27 @@ class ModemHandler:
                 return False
             self._vrx_saved_timeout = self.serial_connection.timeout
             self.serial_connection.timeout = 0.25
+            self._vrx_stream_active = True
+            self._vrx_stream_hangup_scanner = _VrxHangupScanner()
+            tone_threshold = 28 if self.voice_profile.sample_width <= 1 else 5000
+            self._vrx_stream_tone_scanner = _VrxDisconnectToneScanner(
+                threshold=tone_threshold,
+                sample_rate=int(self.voice_profile.sample_rate),
+                min_beeps=3,
+            )
+            self._vrx_stream_opened_at = time.monotonic()
+            self.last_vrx_stop_reason = None
             return True
         except Exception as e:
             logger.exception("vrx_stream_open: {}", e)
+            self._vrx_stream_active = False
             return False
 
     def _vrx_stream_finalize_sync(self) -> None:
         """Ferme VTX si ouvert, puis le flux VRX transparent, et restaure le timeout serie."""
+        self._vrx_stream_active = False
+        self._vrx_stream_hangup_scanner = None
+        self._vrx_stream_tone_scanner = None
         if self._vtx_active and self.serial_connection and self.serial_connection.is_open:
             try:
                 end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
@@ -2173,6 +2235,8 @@ class ModemHandler:
         except (OSError, serial.SerialException):
             pass
         self._vrx_saved_timeout = None
+        # NO CARRIER arrive souvent juste apres sortie du mode transparent.
+        self._poll_remote_hangup_sync(max_sec=0.15)
 
     def _apply_voice_pcm_params_sync(self) -> None:
         """Configure VSD / VSM / gains pour le PCM du profil actif (avant VTX ou VRX)."""
@@ -2314,6 +2378,7 @@ class ModemHandler:
             "port_closed",
             "io_error",
             "disconnect_tones",
+            "silence_hangup",
         )
 
     def caller_line_finished(self) -> bool:
@@ -2322,6 +2387,7 @@ class ModemHandler:
 
         Le motif ``silence`` n'est PAS un raccrochage : c'est la fin d'un tour
         d'ecoute. L'inclure faisait sauter le mode conversation au tour suivant.
+        ``silence_hangup`` (tour silencieux sans parole) marque bien une fin d'appel.
 
         @returns True pour hangup distant / perte port / bips operateur.
         """
@@ -2331,7 +2397,72 @@ class ModemHandler:
             "port_closed",
             "io_error",
             "disconnect_tones",
+            "silence_hangup",
         )
+
+    def _poll_remote_hangup_sync(self, *, max_sec: float = 0.2) -> bool:
+        """
+        Drain RX hors flux transparent et detecte NO CARRIER / DLE hangup.
+
+        Utile entre un tour VRX et la reponse VTX : la ligne peut tomber
+        pendant la resolution d'intent / generation TTS.
+
+        @param max_sec Fenetre de lecture serie.
+        @returns True si raccrochage distant detecte.
+        """
+        if self.caller_line_finished():
+            return True
+        if not self.serial_connection or not self.serial_connection.is_open:
+            return False
+        if self._vrx_stream_active or self._vtx_active:
+            return False
+        buf = b""
+        try:
+            deadline = time.monotonic() + max(0.05, float(max_sec))
+            while time.monotonic() < deadline:
+                try:
+                    pending = self.serial_connection.in_waiting
+                except (OSError, serial.SerialException):
+                    break
+                if pending <= 0:
+                    time.sleep(0.01)
+                    continue
+                chunk = self.serial_connection.read(min(pending, 4096)) or b""
+                if chunk:
+                    buf += chunk
+                    if len(buf) > 8192:
+                        buf = buf[-4096:]
+            if not buf:
+                return False
+            if _vrx_text_has_hangup_marker(buf) or _vrx_buffer_has_hangup_marker(buf):
+                self.last_vrx_stop_reason = "hangup_marker"
+                logger.info("Hangup distant detecte (poll hors VRX)")
+                return True
+            scanner = _VrxHangupScanner()
+            if scanner.feed(buf):
+                self.last_vrx_stop_reason = "hangup_marker"
+                logger.info("Hangup distant detecte (poll DLE hors VRX)")
+                return True
+        except (OSError, serial.SerialException) as exc:
+            logger.debug("poll hangup ignore: {}", exc)
+        return False
+
+    async def poll_remote_hangup(self, *, max_sec: float = 0.2) -> bool:
+        """
+        Version async de ``_poll_remote_hangup_sync`` (sous lock serie).
+
+        @param max_sec Fenetre de lecture.
+        @returns True si hangup distant.
+        """
+        if self.caller_line_finished():
+            return True
+        async with self._serial_io_lock:
+            return bool(
+                await self.run_modem_sync(
+                    partial(self._poll_remote_hangup_sync, max_sec=max_sec),
+                    timeout=2.0,
+                )
+            )
 
     async def play_wav_via_serial(
         self, wav_path: Path, already_in_voice_mode: bool = False
@@ -2396,9 +2527,57 @@ class ModemHandler:
             await self.run_modem_sync(self._vrx_stream_finalize_sync, timeout=5.0)
 
     async def read_outgoing_vrx_chunk(self, nbytes: int = 2048) -> bytes:
-        """Lit des octets PCM 8-bit depuis le flux VRX (lock court)."""
+        """
+        Lit des octets PCM 8-bit depuis le flux VRX (lock court).
+
+        Detecte aussi un raccrochage distant (DLE / NO CARRIER) pour couper
+        la conversation sans attendre la fin du tour.
+
+        @param nbytes Taille max a lire.
+        @returns PCM (peut etre vide) ; si hangup, last_vrx_stop_reason est pose.
+        """
         async with self._serial_io_lock:
-            return await self.run_modem_sync(self._serial_read_fixed, nbytes, timeout=2.0)
+            return await self.run_modem_sync(
+                self._serial_read_vrx_stream, nbytes, timeout=2.0
+            )
+
+    def _serial_read_vrx_stream(self, nbytes: int) -> bytes:
+        """
+        Lecture VRX stream + scan hangup (DLE / NO CARRIER / tonalite 440 Hz).
+
+        @param nbytes Octets max.
+        @returns PCM brut ; vide si hangup detecte.
+        """
+        raw = self._serial_read_fixed(nbytes)
+        if not raw:
+            return b""
+        scanner = self._vrx_stream_hangup_scanner
+        if scanner is None:
+            scanner = _VrxHangupScanner()
+            self._vrx_stream_hangup_scanner = scanner
+        tone = self._vrx_stream_tone_scanner
+        if tone is None:
+            tone_threshold = 28 if self.voice_profile.sample_width <= 1 else 5000
+            tone = _VrxDisconnectToneScanner(
+                threshold=tone_threshold,
+                sample_rate=int(self.voice_profile.sample_rate),
+                min_beeps=3,
+            )
+            self._vrx_stream_tone_scanner = tone
+        opened = float(self._vrx_stream_opened_at or 0.0)
+        grace_ok = (
+            opened <= 0.0
+            or (time.monotonic() - opened) >= _VRX_MIN_HANGUP_GRACE_SEC
+        )
+        if grace_ok and scanner.feed(raw):
+            self.last_vrx_stop_reason = "hangup_marker"
+            logger.info("VRX stream: raccrochage distant detecte")
+            return b""
+        if grace_ok and tone.feed(raw, sample_width=int(self.voice_profile.sample_width)):
+            self.last_vrx_stop_reason = "disconnect_tones"
+            logger.info("VRX stream: tonalite occupation / fin d'appel detectee")
+            return b""
+        return raw
 
     def _serial_read_fixed(self, nbytes: int) -> bytes:
         if not self.serial_connection or not self.serial_connection.is_open:
@@ -2521,7 +2700,7 @@ class ModemHandler:
 
         while self.is_initialized:
             try:
-                if self._outgoing_owns_serial:
+                if self._outgoing_owns_serial or self._vrx_stream_active:
                     await asyncio.sleep(0.15)
                     continue
                 if not self.serial_connection or not self.serial_connection.is_open:
@@ -2545,6 +2724,26 @@ class ModemHandler:
                 if data:
                     eio_since_reconnect = 0
                     buffer += data
+                    # Decrochage le plus tot possible : des que "RING" apparait
+                    # dans le buffer (sans attendre le split CRLF complet).
+                    if (
+                        self.instant_ring_seize
+                        and not self._incoming_line_seized
+                        and not self._outgoing_owns_serial
+                        and b"RING" in buffer.upper()
+                    ):
+                        # Evite faux positifs sur NMBR=...RING...
+                        up = buffer.upper()
+                        ring_pos = up.find(b"RING")
+                        prefix = up[max(0, ring_pos - 6) : ring_pos]
+                        if b"NMBR" not in prefix:
+                            async with self._serial_io_lock:
+                                if (
+                                    self.instant_ring_seize
+                                    and not self._incoming_line_seized
+                                    and not self._outgoing_owns_serial
+                                ):
+                                    self._try_voice_seize_now("ring_early")
                     # Un flux VRX orphelin (PCM) n'a pas de CRLF : ne pas tourner en boucle
                     # sur l'event loop sinon /health et le relais WS meurent.
                     if len(buffer) > 4096 and b"\r\n" not in buffer[:4096]:
@@ -2569,18 +2768,20 @@ class ModemHandler:
                                         and not self._outgoing_owns_serial
                                     ):
                                         self._try_voice_seize_now("ring")
-                                    if (
-                                        self._incoming_seize_ok
-                                        and self.early_greeting_enabled
-                                        and not self._greeting_played_on_seize
-                                    ):
-                                        self._early_greeting_pending = True
-                                        played = await self.run_modem_sync(
-                                            self._play_early_greeting_sync,
-                                            timeout=45.0,
-                                        )
-                                        self._greeting_played_on_seize = bool(played)
-                                        self._early_greeting_pending = False
+                                # Accueil en parallele : ne pas bloquer le handler RING
+                                # (sinon call_cree / modale UI arrivent apres ~5s de WAV).
+                                if (
+                                    self._incoming_seize_ok
+                                    and self.early_greeting_enabled
+                                    and not self._greeting_played_on_seize
+                                    and not self._early_greeting_pending
+                                    and self._early_greeting_task is None
+                                ):
+                                    self._early_greeting_pending = True
+                                    self._early_greeting_task = asyncio.create_task(
+                                        self._early_greeting_async(),
+                                        name="vg_early_greeting",
+                                    )
                             await self._process_modem_line(line)
                     await asyncio.sleep(0)
                 else:
@@ -2653,8 +2854,9 @@ class ModemHandler:
             return False
         try:
             old_t = self.serial_connection.timeout
-            read_timeout = 0.10 if fast else 0.35
-            at_deadline = 0.30 if fast else 0.55
+            ultra = bool(self.ultra_fast_seize or self.pre_ring_seize_on_cid_meta)
+            read_timeout = 0.06 if ultra else (0.10 if fast else 0.35)
+            at_deadline = 0.18 if ultra else (0.30 if fast else 0.55)
             self.serial_connection.timeout = read_timeout
 
             def _at(cmd: str, *, extra: float = 0.0) -> bytes:
@@ -2672,16 +2874,28 @@ class ModemHandler:
                         if b"NO CARRIER" in upper or b"ERROR" in upper:
                             break
                     else:
-                        time.sleep(0.01)
+                        time.sleep(0.005 if ultra else 0.01)
                 return buf
 
-            r1 = _at(_VOICE_MODE)
-            if b"OK" not in r1:
-                logger.warning(
-                    "Seize VLS-only: FCLASS=8 echoue ({})",
-                    r1.decode("utf-8", errors="ignore").strip().replace("\r\n", " | ") or "(vide)",
-                )
-            r2 = _at(_TAD_OFF_HOOK)
+            if ultra:
+                # Pipeline : FCLASS puis VLS sans attendre longtemps FCLASS.
+                self.serial_connection.write(f"{_VOICE_MODE}\r\n".encode())
+                self.serial_connection.flush()
+                time.sleep(0.02)
+                r2 = _at(_TAD_OFF_HOOK, extra=0.05)
+                # Si VLS KO, retente FCLASS+VLS classique rapide.
+                if b"OK" not in r2:
+                    _at(_VOICE_MODE)
+                    r2 = _at(_TAD_OFF_HOOK)
+            else:
+                r1 = _at(_VOICE_MODE)
+                if b"OK" not in r1:
+                    logger.warning(
+                        "Seize VLS-only: FCLASS=8 echoue ({})",
+                        r1.decode("utf-8", errors="ignore").strip().replace("\r\n", " | ")
+                        or "(vide)",
+                    )
+                r2 = _at(_TAD_OFF_HOOK)
             self.serial_connection.timeout = old_t
             raw = r2.decode("utf-8", errors="ignore").strip().replace("\r\n", " | ")
             logger.info("Seize sync VLS-only AT+VLS=1 -> {}", raw or "(vide)")
@@ -2824,6 +3038,26 @@ class ModemHandler:
         self.early_greeting_wav = wav_path if wav_path and wav_path.is_file() else None
         self.early_greeting_enabled = bool(enabled and self.early_greeting_wav)
 
+    async def _early_greeting_async(self) -> None:
+        """
+        Joue l'accueil immediat sans bloquer le pipeline RING → call_cree / modale.
+
+        @returns None.
+        """
+        try:
+            async with self._serial_io_lock:
+                played = await self.run_modem_sync(
+                    self._play_early_greeting_sync,
+                    timeout=45.0,
+                )
+                self._greeting_played_on_seize = bool(played)
+        except Exception:
+            logger.exception("Accueil immediat async KO")
+            self._greeting_played_on_seize = False
+        finally:
+            self._early_greeting_pending = False
+            self._early_greeting_task = None
+
     def _play_early_greeting_sync(self) -> bool:
         """
         Joue l'accueil cache sous lock serie (executor / thread modem).
@@ -2883,8 +3117,9 @@ class ModemHandler:
             return
         logger.info("Seize sync ({}) - coupe sonnerie", reason)
         ok = False
-        if reason == "ring":
-            # Call Attendant : VLS d'abord (rapide), ATA seulement en secours.
+        # ring / ring_early / cid_meta : chemin VLS ultra-rapide.
+        use_vls = reason in ("ring", "ring_early", "cid_meta", "cid", "grace_cid")
+        if use_vls and reason in ("ring", "ring_early", "cid_meta"):
             ok = self._voice_seize_vls_only_sync_unlocked(fast=True)
             if not ok:
                 logger.info("Seize VLS-only echoue — essai ATA + voix")
@@ -2892,6 +3127,10 @@ class ModemHandler:
             if not ok:
                 logger.info("Seize sync retry complet (ATA lent)")
                 ok = self._voice_seize_sync_unlocked(fast=False, skip_ata=False)
+        elif use_vls:
+            ok = self._voice_seize_vls_only_sync_unlocked(fast=True)
+            if not ok:
+                ok = self._voice_seize_sync_unlocked(fast=True, skip_ata=False)
         else:
             ok = self._voice_seize_sync_unlocked(fast=(reason == "ring"))
             if not ok and reason == "ring":
@@ -2907,7 +3146,11 @@ class ModemHandler:
         Sur ligne FR (CID apres 1er ring), ~0.6-1.0s suffisent souvent pour le numero
         sans laisser sonner le fixe plusieurs fois.
         """
-        grace = max(0.2, float(self.instant_seize_cid_grace_sec or 1.0))
+        grace = max(0.0, float(self.instant_seize_cid_grace_sec or 0.0))
+        if grace <= 0.0:
+            async with self._serial_io_lock:
+                self._try_voice_seize_now("grace_cid")
+            return
         deadline = time.monotonic() + grace
         try:
             while time.monotonic() < deadline:
@@ -2968,6 +3211,15 @@ class ModemHandler:
                 date_m.group(1) if date_m else "-",
                 time_m.group(1) if time_m else "-",
             )
+            # rings=-1 : tente de couper avant le 1er RING si le modem envoie DATE/TIME.
+            if (
+                self.pre_ring_seize_on_cid_meta
+                and self.instant_ring_seize
+                and not self._incoming_line_seized
+                and not self._outgoing_owns_serial
+            ):
+                async with self._serial_io_lock:
+                    self._try_voice_seize_now("cid_meta")
 
         nmbr_m = re.search(r"NMBR\s*=\s*([^\r\n]+)", line_str, flags=re.IGNORECASE)
         if nmbr_m:

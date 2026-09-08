@@ -103,6 +103,15 @@ def test_disconnect_tone_scanner_detects_french_busy_440():
     assert scanner.trim_sec > 1.5
 
 
+def test_disconnect_tone_scanner_detects_continuous_440():
+    """Note continue 440 Hz (ligne morte / invitation a composer) = hangup."""
+    scanner = _VrxDisconnectToneScanner(threshold=28, sample_rate=8000)
+    # ~0.9 s de 440 Hz sans silence : l'ancien scanner resettait apres 0.75 s.
+    hit = scanner.feed(_tone440_u8(7200), sample_width=1)
+    assert hit is True
+    assert scanner.trim_sec >= 0.8
+
+
 def test_disconnect_tone_scanner_ignores_speech():
     """La parole (pas 440 Hz stable) ne doit pas declencher la coupe."""
     scanner = _VrxDisconnectToneScanner(threshold=28, sample_rate=8000)

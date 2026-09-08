@@ -31,7 +31,7 @@ GreetingIntroMode = Literal["none", "jingle", "wav", "track"]
 class IncomingProfileConfig(BaseModel):
   """Surcharge optionnelle d'un profil appelant (null = herite du preset actif)."""
 
-  rings_before_answer: Optional[int] = Field(None, ge=0, le=20)
+  rings_before_answer: Optional[int] = Field(None, ge=-1, le=20)
   actions: Optional[List[IncomingAction]] = None
   seize_on_ring: Optional[bool] = None
   require_cid_before_action: Optional[bool] = None
@@ -48,9 +48,9 @@ class IncomingCallPresetConfig(BaseModel):
   blocked_actions: List[IncomingAction] = Field(
       default_factory=lambda: ["answer", "greeting", "hangup"]
   )
-  permitted_rings: int = Field(default=0, ge=0, le=20)
-  screened_rings: int = Field(default=0, ge=0, le=20)
-  blocked_rings: int = Field(default=0, ge=0, le=20)
+  permitted_rings: int = Field(default=0, ge=-1, le=20)
+  screened_rings: int = Field(default=0, ge=-1, le=20)
+  blocked_rings: int = Field(default=0, ge=-1, le=20)
 
 
 class IncomingCallAdvancedConfig(BaseModel):

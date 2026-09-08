@@ -283,6 +283,75 @@ def trim_intro_for_voice_handoff(intro: "AudioSegment", *, tail_padding_ms: int 
     return intro
 
 
+def write_talk_cue_wav_8k(
+    out_path: Path,
+    *,
+    profile: Optional[ModemVoiceProfile] = None,
+) -> None:
+    """
+    Genere une croche douce a deux notes (signal « a vous de parler »).
+
+    Deux notes distinctes, volume moyen, enveloppe douce (pas un bip agressif).
+
+    @param out_path Fichier WAV de sortie.
+    @param profile Profil modem (8 kHz u8 ou 11 kHz s16).
+    """
+    voice = profile or USR_VOICE_PROFILE
+    rate = int(voice.sample_rate)
+    # Sol5 puis Mi5 : intervalle clair, timbre telephone.
+    notes = ((784.0, 0.12), (659.0, 0.12))
+    gap_sec = 0.045
+    amp_u8 = 52  # volume moyen (bip repondeur = 90)
+    amp_s16 = 14000
+    fade_sec = 0.018
+
+    def _synth(freq: float, dur: float) -> bytes:
+        n = max(1, int(rate * dur))
+        fade = max(1, int(rate * fade_sec))
+        if voice.sample_width <= 1:
+            out = bytearray(n)
+            for i in range(n):
+                env = 1.0
+                if i < fade:
+                    env = i / fade
+                elif i > n - fade:
+                    env = (n - i) / fade
+                # Legere attenuation en fin de note.
+                env *= 0.85 + 0.15 * (1.0 - i / n)
+                val = math.sin(2.0 * math.pi * freq * (i / rate)) * env
+                out[i] = max(0, min(255, 128 + int(amp_u8 * val)))
+            return bytes(out)
+        out = bytearray(n * 2)
+        for i in range(n):
+            env = 1.0
+            if i < fade:
+                env = i / fade
+            elif i > n - fade:
+                env = (n - i) / fade
+            env *= 0.85 + 0.15 * (1.0 - i / n)
+            val = math.sin(2.0 * math.pi * freq * (i / rate)) * env
+            sample = max(-32768, min(32767, int(amp_s16 * val)))
+            out[i * 2 : i * 2 + 2] = sample.to_bytes(2, "little", signed=True)
+        return bytes(out)
+
+    parts = bytearray()
+    for idx, (freq, dur) in enumerate(notes):
+        if idx > 0:
+            gap_n = max(1, int(rate * gap_sec))
+            if voice.sample_width <= 1:
+                parts.extend(bytes([128] * gap_n))
+            else:
+                parts.extend(b"\x00\x00" * gap_n)
+        parts.extend(_synth(freq, dur))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(out_path), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(1 if voice.sample_width <= 1 else 2)
+        wf.setframerate(rate)
+        wf.writeframes(bytes(parts))
+
+
 def write_beep_wav_8k(
     out_path: Path,
     *,

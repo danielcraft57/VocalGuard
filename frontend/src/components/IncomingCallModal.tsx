@@ -13,11 +13,13 @@ import {
 } from "@mui/material";
 import BlockIcon from "@mui/icons-material/Block";
 import CallEndIcon from "@mui/icons-material/CallEnd";
+import PhoneInTalkIcon from "@mui/icons-material/PhoneInTalk";
 import RingVolumeIcon from "@mui/icons-material/RingVolume";
 import type { IncomingLiveCall, IncomingLivePhase } from "../hooks/useIncomingCallLive";
 import { VgProfileChip, type IncomingProfileKind } from "./mui/VgProfileChip";
 import { playIncomingAlertSound } from "../utils/telephonySounds";
 import { hangupIncomingCall } from "../services/callsApi";
+import { KbIntentBars } from "./kb/KbIntentBars";
 
 type Props = {
   live: IncomingLiveCall | null;
@@ -55,6 +57,8 @@ function formatElapsed(ms: number): string {
 
 /**
  * Modale plein ecran Material pour un appel entrant (evenements WS).
+ *
+ * Chrono depuis le decrochage. Affiche les chunks STT + belief en live.
  */
 export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElement {
   const theme = useTheme();
@@ -76,8 +80,13 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
   }, [live?.callId, live?.phase]);
 
   useEffect(() => {
-    if (!live || (live.phase !== "ringing" && live.phase !== "answered")) {
-      setElapsedMs(0);
+    // Chrono uniquement apres decrochage (startedAt > 0), fige a la fin.
+    if (!live || !live.startedAt) {
+      if (!live || live.phase === "ringing") setElapsedMs(0);
+      return;
+    }
+    if (live.phase !== "answered") {
+      // Garde la derniere valeur (ended / blocked) — ne continue pas.
       return;
     }
     const tick = () => setElapsedMs(Date.now() - live.startedAt);
@@ -104,7 +113,13 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
         : theme.palette.primary.main;
 
   const PhaseIcon =
-    phase === "blocked" ? BlockIcon : phase === "ended" ? CallEndIcon : RingVolumeIcon;
+    phase === "blocked"
+      ? BlockIcon
+      : phase === "ended"
+        ? CallEndIcon
+        : phase === "answered"
+          ? PhoneInTalkIcon
+          : RingVolumeIcon;
   const liveProfile = phaseToProfile(phase);
 
   const handleHangup = async () => {
@@ -120,11 +135,19 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
     }
   };
 
+  // Filet uniquement en sonnerie (evite de couper la popin pendant la conversation).
   useEffect(() => {
-    if (!live || (live.phase !== "ringing" && live.phase !== "answered")) return;
-    const id = window.setTimeout(() => onDismiss(), 45_000);
+    if (!live || live.phase !== "ringing") return;
+    const id = window.setTimeout(() => onDismiss(), 60_000);
     return () => window.clearTimeout(id);
   }, [live?.callId, live?.phase, onDismiss]);
+
+  const showConversation = phase === "answered" || phase === "ended";
+  const hasStt =
+    Boolean(live?.liveTranscript) ||
+    Boolean(live?.confirmedTranscript) ||
+    Boolean(live?.belief?.length) ||
+    Boolean(live?.committedTag);
 
   return (
     <Dialog
@@ -146,22 +169,22 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          justifyContent: "center",
+          justifyContent: showConversation ? "flex-start" : "center",
           px: 3,
-          py: 6,
+          py: showConversation ? 4 : 6,
           bgcolor: "background.default",
           textAlign: "center"
         }}
       >
         <Box
           sx={{
-            width: 120,
-            height: 120,
+            width: showConversation ? 88 : 120,
+            height: showConversation ? 88 : 120,
             borderRadius: "50%",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            mb: 3,
+            mb: 2,
             bgcolor: `${phaseColor}22`,
             animation: isActive ? "vg-incoming-ring 1.6s ease-in-out infinite" : "none",
             "@keyframes vg-incoming-ring": {
@@ -171,7 +194,7 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
           }}
         >
           <IconButton aria-hidden sx={{ color: phaseColor }} size="large">
-            <PhaseIcon sx={{ fontSize: 56 }} />
+            <PhaseIcon sx={{ fontSize: showConversation ? 40 : 56 }} />
           </IconButton>
         </Box>
 
@@ -186,9 +209,12 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
         <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", justifyContent: "center", mb: 1 }}>
           <Chip label={phaseLabel(phase)} size="small" color="primary" variant="outlined" />
           {liveProfile ? <VgProfileChip profile={liveProfile} /> : null}
+          {live?.committedTag ? (
+            <Chip label={live.committedTag} size="small" color="secondary" />
+          ) : null}
         </Box>
 
-        {(phase === "ringing" || phase === "answered") && (
+        {phase === "answered" && live?.startedAt ? (
           <Typography
             variant="h4"
             component="p"
@@ -202,13 +228,18 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
           >
             {formatElapsed(elapsedMs)}
           </Typography>
-        )}
+        ) : null}
 
         {phase === "ringing" ? (
           <LinearProgress sx={{ width: "100%", maxWidth: 280, my: 2, borderRadius: 2 }} />
         ) : null}
 
-        <Typography variant="h3" component="h2" gutterBottom sx={{ fontWeight: 600 }}>
+        <Typography
+          variant={showConversation ? "h4" : "h3"}
+          component="h2"
+          gutterBottom
+          sx={{ fontWeight: 600 }}
+        >
           {displayNumber}
         </Typography>
         {live?.callerName && live.phoneNumber ? (
@@ -218,7 +249,7 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
         ) : (
           <Typography variant="body1" color="text.secondary" gutterBottom>
             {phase === "answered"
-              ? "Repondeur VocalGuard"
+              ? "Conversation en direct"
               : phase === "ringing"
                 ? "Decrochage automatique..."
                 : "\u00a0"}
@@ -226,9 +257,57 @@ export function IncomingCallModal({ live, onDismiss }: Props): React.ReactElemen
         )}
 
         {live ? (
-          <Typography variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
             Appel #{live.callId}
           </Typography>
+        ) : null}
+
+        {showConversation && hasStt ? (
+          <Box
+            sx={{
+              mt: 3,
+              width: "100%",
+              maxWidth: 520,
+              textAlign: "left",
+              px: 1.5,
+              py: 1.5,
+              borderRadius: 2,
+              bgcolor: "action.hover"
+            }}
+          >
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mb: 1 }}>
+              STT live
+            </Typography>
+            {live?.confirmedTranscript ? (
+              <Typography variant="body1" sx={{ mb: live?.liveTranscript ? 1 : 0 }}>
+                {live.confirmedTranscript}
+              </Typography>
+            ) : null}
+            {live?.liveTranscript ? (
+              <Typography
+                variant="body1"
+                sx={{ fontStyle: "italic", color: "text.secondary", opacity: 0.9 }}
+              >
+                {live.liveTranscript}
+              </Typography>
+            ) : null}
+            {!live?.confirmedTranscript && !live?.liveTranscript ? (
+              <Typography variant="body2" color="text.secondary">
+                Ecoute en cours…
+              </Typography>
+            ) : null}
+            {live && live.belief.length > 0 ? (
+              <Box sx={{ mt: 2 }}>
+                <KbIntentBars
+                  preds={live.belief}
+                  winner={live.committedTag}
+                  animKey={`${live.callId}-${live.liveTranscript}-${live.belief
+                    .map((r) => `${r.tag}:${r.score.toFixed(2)}`)
+                    .join("|")}`}
+                />
+              </Box>
+            ) : null}
+          </Box>
         ) : null}
 
         <Box

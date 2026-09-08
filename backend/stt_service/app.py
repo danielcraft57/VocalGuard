@@ -155,7 +155,12 @@ async def transcribe_file(
         tmp_path = Path(tmp.name)
     try:
         pcm = await asyncio.to_thread(load_wav_as_16k16bit_pcm, tmp_path)
-        text = await asyncio.to_thread(stt_engine.transcribe_pcm16, pcm, 16000)
+        text = await asyncio.to_thread(
+            stt_engine.transcribe_pcm16,
+            pcm,
+            16000,
+            fast=(mode_n == "live"),
+        )
         logger.info("STT ({}) fichier {} -> {} car.", mode_n, file.filename, len(text))
         return TranscribeResponse(
             text=text,

@@ -26,11 +26,30 @@ def test_commit_requires_threshold_margin_and_min_duration():
             commit_margin=0.15,
             min_chunks=2,
             min_speech_ms=600,
+            strong_threshold=0.99,
+            strong_margin=0.99,
+            strong_min_speech_ms=9999,
         )
     )
     acc.update({"prise_rdv": 0.9, "salutation": 0.1}, speech_ms=200)
     assert acc.try_commit() is None
     acc.update({"prise_rdv": 0.85, "salutation": 0.1}, speech_ms=500)
+    assert acc.try_commit() == "prise_rdv"
+
+
+def test_strong_single_chunk_commit():
+    """Intent tres clair : commit des le premier chunk."""
+    acc = IntentBeliefAccumulator(
+        BeliefConfig(
+            alpha=1.0,
+            min_chunks=2,
+            min_speech_ms=600,
+            strong_threshold=0.82,
+            strong_margin=0.22,
+            strong_min_speech_ms=350,
+        )
+    )
+    acc.update({"prise_rdv": 0.9, "salutation": 0.05}, speech_ms=400)
     assert acc.try_commit() == "prise_rdv"
 
 

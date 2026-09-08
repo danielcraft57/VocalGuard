@@ -58,6 +58,19 @@ def test_get_intents(kb_client):
     assert "has_wav" in body["intents"][0]
 
 
+def test_conversation_status_without_stt(kb_client):
+    """Sans STT configure : ready=False mais intents comptes."""
+    r = kb_client.get("/api/v1/kb/conversation-status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["stt_configured"] is False
+    assert body["stt_ok"] is False
+    assert body["ready"] is False
+    assert body["intents_enabled"] >= 30
+    assert "voices_ready" in body
+    assert "voices_complete" in body
+
+
 def test_listen_voice_missing_wav(kb_client, tmp_path):
     """Sans fichier WAV → 404 clair."""
     kb_client.app.state.config.base_path = tmp_path

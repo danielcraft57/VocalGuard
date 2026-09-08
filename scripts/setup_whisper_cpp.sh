@@ -6,7 +6,7 @@ set -euo pipefail
 ROOT="${STT_BASE_PATH:-/opt/vocalguard-stt}"
 SRC="$ROOT/whisper.cpp"
 MODELS="$ROOT/whisper-models"
-MODEL_NAME="ggml-small-q5_1.bin"
+MODEL_NAME="${STT_WHISPER_GGML_NAME:-ggml-base-q5_1.bin}"
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${MODEL_NAME}"
 ARCH="$(uname -m)"
 JOBS="$(nproc 2>/dev/null || echo 2)"

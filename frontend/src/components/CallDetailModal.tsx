@@ -311,7 +311,9 @@ export function CallDetailModal({
         const t = String(msg.type || "");
         if (t === "call.transcription.partial") {
           const text = String(data.text || "").trim();
-          if (text) setLiveTranscript(text);
+          if (!text) return;
+          // live:true = chunk en cours ; sinon tour confirme
+          setLiveTranscript(text);
         }
         if (t === "call.intent.belief") {
           const top = Array.isArray(data.top) ? data.top : [];

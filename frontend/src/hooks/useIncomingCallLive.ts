@@ -1,16 +1,28 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getWsBaseUrl } from "../services/httpClient";
+import { getWsBaseUrl, getApiBaseUrl } from "../services/httpClient";
 
 export type IncomingLivePhase = "ringing" | "answered" | "blocked" | "ended";
+
+export type IncomingBeliefRow = {
+  tag: string;
+  score: number;
+};
 
 export type IncomingLiveCall = {
   callId: number;
   phoneNumber: string | null;
   callerName: string | null;
   phase: IncomingLivePhase;
+  /** Epoch ms : demarre au decrochage (pas a la sonnerie). */
   startedAt: number;
+  /** Texte STT live (chunk en cours). */
+  liveTranscript: string;
+  /** Tours confirmes (live:false / commit). */
+  confirmedTranscript: string;
+  belief: IncomingBeliefRow[];
+  committedTag: string | null;
 };
 
 type WsEnvelope = {
@@ -29,8 +41,20 @@ function asOptStr(raw: unknown): string | null {
   return s ? s : null;
 }
 
+function emptyConversationFields() {
+  return {
+    liveTranscript: "",
+    confirmedTranscript: "",
+    belief: [] as IncomingBeliefRow[],
+    committedTag: null as string | null
+  };
+}
+
 /**
  * Abonne /ws/events pour une modale d'appel entrant globale.
+ *
+ * Chrono = depuis call.answered. STT chunks / belief pendant la conversation.
+ * Filet HTTP : si call.completed rate le WS, le poll ferme la popin.
  *
  * @returns Etat live + dismiss manuel (fermeture anticipee).
  */
@@ -40,6 +64,8 @@ export function useIncomingCallLive(): {
 } {
   const [live, setLive] = useState<IncomingLiveCall | null>(null);
   const closeTimer = useRef<number | null>(null);
+  /** Apres Masquer / fin : ignore call.updated qui rouvrait la popin. */
+  const dismissedIds = useRef<Set<number>>(new Set());
 
   const clearCloseTimer = useCallback(() => {
     if (closeTimer.current != null) {
@@ -50,19 +76,77 @@ export function useIncomingCallLive(): {
 
   const dismiss = useCallback(() => {
     clearCloseTimer();
-    setLive(null);
+    setLive((prev) => {
+      if (prev) dismissedIds.current.add(prev.callId);
+      return null;
+    });
   }, [clearCloseTimer]);
 
   const scheduleAutoClose = useCallback(
     (delayMs: number) => {
       clearCloseTimer();
       closeTimer.current = window.setTimeout(() => {
-        setLive(null);
+        setLive((prev) => {
+          if (prev) dismissedIds.current.add(prev.callId);
+          return null;
+        });
         closeTimer.current = null;
       }, delayMs);
     },
     [clearCloseTimer]
   );
+
+  const markEnded = useCallback(
+    (callId: number) => {
+      if (dismissedIds.current.has(callId)) return;
+      setLive((prev) => {
+        if (!prev || prev.callId !== callId) return prev;
+        if (prev.phase === "ended") return prev;
+        return { ...prev, phase: "ended" };
+      });
+      scheduleAutoClose(400);
+    },
+    [scheduleAutoClose]
+  );
+
+  // Filet : poll statut appel si le WS rate call.completed.
+  useEffect(() => {
+    if (!live || (live.phase !== "answered" && live.phase !== "ringing")) {
+      return undefined;
+    }
+    const callId = live.callId;
+    let cancelled = false;
+
+    const check = async () => {
+      try {
+        const res = await fetch(`${getApiBaseUrl()}/calls/${callId}`);
+        if (!res.ok || cancelled) return;
+        const row = (await res.json()) as {
+          status?: string;
+          end_time?: string | null;
+        };
+        const status = String(row.status || "").toLowerCase();
+        if (
+          row.end_time ||
+          status === "completed" ||
+          status === "missed" ||
+          status === "failed" ||
+          status === "ended"
+        ) {
+          markEnded(callId);
+        }
+      } catch {
+        /* ignore reseau */
+      }
+    };
+
+    void check();
+    const id = window.setInterval(() => void check(), 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [live?.callId, live?.phase, markEnded]);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -97,29 +181,23 @@ export function useIncomingCallLive(): {
         if (!callId) return;
 
         if (t === "call.incoming") {
+          dismissedIds.current.delete(callId);
           clearCloseTimer();
           setLive({
             callId,
             phoneNumber: asOptStr(data.phone_number),
             callerName: asOptStr(data.caller_name),
             phase: "ringing",
-            startedAt: Date.now()
+            startedAt: 0,
+            ...emptyConversationFields()
           });
           return;
         }
 
         if (t === "call.updated") {
+          if (dismissedIds.current.has(callId)) return;
           setLive((prev) => {
-            if (!prev || prev.callId !== callId) {
-              // Event update sans incoming (course) : ouvrir quand meme la modale.
-              return {
-                callId,
-                phoneNumber: asOptStr(data.phone_number),
-                callerName: asOptStr(data.caller_name),
-                phase: "answered",
-                startedAt: Date.now()
-              };
-            }
+            if (!prev || prev.callId !== callId) return prev;
             return {
               ...prev,
               phoneNumber: asOptStr(data.phone_number) ?? prev.phoneNumber,
@@ -130,16 +208,26 @@ export function useIncomingCallLive(): {
         }
 
         if (t === "call.answered") {
+          if (dismissedIds.current.has(callId)) return;
+          clearCloseTimer();
           setLive((prev) => {
             if (prev && prev.callId === callId) {
-              return { ...prev, phase: "answered" };
+              return {
+                ...prev,
+                phase: "answered",
+                // Ne reset pas le chrono si deja en ligne (evite decalage).
+                startedAt: prev.startedAt > 0 ? prev.startedAt : Date.now(),
+                phoneNumber: asOptStr(data.phone_number) ?? prev.phoneNumber,
+                callerName: asOptStr(data.caller_name) ?? prev.callerName
+              };
             }
             return {
               callId,
               phoneNumber: asOptStr(data.phone_number),
               callerName: asOptStr(data.caller_name),
               phase: "answered",
-              startedAt: Date.now()
+              startedAt: Date.now(),
+              ...emptyConversationFields()
             };
           });
           return;
@@ -150,22 +238,80 @@ export function useIncomingCallLive(): {
             if (prev && prev.callId !== callId) return prev;
             return {
               callId,
-              phoneNumber: (prev && prev.callId === callId ? prev.phoneNumber : null) ?? asOptStr(data.phone_number),
-              callerName: (prev && prev.callId === callId ? prev.callerName : null) ?? asOptStr(data.caller_name),
+              phoneNumber:
+                (prev && prev.callId === callId ? prev.phoneNumber : null) ??
+                asOptStr(data.phone_number),
+              callerName:
+                (prev && prev.callId === callId ? prev.callerName : null) ??
+                asOptStr(data.caller_name),
               phase: "blocked",
-              startedAt: prev?.startedAt ?? Date.now()
+              startedAt: prev?.startedAt && prev.startedAt > 0 ? prev.startedAt : Date.now(),
+              ...emptyConversationFields()
             };
           });
-          scheduleAutoClose(2200);
+          scheduleAutoClose(1400);
           return;
         }
 
         if (t === "call.completed" || t === "call.missed") {
+          markEnded(callId);
+          return;
+        }
+
+        if (
+          t === "call.transcription.partial" ||
+          t === "call.intent.belief" ||
+          t === "call.intent.commit"
+        ) {
           setLive((prev) => {
             if (!prev || prev.callId !== callId) return prev;
-            return { ...prev, phase: "ended" };
+            if (prev.phase === "ended") return prev;
+
+            const next: IncomingLiveCall = {
+              ...prev,
+              phase: prev.phase === "ringing" ? "answered" : prev.phase,
+              startedAt: prev.startedAt > 0 ? prev.startedAt : Date.now()
+            };
+
+            if (t === "call.transcription.partial") {
+              const text = String(data.text || "").trim();
+              if (!text) return next;
+              if (data.live === true) {
+                return { ...next, liveTranscript: text };
+              }
+              return {
+                ...next,
+                liveTranscript: "",
+                confirmedTranscript: next.confirmedTranscript
+                  ? `${next.confirmedTranscript} ${text}`
+                  : text
+              };
+            }
+
+            if (t === "call.intent.belief") {
+              const top = Array.isArray(data.top) ? data.top : [];
+              const belief = top
+                .map((row) => {
+                  const r = row as { tag?: string; score?: number };
+                  return { tag: String(r.tag || ""), score: Number(r.score || 0) };
+                })
+                .filter((r) => r.tag);
+              return { ...next, belief };
+            }
+
+            if (t === "call.intent.commit") {
+              const tag = String(data.tag || "").trim();
+              const text = String(data.text || "").trim();
+              return {
+                ...next,
+                committedTag: tag || next.committedTag,
+                liveTranscript: "",
+                confirmedTranscript: next.confirmedTranscript || text
+              };
+            }
+
+            return next;
           });
-          scheduleAutoClose(1600);
         }
       };
 
@@ -194,7 +340,7 @@ export function useIncomingCallLive(): {
         /* ignore */
       }
     };
-  }, [clearCloseTimer, scheduleAutoClose]);
+  }, [clearCloseTimer, scheduleAutoClose, markEnded]);
 
   return { live, dismiss };
 }

@@ -127,6 +127,29 @@ export async function chatKb(
   return (await res.json()) as KbChatReply;
 }
 
+export type KbConversationStatus = {
+  ready: boolean;
+  stt_configured: boolean;
+  stt_ok: boolean;
+  stt_detail?: string | null;
+  intents_enabled: number;
+  voices_ready: number;
+  voices_complete: boolean;
+};
+
+/**
+ * Statut de readiness du mode conversation (STT + intents + voix).
+ *
+ * @returns Snapshot pret / compteurs.
+ */
+export async function fetchKbConversationStatus(): Promise<KbConversationStatus> {
+  const res = await fetch(`${getApiBaseUrl()}/kb/conversation-status`);
+  if (!res.ok) {
+    throw new Error(`KB conversation-status HTTP ${res.status}`);
+  }
+  return (await res.json()) as KbConversationStatus;
+}
+
 /**
  * Cree un intent.
  *

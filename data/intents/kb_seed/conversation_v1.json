@@ -1,7 +1,7 @@
 {
-  "version": 3,
+  "version": 4,
   "source": "seed",
-  "description": "Catalogue intents repondeur PME v3 (variantes anti-repetition).",
+  "description": "Catalogue intents repondeur PME v4 (contact personne / presence).",
   "intents": [
     {
       "tag": "salutation",
@@ -18,8 +18,8 @@
         "bonjour monsieur"
       ],
       "responses": [
+        "Bonjour, assistante de monsieur Daniel. Comment puis-je vous aider ?",
         "Bonjour, vous etes bien sur la messagerie. Comment puis-je vous aider ?",
-        "Bonjour, bienvenue sur notre messagerie. Que puis-je faire pour vous ?",
         "Oui, bonjour. Dites-moi en quelques mots ce dont vous avez besoin."
       ]
     },
@@ -213,7 +213,13 @@
         "callback",
         "rappelez moi plus tard",
         "je veux etre rappele",
-        "un rappel"
+        "un rappel",
+        "rappelle moi",
+        "rapelle moi",
+        "rappelez moi",
+        "tu me rappelles",
+        "vous me rappelez",
+        "merci de me rappeler"
       ],
       "responses": [
         "D'accord, nous vous rappellerons. Confirmez votre numero ou laissez un message apres le bip.",
@@ -713,6 +719,61 @@
       "action": "hangup_soft"
     },
     {
+      "tag": "contacter_personne",
+      "niveau": 1,
+      "priority": 31,
+      "patterns": [
+        "je cherche a contacter",
+        "chercher a contacter",
+        "contacter loic",
+        "contacter Loic",
+        "joindre loic",
+        "parler a loic",
+        "pour loic",
+        "c'est pour loic",
+        "loic",
+        "loic ?",
+        "Monsieur Daniel",
+        "monsieur daniel",
+        "je cherche loic",
+        "je voudrais loic",
+        "passer loic",
+        "donnez-moi loic"
+      ],
+      "responses": [
+        "Il n'est pas disponible en direct. Laissez votre nom, le motif et un numero, je ferai suivre.",
+        "Personne n'est joignable a l'instant. Laissez un message avec un numero de rappel.",
+        "Je peux noter votre demande pour lui. Nom, motif et un moyen de vous joindre ?"
+      ],
+      "action": "record_message"
+    },
+    {
+      "tag": "presence_demande",
+      "niveau": 1,
+      "priority": 33,
+      "patterns": [
+        "il est la",
+        "il est là",
+        "elle est la",
+        "elle est là",
+        "est-il la",
+        "est-elle la",
+        "il est disponible",
+        "elle est disponible",
+        "est-ce qu'il est la",
+        "est-ce qu'elle est la",
+        "tu es la",
+        "y est-il",
+        "il bosse",
+        "il travaille aujourd'hui"
+      ],
+      "responses": [
+        "Non, pas disponible pour l'instant. Vous pouvez laisser un message, on vous rappellera.",
+        "Absent en ce moment. Preferez-vous laisser un message ou un numero de rappel ?",
+        "Pas joignable a l'instant. Un message apres le bip, ou vos coordonnees ?"
+      ]
+    },
+    {
       "tag": "pour_personne",
       "niveau": 1,
       "priority": 24,
@@ -722,8 +783,9 @@
         "est-ce que madame",
         "pour le service",
         "joindre",
-        "est-il la",
-        "est-elle la"
+        "parler a quelqu'un en particulier",
+        "c'est pour monsieur",
+        "c'est pour madame"
       ],
       "responses": [
         "Personne n'est disponible en direct. Laissez le nom de la personne visee, votre message et un numero de rappel.",

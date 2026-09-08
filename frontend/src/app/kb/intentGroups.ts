@@ -54,6 +54,8 @@ const TAG_GROUP: Record<string, IntentGroupId> = {
   parler_humain: "contact",
   pour_personne: "contact",
   parler_direction: "contact",
+  contacter_personne: "contact",
+  presence_demande: "contact",
   contact_sms: "contact",
   numero_entreprise: "contact",
   prise_rdv: "rdv",

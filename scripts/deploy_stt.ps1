@@ -7,7 +7,7 @@ param(
     [string]$SttServerName = "node15.lan",
     [string]$SttUser = "pi",
     [string]$Engine = "whisper",
-    [string]$WhisperModel = "small",
+    [string]$WhisperModel = "base",
     [string]$WhisperThreads = "4",
     [string]$WhisperBeamSize = "1",
     [string]$WhisperBestOf = "1",
@@ -22,10 +22,21 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $RemoteRoot = "/opt/vocalguard-stt"
 $Remote = "${SttUser}@${SttServerName}"
-$ModelName = "ggml-small-q5_1.bin"
+# Mappe le label (tiny/base/small) vers le bin ggml quantifie.
+$ModelMap = @{
+    "tiny"  = "ggml-tiny-q5_1.bin"
+    "base"  = "ggml-base-q5_1.bin"
+    "small" = "ggml-small-q5_1.bin"
+}
+$WhisperModelKey = $WhisperModel.Trim().ToLowerInvariant()
+if ($ModelMap.ContainsKey($WhisperModelKey)) {
+    $ModelName = $ModelMap[$WhisperModelKey]
+} else {
+    $ModelName = "ggml-${WhisperModelKey}-q5_1.bin"
+}
 $DefaultPrompt = "Messagerie telephonique francaise. Bonjour, Monsieur, Madame, entreprise, merci, a bientot, rappelez-moi au 0X XX XX XX XX."
 
-Write-Host "=== Deploy STT sur $Remote (engine=$Engine) ==="
+Write-Host "=== Deploy STT sur $Remote (engine=$Engine model=$WhisperModel -> $ModelName threads=$WhisperThreads) ==="
 
 # Sync code minimal
 $staging = Join-Path $env:TEMP "vocalguard-stt-sync"
@@ -67,7 +78,7 @@ if ($Engine -eq "whisper") {
     }
     Write-Host "Build / verif whisper.cpp (cli+server) sur $SttServerName..."
     ssh $Remote "chmod +x $RemoteRoot/scripts/setup_whisper_cpp.sh"
-    ssh $Remote "STT_BASE_PATH=$RemoteRoot bash $RemoteRoot/scripts/setup_whisper_cpp.sh"
+    ssh $Remote "STT_BASE_PATH=$RemoteRoot STT_WHISPER_GGML_NAME=$ModelName bash $RemoteRoot/scripts/setup_whisper_cpp.sh"
 
     # Ajuste threads/beam du unit whisper-server selon les params deploy
     $whisperUnit = @"

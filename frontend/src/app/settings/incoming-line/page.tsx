@@ -19,6 +19,7 @@ import { AppLayout } from "../../../components/AppLayout";
 import { VgPageHeader } from "../../../components/mui/VgPageHeader";
 import { VgSaveBar } from "../../../components/mui/VgSaveBar";
 import { VgSettingsSection } from "../../../components/mui/VgSettingsSection";
+import { VgConversationModeStatus } from "../../../components/mui/VgConversationModeStatus";
 import { useIncomingCallConfig } from "../../../hooks/useIncomingCallConfig";
 import {
   setIncomingLineMode,
@@ -120,7 +121,7 @@ export default function IncomingLineSettingsPage() {
           {config.incoming_line_mode === "voicemail" ? (
             <VgSettingsSection
               title="Type de repondeur"
-              description="Simple = bip + message. Conversation = intents KB (pour tester le dialogue)."
+              description="Simple = bip + message. Conversation = dialogue intents KB (STT). IVR = ancien keywords."
             >
               <ToggleButtonGroup
                 exclusive
@@ -144,12 +145,10 @@ export default function IncomingLineSettingsPage() {
               </ToggleButtonGroup>
               {((config.voicemail as { mode?: string })?.mode || "simple") ===
               "conversation" ? (
-                <Alert severity="warning" sx={{ mb: 0 }}>
-                  Mode test : STT node15 requis. Regenerer les voix sur /kb avant l appel.
-                </Alert>
+                <VgConversationModeStatus />
               ) : (
                 <Typography variant="body2" color="text.secondary">
-                  Passe en Conversation puis Enregistrer pour tester le dialogue d intents.
+                  Passe en Conversation puis Enregistrer pour activer le dialogue d'intents.
                 </Typography>
               )}
             </VgSettingsSection>

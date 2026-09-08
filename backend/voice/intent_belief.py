@@ -18,15 +18,21 @@ class BeliefConfig:
     @param commit_margin Ecart min entre 1er et 2e.
     @param min_speech_ms Duree mini de parole avant commit precoce.
     @param min_chunks Nombre mini de mises a jour avant commit precoce.
+    @param strong_threshold Score tres haut : commit des le 1er chunk.
+    @param strong_margin Marge 1er/2e pour commit 1-chunk.
+    @param strong_min_speech_ms Parole mini pour commit 1-chunk.
     @param fallback_tag Tag si score trop bas a la fin du tour.
     @param low_threshold Sous ce max, on tombe en fallback a la fin.
     """
 
-    alpha: float = 0.5
-    commit_threshold: float = 0.70
-    commit_margin: float = 0.15
-    min_speech_ms: float = 600.0
+    alpha: float = 0.55
+    commit_threshold: float = 0.68
+    commit_margin: float = 0.12
+    min_speech_ms: float = 500.0
     min_chunks: int = 2
+    strong_threshold: float = 0.82
+    strong_margin: float = 0.22
+    strong_min_speech_ms: float = 350.0
     fallback_tag: str = "incompris"
     low_threshold: float = 0.35
 
@@ -148,7 +154,20 @@ class IntentBeliefAccumulator:
                 self.state.committed_tag = best_tag
             return self.state.committed_tag
 
-        ready = self.state.chunks >= cfg.min_chunks and self.state.speech_ms >= cfg.min_speech_ms
+        # Commit 1-chunk si l'intent est deja tres clair (latence).
+        if (
+            self.state.chunks >= 1
+            and self.state.speech_ms >= cfg.strong_min_speech_ms
+            and best_score >= cfg.strong_threshold
+            and margin >= cfg.strong_margin
+        ):
+            self.state.committed_tag = best_tag
+            return best_tag
+
+        ready = (
+            self.state.chunks >= cfg.min_chunks
+            and self.state.speech_ms >= cfg.min_speech_ms
+        )
         if (
             ready
             and best_score >= cfg.commit_threshold

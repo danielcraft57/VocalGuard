@@ -108,11 +108,12 @@ def _resolve_whisper_cpp_paths() -> Optional[tuple[Path, Path]]:
     return bin_path, model_path
 
 
-def _whisper_decode_opts() -> dict[str, str]:
+def _whisper_decode_opts(*, fast: bool = False) -> dict[str, str]:
     """
     Options decode communes (greedy + prompt FR).
 
-    @returns Dict beam_size, best_of, prompt, language, threads.
+    @param fast True pour latence conversation (pas de timestamps).
+    @returns Dict beam_size, best_of, prompt, language, threads, no_timestamps.
     """
     return {
         "language": _env("STT_WHISPER_LANGUAGE", "fr") or "fr",
@@ -120,6 +121,7 @@ def _whisper_decode_opts() -> dict[str, str]:
         "beam_size": _env("STT_WHISPER_BEAM_SIZE", "1") or "1",
         "best_of": _env("STT_WHISPER_BEST_OF", "1") or "1",
         "prompt": _env("STT_WHISPER_PROMPT", _DEFAULT_FR_PROMPT) or _DEFAULT_FR_PROMPT,
+        "no_timestamps": "true" if fast else "false",
     }
 
 
@@ -283,12 +285,18 @@ def _pcm16_to_float32(audio_pcm: bytes):
     return np.frombuffer(audio_pcm, dtype=np.int16).astype(np.float32) / 32768.0
 
 
-def _transcribe_whisper_server(audio_pcm: bytes, sample_rate: int) -> str:
+def _transcribe_whisper_server(
+    audio_pcm: bytes,
+    sample_rate: int,
+    *,
+    fast: bool = False,
+) -> str:
     """
     Transcrit via whisper-server (modele deja en RAM).
 
     @param audio_pcm PCM 16-bit mono little-endian.
     @param sample_rate Taux d'echantillonnage (Hz).
+    @param fast True = mode live (sans timestamps).
     @returns Texte transcrit.
     """
     import httpx
@@ -298,7 +306,7 @@ def _transcribe_whisper_server(audio_pcm: bytes, sample_rate: int) -> str:
     if not server:
         raise RuntimeError("whisper-server non configure.")
 
-    opts = _whisper_decode_opts()
+    opts = _whisper_decode_opts(fast=fast)
     wav_bytes = _pcm_to_wav_bytes(audio_pcm, sample_rate)
     data = {
         "language": opts["language"],
@@ -306,8 +314,8 @@ def _transcribe_whisper_server(audio_pcm: bytes, sample_rate: int) -> str:
         "best_of": opts["best_of"],
         "temperature": "0.0",
         "temperature_inc": "0.0",
-        "response_format": "verbose_json",
-        "no_timestamps": "false",
+        "response_format": "json" if fast else "verbose_json",
+        "no_timestamps": opts.get("no_timestamps") or ("true" if fast else "false"),
     }
     if opts["prompt"]:
         data["prompt"] = opts["prompt"]
@@ -397,17 +405,18 @@ def _transcribe_whisper_cpp(audio_pcm: bytes, sample_rate: int) -> str:
         raise RuntimeError(f"whisper.cpp echec (code {proc.returncode}): {err[:500]}")
 
 
-def _transcribe_whisper(audio_pcm: bytes) -> str:
+def _transcribe_whisper(audio_pcm: bytes, *, fast: bool = False) -> str:
     """
     Transcrit du PCM 16 kHz avec Whisper.
 
     @param audio_pcm PCM 16-bit mono little-endian.
+    @param fast True = mode live (latence).
     @returns Texte transcrit.
     """
     if _whisper_model is None:
         raise RuntimeError("Modele Whisper non charge.")
     if _whisper_backend == "whisper.cpp-server":
-        return _transcribe_whisper_server(audio_pcm, sample_rate=16000)
+        return _transcribe_whisper_server(audio_pcm, sample_rate=16000, fast=fast)
     # whisper.cpp CLI: ne pas importer numpy (SIGILL sur CPU sans AVX, ex. T4400).
     if _whisper_backend == "whisper.cpp":
         return _transcribe_whisper_cpp(audio_pcm, sample_rate=16000)
@@ -491,12 +500,18 @@ def last_cues() -> list[dict]:
     return list(_last_cues)
 
 
-def transcribe_pcm16(audio_pcm: bytes, sample_rate: int = 16000) -> str:
+def transcribe_pcm16(
+    audio_pcm: bytes,
+    sample_rate: int = 16000,
+    *,
+    fast: bool = False,
+) -> str:
     """
     Transcrit du PCM 16-bit mono avec le moteur charge.
 
     @param audio_pcm Donnees PCM little-endian.
     @param sample_rate Taux d'echantillonnage (Hz).
+    @param fast True = mode live (latence conversation).
     @returns Texte transcrit.
     """
     global _last_cues, _last_segments
@@ -505,7 +520,7 @@ def transcribe_pcm16(audio_pcm: bytes, sample_rate: int = 16000) -> str:
     if not audio_pcm:
         return ""
     if _engine == "whisper":
-        text = _transcribe_whisper(audio_pcm)
+        text = _transcribe_whisper(audio_pcm, fast=fast)
     elif _engine == "vosk":
         text = _transcribe_vosk(audio_pcm, sample_rate)
     else:
