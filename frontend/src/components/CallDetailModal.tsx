@@ -266,7 +266,17 @@ export function CallDetailModal({
     if (!call || isCallWithoutMessage(call)) return [];
     const stored = cuesFromExtraData(call.extra_data ?? null);
     if (stored && stored.length > 0) return stored;
-    return buildTranscriptCues(call.transcription || "", duration);
+    const text = call.transcription || "";
+    // Accueil seed en tete du WAV : sans cues stockes, decaler le karaoke
+    // pour ne pas afficher la phrase appelant pendant l'annonce.
+    const lower = text.toLowerCase();
+    const looksUserOnly =
+      text.length > 0 &&
+      !lower.includes("assistante") &&
+      !lower.includes("comment puis-je");
+    const offset =
+      looksUserOnly && duration > 8 ? Math.min(5.5, duration * 0.28) : 0;
+    return buildTranscriptCues(text, duration, undefined, offset);
   }, [call, duration]);
 
   const noMessage = Boolean(call && isCallWithoutMessage(call));

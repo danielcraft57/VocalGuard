@@ -135,26 +135,30 @@ export function buildCuesFromSegments(
  * Construit des cues a partir d'un texte (timestamps proportionnels a la duree).
  *
  * @param text Transcription.
- * @param durationSec Duree audio (secondes). Minimum 1 s si texte present.
+ * @param durationSec Duree audio totale (secondes). Minimum 1 s si texte present.
  * @param wordsPerCue Taille des groupes.
+ * @param offsetSec Debut de la parole dans l'audio (ex. apres accueil seed).
  * @returns Cues SRT-like.
  */
 export function buildTranscriptCues(
   text: string,
   durationSec: number,
-  wordsPerCue: number = TRANSCRIPT_WORDS_PER_CUE
+  wordsPerCue: number = TRANSCRIPT_WORDS_PER_CUE,
+  offsetSec: number = 0
 ): TranscriptCue[] {
   const words = splitTranscriptWords(text);
   if (words.length === 0) return [];
   const groups = chunkWords(words, wordsPerCue);
   const weights = groups.map((g) => g.reduce((acc, w) => acc + Math.max(w.length, 1), 0));
   const totalWeight = weights.reduce((a, b) => a + b, 0) || 1;
-  const duration = Number.isFinite(durationSec) && durationSec > 0.4 ? durationSec : Math.max(groups.length * 1.6, 1);
-  let cursor = 0;
+  const offset = Number.isFinite(offsetSec) && offsetSec > 0 ? offsetSec : 0;
+  const totalDur = Number.isFinite(durationSec) && durationSec > 0.4 ? durationSec : Math.max(groups.length * 1.6, 1);
+  const speechDur = Math.max(totalDur - offset, Math.max(groups.length * 1.2, 1));
+  let cursor = offset;
   return groups.map((group, index) => {
-    const slice = duration * (weights[index] / totalWeight);
+    const slice = speechDur * (weights[index] / totalWeight);
     const start = cursor;
-    const end = index === groups.length - 1 ? duration : cursor + slice;
+    const end = index === groups.length - 1 ? offset + speechDur : cursor + slice;
     cursor = end;
     const groupWeight = weights[index] || 1;
     let wCursor = start;

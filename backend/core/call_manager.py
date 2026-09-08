@@ -82,6 +82,8 @@ class _IncomingLineRecorder:
         # True seulement apres start() reussi : evite resume() apres bip en mode simple
         # (qui rouverait VRX et bloquerait l'enregistrement / le raccrochage).
         self._session = False
+        # Octets PCM de l'accueil injecte (seed) — pour decaler le karaoke SRT.
+        self.seed_pcm_bytes: int = 0
 
     async def start(self, already_in_voice_mode: bool = True) -> None:
         """
@@ -182,8 +184,38 @@ class _IncomingLineRecorder:
         self._task = asyncio.create_task(self._read_loop(), name="incoming_vrx_recorder")
 
     def append_pcm(self, data: bytes) -> None:
+        """
+        Ajoute un chunk PCM brut modem a l'enregistrement.
+
+        @param data Octets PCM (format profil modem).
+        """
         if data:
             self.chunks.append(data)
+
+    def mark_seed_pcm(self, data: bytes) -> None:
+        """
+        Enregistre la taille du seed accueil (deja append via append_pcm).
+
+        @param data PCM de l'accueil injecte.
+        """
+        if data:
+            self.seed_pcm_bytes += len(data)
+
+    def seed_duration_sec(self) -> float:
+        """
+        Duree de l'accueil pre-colle en tete du WAV.
+
+        @returns Secondes (0 si pas de seed).
+        """
+        if self.seed_pcm_bytes <= 0:
+            return 0.0
+        profile = getattr(self._cm.modem, "voice_profile", None)
+        bps = int(getattr(profile, "bytes_per_sec", 0) or 0)
+        if bps <= 0:
+            rate = int(getattr(profile, "sample_rate", 8000) or 8000)
+            width = int(getattr(profile, "sample_width", 1) or 1)
+            bps = max(1, rate * width)
+        return float(self.seed_pcm_bytes) / float(bps)
 
     async def save(self, call_id: int) -> None:
         await self.pause()
@@ -1282,6 +1314,7 @@ class CallManager:
                 pcm = wf.readframes(wf.getnframes())
             if pcm:
                 recorder.append_pcm(pcm)
+                recorder.mark_seed_pcm(pcm)
                 self._log_call("record_seed_accueil", octets=len(pcm))
         except Exception as exc:
             logger.warning("Seed accueil enregistrement: {}", exc)
@@ -2675,11 +2708,11 @@ class CallManager:
                                         leader,
                                     )
                                     break
-                                # Cap post-parole : repondre vite meme si le VAD
-                                # voit encore du bruit de ligne (appel #51 ~28 s).
+                                # Cap post-parole : ne pas attendre le silence
+                                # (bruit VoIP empêche silence_ms, appel #52 ~28 s).
                                 if speech_started_at is not None:
                                     spoken = time.monotonic() - speech_started_at
-                                    if spoken >= 5.5 and vad.silence_ms >= 200.0:
+                                    if spoken >= 4.2:
                                         logger.info(
                                             "Conversation tour {} : cap post-parole ({:.1f}s)",
                                             turn_idx,
@@ -2756,9 +2789,12 @@ class CallManager:
                     ):
                         try:
                             snap = self._prepare_conversation_stt_pcm(
-                                bytes(turn_pcm), max_sec=6.0
+                                bytes(turn_pcm), max_sec=4.5
                             )
-                            result = await client.transcribe(snap, mode="final")
+                            result = await asyncio.wait_for(
+                                client.transcribe(snap, mode="final"),
+                                timeout=5.0,
+                            )
                             final_candidate = (
                                 (result.get("text") or "").strip()
                                 if isinstance(result, dict)
@@ -2772,6 +2808,11 @@ class CallManager:
                                     len(final_text),
                                 )
                                 final_text = final_candidate
+                        except asyncio.TimeoutError:
+                            logger.warning(
+                                "STT final tour {} timeout — on garde live",
+                                turn_idx,
+                            )
                         except Exception:
                             logger.exception("STT final tour {} ignore", turn_idx)
                     elif heard_speech and final_text and not need_final:
@@ -2867,10 +2908,38 @@ class CallManager:
 
                 if active_call_id and committed:
                     try:
+                        joined = (
+                            " | ".join(transcript_parts) if transcript_parts else None
+                        )
+                        cues = None
+                        if joined:
+                            from backend.voice.transcript_cues import (
+                                build_transcript_cues,
+                                offset_transcript_cues,
+                            )
+
+                            offset_sec = 0.0
+                            if rec is not None:
+                                try:
+                                    offset_sec = float(rec.seed_duration_sec())
+                                except Exception:
+                                    offset_sec = 0.0
+                            # Duree parole approx = hors accueil ; sinon proportionnel.
+                            speech_dur = max(2.0, len(joined.split()) * 0.38)
+                            cues = build_transcript_cues(
+                                joined, duration_sec=speech_dur
+                            )
+                            if offset_sec > 0.05:
+                                cues = offset_transcript_cues(cues, offset_sec)
+                                logger.info(
+                                    "Cues SRT decales de {:.2f}s (accueil seed)",
+                                    offset_sec,
+                                )
                         await self.call_service.set_transcription_and_intent(
                             int(active_call_id),
-                            transcription=" | ".join(transcript_parts) if transcript_parts else None,
+                            transcription=joined,
                             intent_name=committed,
+                            cues=cues,
                         )
                     except Exception:
                         logger.exception("Maj intent appel #{}", active_call_id)

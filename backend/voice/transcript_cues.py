@@ -157,3 +157,42 @@ def build_transcript_cues(
         else max(len(groups) * 1.6, 1.0)
     )
     return _timed_groups(groups, 0.0, duration, 0)
+
+
+def offset_transcript_cues(
+    cues: list[dict[str, Any]],
+    offset_sec: float,
+) -> list[dict[str, Any]]:
+    """
+    Decale toutes les timestamps de cues (accueil seed en tete du WAV).
+
+    @param cues Cues existants (start/end/words).
+    @param offset_sec Secondes a ajouter.
+    @returns Nouveaux cues decales (copie).
+    """
+    delta = float(offset_sec or 0.0)
+    if abs(delta) < 0.01 or not cues:
+        return list(cues)
+    out: list[dict[str, Any]] = []
+    for cue in cues:
+        words_in = cue.get("words") if isinstance(cue.get("words"), list) else []
+        words_out = []
+        for w in words_in:
+            if not isinstance(w, dict):
+                continue
+            words_out.append(
+                {
+                    **w,
+                    "start": round(float(w.get("start") or 0.0) + delta, 3),
+                    "end": round(float(w.get("end") or 0.0) + delta, 3),
+                }
+            )
+        out.append(
+            {
+                **cue,
+                "start": round(float(cue.get("start") or 0.0) + delta, 3),
+                "end": round(float(cue.get("end") or 0.0) + delta, 3),
+                "words": words_out,
+            }
+        )
+    return out
