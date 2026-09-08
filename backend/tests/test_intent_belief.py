@@ -62,6 +62,25 @@ def test_force_fallback_incompris():
     assert acc.try_commit(force=True) == "incompris"
 
 
+def test_force_clear_winner_not_incompris():
+    """Score ~0.32 avec marge claire → commit le gagnant (cas contacter_personne)."""
+    acc = IntentBeliefAccumulator(
+        BeliefConfig(
+            low_threshold=0.35,
+            clear_winner_min=0.22,
+            clear_winner_margin=0.05,
+            fallback_tag="incompris",
+        )
+    )
+    acc.state.belief = {
+        "contacter_personne": 0.32,
+        "recrutement": 0.17,
+        "affirmation": 0.13,
+    }
+    acc.state.chunks = 1
+    assert acc.try_commit(force=True) == "contacter_personne"
+
+
 def test_reset_clears_state():
     """Reset pour le tour suivant."""
     acc = IntentBeliefAccumulator(BeliefConfig(alpha=1.0, min_chunks=1, min_speech_ms=0, commit_threshold=0.5, commit_margin=0.0))

@@ -2863,21 +2863,31 @@ class CallManager:
                         try:
                             if db is not None:
                                 preds = intent_repo.predict_intent_scores(db, final_text)
-                                scores_map = {
-                                    p["tag"]: float(p["score"])
+                                ranked = [
+                                    {"tag": p["tag"], "score": float(p["score"])}
                                     for p in preds
                                     if p.get("tag")
+                                ]
+                                # Boost lexical persona (contacter / Daniel / etc.)
+                                # avant le commit force — sinon incompris sous 0.35.
+                                from backend.voice.dialogue_persona import (
+                                    reshape_predictions,
+                                )
+
+                                ranked = reshape_predictions(
+                                    ranked,
+                                    recent_tags=recent_tags,
+                                    user_text=final_text,
+                                )
+                                if recent_tags:
+                                    ranked = apply_recent_tag_penalty(
+                                        ranked, recent_tags
+                                    )
+                                scores_map = {
+                                    p["tag"]: float(p["score"]) for p in ranked
                                 }
                         except Exception as exc:
                             logger.warning("Predict final tour {}: {}", turn_idx, exc)
-                        if scores_map and recent_tags:
-                            ranked = apply_recent_tag_penalty(
-                                [{"tag": t, "score": s} for t, s in scores_map.items()],
-                                recent_tags,
-                            )
-                            scores_map = {
-                                p["tag"]: float(p["score"]) for p in ranked
-                            }
                         if scores_map:
                             belief.update(scores_map, speech_ms=200.0)
                             # Recalcule le commit avec le texte complet.
@@ -2914,6 +2924,87 @@ class CallManager:
                 if not committed:
                     committed = "incompris"
 
+                action = None
+                response_text = None
+                response_index = 0
+                wav_basename = f"kb_{committed}"
+                if db is not None and committed:
+                    # Predictions belief → liste pour persona
+                    preds_list = [
+                        {"tag": t, "score": float(s)} for t, s in belief.ranking(8)
+                    ]
+                    if not preds_list and committed:
+                        preds_list = [{"tag": committed, "score": 1.0}]
+
+                    # Prefere le top reshaped pour le catalogue (pas incompris
+                    # si la persona va jouer contacter_personne).
+                    from backend.voice.dialogue_persona import reshape_predictions
+
+                    reshaped_preview = reshape_predictions(
+                        preds_list,
+                        recent_tags=recent_tags,
+                        user_text=final_text or "",
+                    )
+                    catalog_tag = (
+                        str(reshaped_preview[0]["tag"])
+                        if reshaped_preview
+                        else committed
+                    )
+                    intent = intent_repo.get_intent_by_tag(db, catalog_tag)
+                    if intent is None:
+                        intent = intent_repo.get_intent_by_tag(db, committed)
+                    catalog = []
+                    if intent is not None:
+                        action = intent.action
+                        wav_basename = intent.wav_basename or f"kb_{intent.tag}"
+                        catalog = [
+                            r.text
+                            for r in sorted(intent.responses, key=lambda r: r.position)
+                        ]
+
+                    user_utt = final_text or ""
+                    resolved = resolve_dialogue_reply(
+                        user_text=user_utt,
+                        predictions=preds_list,
+                        recent_tags=recent_tags,
+                        recent_replies=recent_replies,
+                        recent_user_texts=recent_user_texts,
+                        catalog_responses=catalog,
+                    )
+                    response_text = str(resolved.get("reply") or "") or None
+                    response_index = int(
+                        resolved.get("response_index")
+                        if resolved.get("response_index") is not None
+                        else -1
+                    )
+                    resolved_tag = str(resolved.get("tag") or committed)
+                    # Aligne commit DB / action sur le tag vraiment joue.
+                    if resolved_tag and resolved_tag != committed and resolved_tag != "insulte":
+                        committed = resolved_tag
+                        intent2 = intent_repo.get_intent_by_tag(db, committed)
+                        if intent2 is not None:
+                            intent = intent2
+                            if not resolved.get("action"):
+                                action = intent2.action
+                    if resolved.get("action"):
+                        action = resolved.get("action")
+                    if response_index >= 0 and resolved_tag:
+                        wav_basename = variant_wav_basename(
+                            str(resolved_tag), response_index
+                        )
+                        if (
+                            response_index == 0
+                            and intent is not None
+                            and intent.wav_basename
+                            and str(resolved_tag) == intent.tag
+                        ):
+                            wav_basename = intent.wav_basename
+
+                    if user_utt:
+                        recent_user_texts.append(user_utt)
+                        if len(recent_user_texts) > 12:
+                            recent_user_texts = recent_user_texts[-12:]
+
                 await event_bus.publish(
                     Event(
                         event_type=EventType.CALL_INTENT_COMMIT,
@@ -2948,7 +3039,6 @@ class CallManager:
                                     offset_sec = float(rec.seed_duration_sec())
                                 except Exception:
                                     offset_sec = 0.0
-                            # Duree parole approx = hors accueil ; sinon proportionnel.
                             speech_dur = max(2.0, len(joined.split()) * 0.38)
                             cues = build_transcript_cues(
                                 joined, duration_sec=speech_dur
@@ -2967,61 +3057,6 @@ class CallManager:
                         )
                     except Exception:
                         logger.exception("Maj intent appel #{}", active_call_id)
-
-                action = None
-                response_text = None
-                response_index = 0
-                wav_basename = f"kb_{committed}"
-                if db is not None and committed:
-                    # Predictions belief → liste pour persona
-                    preds_list = [
-                        {"tag": t, "score": float(s)} for t, s in belief.ranking(8)
-                    ]
-                    if not preds_list and committed:
-                        preds_list = [{"tag": committed, "score": 1.0}]
-
-                    intent = intent_repo.get_intent_by_tag(db, committed)
-                    catalog = []
-                    if intent is not None:
-                        action = intent.action
-                        wav_basename = intent.wav_basename or wav_basename
-                        catalog = [
-                            r.text
-                            for r in sorted(intent.responses, key=lambda r: r.position)
-                        ]
-
-                    user_utt = final_text or ""
-                    resolved = resolve_dialogue_reply(
-                        user_text=user_utt,
-                        predictions=preds_list,
-                        recent_tags=recent_tags,
-                        recent_replies=recent_replies,
-                        recent_user_texts=recent_user_texts,
-                        catalog_responses=catalog,
-                    )
-                    # Si persona change le tag affiche, on suit le commit belief pour l'action
-                    # mais on prend le texte persona
-                    response_text = str(resolved.get("reply") or "") or None
-                    response_index = int(
-                        resolved.get("response_index")
-                        if resolved.get("response_index") is not None
-                        else -1
-                    )
-                    resolved_tag = resolved.get("tag") or committed
-                    if resolved.get("action"):
-                        action = resolved.get("action")
-                    if response_index >= 0 and resolved_tag:
-                        wav_basename = variant_wav_basename(
-                            str(resolved_tag), response_index
-                        )
-                        if response_index == 0 and intent is not None and intent.wav_basename:
-                            if str(resolved_tag) == intent.tag:
-                                wav_basename = intent.wav_basename
-
-                    if user_utt:
-                        recent_user_texts.append(user_utt)
-                        if len(recent_user_texts) > 12:
-                            recent_user_texts = recent_user_texts[-12:]
 
                 if response_text:
                     recent_replies.append(response_text)

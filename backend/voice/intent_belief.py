@@ -34,7 +34,11 @@ class BeliefConfig:
     strong_margin: float = 0.22
     strong_min_speech_ms: float = 350.0
     fallback_tag: str = "incompris"
-    low_threshold: float = 0.35
+    # Sous ce max a la fin de tour → incompris (sauf gagnant clair, voir try_commit).
+    low_threshold: float = 0.28
+    # Gagnant clair meme sous low_threshold (ex. contacter_personne ~0.32).
+    clear_winner_min: float = 0.22
+    clear_winner_margin: float = 0.05
 
 
 @dataclass
@@ -148,7 +152,14 @@ class IntentBeliefAccumulator:
         cfg = self.config
 
         if force:
-            if best_score < cfg.low_threshold:
+            # Gagnant clair (ex. « je cherche a contacter M. Daniel » ~0.32) :
+            # ne pas tomber en incompris juste sous low_threshold.
+            if (
+                best_score >= cfg.clear_winner_min
+                and margin >= cfg.clear_winner_margin
+            ):
+                self.state.committed_tag = best_tag
+            elif best_score < cfg.low_threshold:
                 self.state.committed_tag = cfg.fallback_tag
             else:
                 self.state.committed_tag = best_tag
