@@ -205,7 +205,7 @@ class _IncomingLineRecorder:
         """
         Duree de l'accueil pre-colle en tete du WAV.
 
-        @returns Secondes (0 si pas de seed).
+        @returns Secondes (0 si pas de seed), plafonne a 8 s (garde-fou).
         """
         if self.seed_pcm_bytes <= 0:
             return 0.0
@@ -215,7 +215,7 @@ class _IncomingLineRecorder:
             rate = int(getattr(profile, "sample_rate", 8000) or 8000)
             width = int(getattr(profile, "sample_width", 1) or 1)
             bps = max(1, rate * width)
-        return float(self.seed_pcm_bytes) / float(bps)
+        return min(8.0, float(self.seed_pcm_bytes) / float(bps))
 
     async def save(self, call_id: int) -> None:
         await self.pause()
@@ -1299,7 +1299,9 @@ class CallManager:
         """
         Recolle l'accueil post-seize dans l'enregistrement d'appel.
 
-        Pendant VTX l'audio n'est pas capturable en VRX : on injecte le WAV joué.
+        Pendant VTX l'audio n'est pas capturable en VRX : on injecte le WAV joué,
+        converti au profil modem actif (evite seed 11 kHz compte en 8 kHz → SRT
+        decale de 11 s, appel #53).
 
         @param recorder Enregistreur ligne a alimenter.
         """
@@ -1310,12 +1312,22 @@ class CallManager:
         if not wav_path.is_file():
             return
         try:
-            with wave.open(str(wav_path), "rb") as wf:
-                pcm = wf.readframes(wf.getnframes())
+            from backend.voice.audio_utils import wav_path_to_modem_pcm
+
+            profile = getattr(self.modem, "voice_profile", None)
+            pcm = wav_path_to_modem_pcm(
+                wav_path,
+                profile=profile,
+                normalize=False,
+            )
             if pcm:
                 recorder.append_pcm(pcm)
                 recorder.mark_seed_pcm(pcm)
-                self._log_call("record_seed_accueil", octets=len(pcm))
+                self._log_call(
+                    "record_seed_accueil",
+                    octets=len(pcm),
+                    dur_s=round(recorder.seed_duration_sec(), 2),
+                )
         except Exception as exc:
             logger.warning("Seed accueil enregistrement: {}", exc)
 
@@ -2822,14 +2834,26 @@ class CallManager:
                             len(final_text),
                         )
                     if heard_speech and not final_text and turn_pcm:
-                        # Repli : un STT avec jingle si les chunks n'ont rien donne.
+                        # Repli rapide (pas de jingle long : appel #53 ~35 s muets).
                         try:
-                            final_text = await self._transcribe_with_wait_jingle(
-                                bytes(turn_pcm),
-                                client=client,
-                                recorder=rec,
-                                turn_idx=turn_idx,
-                            )
+                            if client is not None:
+                                snap = self._prepare_conversation_stt_pcm(
+                                    bytes(turn_pcm), max_sec=4.0
+                                )
+                                result = await asyncio.wait_for(
+                                    client.transcribe(snap, mode="live"),
+                                    timeout=4.0,
+                                )
+                                final_text = (
+                                    (result.get("text") or "").strip()
+                                    if isinstance(result, dict)
+                                    else ""
+                                )
+                                logger.info(
+                                    "STT repli live tour {} : {} car.",
+                                    turn_idx,
+                                    len(final_text),
+                                )
                         except Exception:
                             logger.exception("STT repli tour {}", turn_idx)
                             final_text = ""
