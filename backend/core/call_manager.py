@@ -2391,14 +2391,15 @@ class CallManager:
                 getattr(self.config, "conversation_live_stt_sec", 3.2) or 3.2
             )
             live_stt_sec = max(2.0, min(6.0, live_stt_sec))
+            # Tour court : repondre vite apres la phrase (VoIP = bruit de fond).
             max_turn_sec = int(
-                getattr(self.config, "conversation_max_turn_sec", 12) or 12
+                getattr(self.config, "conversation_max_turn_sec", 8) or 8
             )
-            max_turn_sec = max(4, min(30, max_turn_sec))
+            max_turn_sec = max(4, min(16, max_turn_sec))
             stt_every_bytes = int(16000 * 2 * chunk_sec)
             first_stt_bytes = int(16000 * 2 * first_chunk_sec)
             # Silence raccourci quand la belief a deja un leader clair.
-            early_silence_ms = max(280.0, turn_silence * 1000.0 * 0.55)
+            early_silence_ms = max(250.0, turn_silence * 1000.0 * 0.5)
             transcript_parts: list[str] = []
             # Comme le tchat : l'ouverture salutation compte deja comme 1er tour bot.
             welcome = self._conversation_salutation_text()
@@ -2416,8 +2417,13 @@ class CallManager:
                     break
 
                 belief = IntentBeliefAccumulator()
+                # Seuil RMS plus haut : le fond VoIP (Yolla etc.) ne doit pas
+                # resetter le chrono silence pendant 10+ s (appel #51).
                 vad = TurnVad(
-                    TurnVadConfig(turn_silence_ms=turn_silence * 1000.0)
+                    TurnVadConfig(
+                        turn_silence_ms=turn_silence * 1000.0,
+                        speech_rms_threshold=650.0,
+                    )
                 )
                 committed: Optional[str] = None
                 final_text = ""
@@ -2426,6 +2432,7 @@ class CallManager:
                 stt_task: Optional[asyncio.Task] = None
                 last_stt_len = 0
                 heard_speech = False
+                speech_started_at: Optional[float] = None
 
                 # Tour 0 apres accueil early (croche deja dans le WAV) :
                 # reutilise le VRX ouvert au seize → zero trou avant parole.
@@ -2623,6 +2630,8 @@ class CallManager:
                                     pass
                             vad.feed_buffer(pcm16, sample_rate=16000, frame_ms=20.0)
                             if vad.heard_speech:
+                                if not heard_speech:
+                                    speech_started_at = time.monotonic()
                                 heard_speech = True
 
                             # Lance un STT live sur fenetre recente (1 tache a la fois).
@@ -2666,6 +2675,17 @@ class CallManager:
                                         leader,
                                     )
                                     break
+                                # Cap post-parole : repondre vite meme si le VAD
+                                # voit encore du bruit de ligne (appel #51 ~28 s).
+                                if speech_started_at is not None:
+                                    spoken = time.monotonic() - speech_started_at
+                                    if spoken >= 5.5 and vad.silence_ms >= 200.0:
+                                        logger.info(
+                                            "Conversation tour {} : cap post-parole ({:.1f}s)",
+                                            turn_idx,
+                                            spoken,
+                                        )
+                                        break
                             elif vad.ended and heard_speech:
                                 break
                             if len(turn_pcm) >= 16000 * 2 * max_turn_sec:
@@ -2684,15 +2704,23 @@ class CallManager:
                                 except (asyncio.CancelledError, Exception):
                                     pass
                             else:
+                                # Ne pas attendre 8 s un live : STT final suit
+                                # juste apres (latence appel #51).
                                 try:
                                     result = await asyncio.wait_for(
-                                        stt_task, timeout=8.0
+                                        stt_task, timeout=1.2
                                     )
                                     live_text = (
                                         (result.get("text") or "").strip()
                                         if isinstance(result, dict)
                                         else live_text
                                     )
+                                except asyncio.TimeoutError:
+                                    stt_task.cancel()
+                                    try:
+                                        await stt_task
+                                    except (asyncio.CancelledError, Exception):
+                                        pass
                                 except Exception:
                                     logger.warning(
                                         "STT live drain tour {} ignore", turn_idx
@@ -2716,10 +2744,19 @@ class CallManager:
                     final_text = (live_text or "").strip()
                     # Passage final sur le tour complet : le live tronque a ~3.2s
                     # et peut s'arreter sur "Oui." alors que la phrase continue.
-                    if heard_speech and turn_pcm and client is not None:
+                    live_words = [
+                        w for w in final_text.replace(",", " ").split() if w
+                    ]
+                    need_final = len(live_words) < 4 or len(final_text) < 24
+                    if (
+                        heard_speech
+                        and turn_pcm
+                        and client is not None
+                        and need_final
+                    ):
                         try:
                             snap = self._prepare_conversation_stt_pcm(
-                                bytes(turn_pcm), max_sec=8.0
+                                bytes(turn_pcm), max_sec=6.0
                             )
                             result = await client.transcribe(snap, mode="final")
                             final_candidate = (
@@ -2737,6 +2774,12 @@ class CallManager:
                                 final_text = final_candidate
                         except Exception:
                             logger.exception("STT final tour {} ignore", turn_idx)
+                    elif heard_speech and final_text and not need_final:
+                        logger.info(
+                            "STT final tour {} saute (live deja complet: {} car.)",
+                            turn_idx,
+                            len(final_text),
+                        )
                     if heard_speech and not final_text and turn_pcm:
                         # Repli : un STT avec jingle si les chunks n'ont rien donne.
                         try:
