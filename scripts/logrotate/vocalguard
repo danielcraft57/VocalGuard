@@ -1,0 +1,17 @@
+# Modele logrotate VocalGuard (chemins prod par defaut).
+# Le script install_logrotate.sh genere /etc/logrotate.d/vocalguard
+# a partir de ce modele en substituant APP_DIR et LOG_RETENTION_DAYS.
+
+/opt/vocalguard/logs/*.log {
+    su pi pi
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    dateext
+    dateformat -%Y%m%d
+    maxsize 100M
+}

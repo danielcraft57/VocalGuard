@@ -183,6 +183,9 @@ if (-not $RestartOnly) {
     Invoke-SshStrict -RemoteHost $AppRemoteHost -Command "cd $RemoteDir && source venv/bin/activate && python -m pip install -q --upgrade pip && python -m pip install -q -r requirements.txt && python -m compileall backend -q"
     Ok "Dependencies OK"
 
+    Info "Rotation logs (logrotate + Celery Beat)..."
+    Invoke-SshStrict -RemoteHost $AppRemoteHost -Command "cd $RemoteDir && chmod +x scripts/install_logrotate.sh scripts/prod_log_maintenance.sh scripts/install_prod_log_maintenance_celery.sh && APP_DIR=$RemoteDir bash scripts/install_prod_log_maintenance_celery.sh"
+
     Step "[7] systemd vocalguard-telephony"
     $venvPy = "$RemoteDir/venv/bin/python"
     Install-RemoteTelephonyService -RemoteHost $AppRemoteHost -RemoteDirPath $RemoteDir -ServiceUser $AppServerUser -VenvPython $venvPy

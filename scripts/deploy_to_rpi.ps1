@@ -252,6 +252,10 @@ Step "[7/8] Install Python dependencies (venv)"
 Invoke-SshStrict -RemoteHost $AppRemoteHost -Command "cd $RemoteDir && source venv/bin/activate && python -m pip install -q --upgrade pip && python -m pip install -q -r requirements.txt"
 Ok "Dependencies installed"
 
+Info "Installation rotation logs (logrotate + Celery Beat)..."
+ssh "$AppRemoteHost" "cd $RemoteDir && chmod +x scripts/install_logrotate.sh scripts/prod_log_maintenance.sh scripts/install_prod_log_maintenance_celery.sh && APP_DIR=$RemoteDir bash scripts/install_prod_log_maintenance_celery.sh" | Out-Null
+Ok "Log rotation configured (daily, retention 30 jours, Celery Beat 03:15)"
+
 Step "[8/9] PostgreSQL readiness and service"
 ssh "$AppRemoteHost" "cd $RemoteDir && source venv/bin/activate && python -m compileall backend -q" | Out-Null
 if ($RestartService) {
@@ -367,6 +371,33 @@ WantedBy=multi-user.target
 "@
     Install-RemoteService -RemoteHost $AppRemoteHost -ServiceName "vocalguard-celery.service" -Content $celeryService -Enable $true -Start $true
 
+    $celeryBeatService = @"
+[Unit]
+Description=VocalGuard Celery Beat (taches planifiees)
+After=network-online.target vocalguard-celery.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=$serviceUser
+Group=$serviceGroup
+WorkingDirectory=$RemoteDir
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=$RemoteDir
+Environment=APP_DIR=$RemoteDir
+EnvironmentFile=-$RemoteDir/.env
+ExecStart=$venvPython -m celery -A backend.celery_app.celery_app beat --loglevel=info
+Restart=always
+RestartSec=5
+StandardOutput=append:$RemoteDir/logs/vocalguard-celery-beat.log
+StandardError=append:$RemoteDir/logs/vocalguard-celery-beat.log
+SyslogIdentifier=vocalguard-celery-beat
+
+[Install]
+WantedBy=multi-user.target
+"@
+    Install-RemoteService -RemoteHost $AppRemoteHost -ServiceName "vocalguard-celery-beat.service" -Content $celeryBeatService -Enable $true -Start $true
+
     if ($EnableFrontendService) {
         $frontendService = @"
 [Unit]
@@ -425,7 +456,7 @@ WantedBy=multi-user.target
         ssh "$AppRemoteHost" "sudo systemctl disable --now vocalguard-test-modem.service 2>/dev/null || true" | Out-Null
     }
 
-    ssh "$AppRemoteHost" "sudo systemctl daemon-reload && sudo systemctl status vocalguard vocalguard-celery vocalguard-telephony --no-pager -n 10 2>/dev/null || sudo systemctl status vocalguard vocalguard-celery --no-pager -n 10" | Out-Host
+    ssh "$AppRemoteHost" "sudo systemctl daemon-reload && sudo systemctl status vocalguard vocalguard-celery vocalguard-celery-beat vocalguard-telephony --no-pager -n 10 2>/dev/null || sudo systemctl status vocalguard vocalguard-celery vocalguard-celery-beat --no-pager -n 10" | Out-Host
     Ok "Systemd services installed/updated"
 }
 
