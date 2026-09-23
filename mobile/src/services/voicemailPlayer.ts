@@ -1,7 +1,9 @@
 /**
  * Lecteur audio messages vocaux (expo-audio, singleton).
+ * Une seule piste a la fois ; seek borne (web HTMLMediaElement).
  */
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from "expo-audio";
+import { clampSeekSeconds } from "../utils/seekClamp";
 
 export type VoicemailPlayerState = {
   activeId: number | null;
@@ -84,10 +86,62 @@ export function pauseVoicemailPlayback(): void {
 }
 
 /**
- * Lance ou reprend la lecture d un message.
+ * Seek absolu (secondes).
+ *
+ * @param seconds Position cible.
+ */
+export function seekVoicemailPlayback(seconds: number): void {
+  if (!player) return;
+  const t = clampSeekSeconds(
+    seconds,
+    Number.isFinite(state.duration) && state.duration > 0 ? state.duration : undefined,
+  );
+  if (t == null) return;
+  try {
+    player.seekTo(t);
+    emit({ currentTime: t });
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Avance ou recule de N secondes.
+ *
+ * @param delta Secondes relatives.
+ */
+export function skipVoicemailPlayback(delta: number): void {
+  if (!player) return;
+  if (!Number.isFinite(delta)) return;
+  const cur = Number.isFinite(state.currentTime) ? state.currentTime : 0;
+  const dur = Number.isFinite(state.duration) && state.duration > 0 ? state.duration : undefined;
+  const next = clampSeekSeconds(cur + delta, dur);
+  if (next == null) return;
+  seekVoicemailPlayback(next);
+}
+
+/**
+ * Assure la lecture (sans pause si deja en play).
+ *
+ * @param id Identifiant.
+ * @param uri URI audio.
+ */
+export async function ensureVoicemailPlaying(id: number, uri: string): Promise<void> {
+  if (activeId === id && player) {
+    if (!player.playing) {
+      player.play();
+      emit({ playing: true });
+    }
+    return;
+  }
+  await playVoicemailUri(id, uri);
+}
+
+/**
+ * Lance ou reprend la lecture d un message (arrete l autre piste).
  *
  * @param id Identifiant message.
- * @param uri Fichier local file://
+ * @param uri Fichier local / blob.
  */
 export async function playVoicemailUri(id: number, uri: string): Promise<void> {
   await setAudioModeAsync({
@@ -109,21 +163,25 @@ export async function playVoicemailUri(id: number, uri: string): Promise<void> {
     return;
   }
 
+  // Nouvelle piste : coupe la precedente.
   releasePlayer();
   loadingId = id;
   emit({ loadingId: id, activeId: id });
 
-  const next = createAudioPlayer({ uri }, { updateInterval: 250 });
+  const next = createAudioPlayer({ uri }, { updateInterval: 200 });
   player = next;
   activeId = id;
 
   statusSub = next.addListener("playbackStatusUpdate", (status) => {
     if (!status.isLoaded) return;
+    const currentTime = Number.isFinite(status.currentTime) ? status.currentTime : state.currentTime;
+    const duration =
+      Number.isFinite(status.duration) && status.duration > 0 ? status.duration : state.duration;
     emit({
       loadingId: null,
       playing: status.playing,
-      currentTime: status.currentTime,
-      duration: status.duration > 0 ? status.duration : state.duration,
+      currentTime,
+      duration,
     });
     if (status.didJustFinish) {
       stopVoicemailPlayback();

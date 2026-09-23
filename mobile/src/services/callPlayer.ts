@@ -2,6 +2,7 @@
  * Lecteur audio appels (expo-audio, singleton) avec seek pour karaoke.
  */
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from "expo-audio";
+import { clampSeekSeconds } from "../utils/seekClamp";
 
 export type CallPlayerState = {
   activeId: number | null;
@@ -90,12 +91,16 @@ export function pauseCallPlayback(): void {
  */
 export function seekCallPlayback(seconds: number): void {
   if (!player) return;
-  const t = Math.max(0, seconds);
+  const t = clampSeekSeconds(
+    seconds,
+    Number.isFinite(state.duration) && state.duration > 0 ? state.duration : undefined,
+  );
+  if (t == null) return;
   try {
     player.seekTo(t);
     emit({ currentTime: t });
   } catch {
-    /* ignore */
+    /* ignore (web refuse parfois un seek trop tot) */
   }
 }
 
@@ -106,8 +111,11 @@ export function seekCallPlayback(seconds: number): void {
  */
 export function skipCallPlayback(delta: number): void {
   if (!player) return;
-  const dur = state.duration > 0 ? state.duration : Number.POSITIVE_INFINITY;
-  const next = Math.min(dur, Math.max(0, state.currentTime + delta));
+  if (!Number.isFinite(delta)) return;
+  const cur = Number.isFinite(state.currentTime) ? state.currentTime : 0;
+  const dur = Number.isFinite(state.duration) && state.duration > 0 ? state.duration : undefined;
+  const next = clampSeekSeconds(cur + delta, dur);
+  if (next == null) return;
   seekCallPlayback(next);
 }
 
@@ -130,11 +138,18 @@ export async function ensureCallPlaying(id: number, uri: string): Promise<void> 
 
 /**
  * Lance ou reprend la lecture d un enregistrement d appel.
+ * Coupe le lecteur messages si actif (une seule bande a la fois).
  *
  * @param id Identifiant appel.
  * @param uri Fichier local file://
  */
 export async function playCallUri(id: number, uri: string): Promise<void> {
+  try {
+    const { stopVoicemailPlayback } = await import("./voicemailPlayer");
+    stopVoicemailPlayback();
+  } catch {
+    /* ignore */
+  }
   await setAudioModeAsync({
     playsInSilentMode: true,
     interruptionMode: "mixWithOthers",
@@ -164,11 +179,14 @@ export async function playCallUri(id: number, uri: string): Promise<void> {
 
   statusSub = next.addListener("playbackStatusUpdate", (status) => {
     if (!status.isLoaded) return;
+    const currentTime = Number.isFinite(status.currentTime) ? status.currentTime : state.currentTime;
+    const duration =
+      Number.isFinite(status.duration) && status.duration > 0 ? status.duration : state.duration;
     emit({
       loadingId: null,
       playing: status.playing,
-      currentTime: status.currentTime,
-      duration: status.duration > 0 ? status.duration : state.duration,
+      currentTime,
+      duration,
     });
     if (status.didJustFinish) {
       stopCallPlayback();

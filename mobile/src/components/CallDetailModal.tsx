@@ -13,6 +13,7 @@ import type { CallRow } from "../db/schema";
 import { parseCallOsint } from "../db/schema";
 import { KaraokeStage } from "./KaraokeStage";
 import { CallOsintPanel } from "./CallOsintPanel";
+import { CallSoundtrackBar } from "./CallSoundtrackBar";
 import { CallStatusBadge } from "./CallStatusBadge";
 import { getStoredCredentials } from "../services/credentials";
 import {
@@ -24,6 +25,7 @@ import {
 import {
   ensureCallPlaying,
   seekCallPlayback,
+  skipCallPlayback,
   stopCallPlayback,
   subscribeCallPlayer,
   toggleCallPlayback,
@@ -66,11 +68,9 @@ export function CallDetailModal({ call, visible, onClose, onRecall, onOsintUpdat
   const [audioUri, setAudioUri] = useState<string | null>(null);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [player, setPlayer] = useState<CallPlayerState>(EMPTY_PLAYER);
-  const [scrubbing, setScrubbing] = useState(false);
   const [playError, setPlayError] = useState<string | null>(null);
   const [fullTextOpen, setFullTextOpen] = useState(false);
   const [osintRefreshing, setOsintRefreshing] = useState(false);
-  const barWidthRef = useRef(0);
   const uriCacheRef = useRef<Map<number, string>>(new Map());
 
   useEffect(() => {
@@ -175,14 +175,18 @@ export function CallDetailModal({ call, visible, onClose, onRecall, onOsintUpdat
   const isActive = call != null && player.activeId === call.id;
   const isLoading = call != null && player.loadingId === call.id;
   const isPlaying = isActive && player.playing;
-  const totalDur = Math.max(isActive ? player.duration : 0, durationSec, 1);
-  const currentTime = isActive ? player.currentTime : 0;
-  const progress = Math.min(1, currentTime / totalDur);
+  const playerDur = Number.isFinite(player.duration) ? player.duration : 0;
+  const callDur = Number.isFinite(durationSec) ? durationSec : 0;
+  const totalDur = Math.max(isActive ? playerDur : 0, callDur, 1);
+  const currentTime = isActive && Number.isFinite(player.currentTime) ? player.currentTime : 0;
+  const progress = totalDur > 0 ? Math.min(1, Math.max(0, currentTime / totalDur)) : 0;
 
   const seekToRatio = useCallback(
     (ratio: number) => {
-      if (!call || !audioUri || totalDur <= 0) return;
+      if (!call || !audioUri || !Number.isFinite(totalDur) || totalDur <= 0) return;
+      if (!Number.isFinite(ratio)) return;
       const target = Math.min(1, Math.max(0, ratio)) * totalDur;
+      if (!Number.isFinite(target)) return;
       void (async () => {
         await ensureCallPlaying(call.id, audioUri);
         seekCallPlayback(target);
@@ -202,9 +206,21 @@ export function CallDetailModal({ call, visible, onClose, onRecall, onOsintUpdat
     }
   }, [call, audioUri]);
 
+  const onSkip = useCallback(
+    (delta: number) => {
+      if (!call || !audioUri) return;
+      void (async () => {
+        await ensureCallPlaying(call.id, audioUri);
+        skipCallPlayback(delta);
+      })();
+    },
+    [audioUri, call],
+  );
+
   const onSeekWord = useCallback(
     (startSec: number) => {
       if (!call || !audioUri) return;
+      if (!Number.isFinite(startSec)) return;
       void (async () => {
         await ensureCallPlaying(call.id, audioUri);
         seekCallPlayback(startSec);
@@ -322,52 +338,19 @@ export function CallDetailModal({ call, visible, onClose, onRecall, onOsintUpdat
                 />
               )}
 
-              <View style={styles.playerBar}>
-                {loadingDetail && !audioUri && !audioError ? (
-                  <ActivityIndicator color={colors.primary} />
-                ) : audioError && !audioUri ? (
-                  <Text style={styles.audioError}>{audioError}</Text>
-                ) : (
-                  <>
-                    <Pressable
-                      onPress={() => void onTogglePlay()}
-                      disabled={!audioUri || isLoading}
-                      style={[styles.playCircle, (!audioUri || isLoading) && styles.playDisabled]}
-                      accessibilityLabel={isPlaying ? "Pause" : "Lecture"}
-                    >
-                      {isLoading ? (
-                        <ActivityIndicator color={colors.slate} />
-                      ) : (
-                        <MaterialCommunityIcons
-                          name={isPlaying ? icons.pause : icons.play}
-                          size={28}
-                          color={colors.slate}
-                        />
-                      )}
-                    </Pressable>
-                    <Text style={styles.clock}>{formatClock(currentTime)}</Text>
-                    <Pressable
-                      style={styles.progressHit}
-                      onLayout={(e) => {
-                        barWidthRef.current = e.nativeEvent.layout.width;
-                      }}
-                      onPressIn={() => setScrubbing(true)}
-                      onPressOut={() => setScrubbing(false)}
-                      onPress={(e) => {
-                        if (barWidthRef.current <= 0 || !audioUri) return;
-                        seekToRatio(e.nativeEvent.locationX / barWidthRef.current);
-                      }}
-                    >
-                      <View style={[styles.progressTrack, scrubbing && styles.progressTrackActive]}>
-                        <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
-                        <View style={[styles.thumb, { left: `${progress * 100}%` }]} />
-                      </View>
-                    </Pressable>
-                    <Text style={styles.clock}>{formatClock(totalDur)}</Text>
-                  </>
-                )}
-              </View>
-              {playError ? <Text style={styles.audioError}>{playError}</Text> : null}
+              <CallSoundtrackBar
+                callId={call?.id ?? 0}
+                currentTime={currentTime}
+                duration={totalDur}
+                playing={isPlaying}
+                loading={(loadingDetail && !audioUri && !audioError) || isLoading}
+                disabled={!audioUri}
+                cueMarks={cues.map((c) => c.start)}
+                onTogglePlay={() => void onTogglePlay()}
+                onSeekRatio={seekToRatio}
+                onSkip={onSkip}
+                error={playError || (audioError && !audioUri ? audioError : null)}
+              />
             </View>
           )}
 
@@ -410,18 +393,6 @@ export function CallDetailModal({ call, visible, onClose, onRecall, onOsintUpdat
       </View>
     </Modal>
   );
-}
-
-/**
- * Horloge mm:ss pour la barre audio.
- *
- * @param sec Secondes.
- */
-function formatClock(sec: number): string {
-  if (!Number.isFinite(sec) || sec < 0) return "0:00";
-  const s = Math.floor(sec);
-  const m = Math.floor(s / 60);
-  return `${m}:${String(s % 60).padStart(2, "0")}`;
 }
 
 const styles = StyleSheet.create({
@@ -472,56 +443,6 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     textTransform: "uppercase",
     letterSpacing: 1.2,
-  },
-  playerBar: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingTop: 4,
-    minHeight: 52,
-  },
-  playCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.primary,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  playDisabled: { opacity: 0.45 },
-  clock: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontVariant: ["tabular-nums"],
-    minWidth: 36,
-  },
-  progressHit: { flex: 1, height: 28, justifyContent: "center" },
-  progressTrack: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "rgba(148,163,184,0.25)",
-    overflow: "visible",
-  },
-  progressTrackActive: { height: 6 },
-  progressFill: { height: "100%", borderRadius: 2, backgroundColor: colors.primary },
-  thumb: {
-    position: "absolute",
-    top: -5,
-    marginLeft: -7,
-    width: 14,
-    height: 14,
-    borderRadius: 7,
-    backgroundColor: colors.primary,
-    borderWidth: 2,
-    borderColor: colors.slate,
-  },
-  audioError: {
-    color: colors.textMuted,
-    textAlign: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    fontSize: 13,
   },
   fullTextBlock: { gap: 6 },
   fullTextToggle: {
