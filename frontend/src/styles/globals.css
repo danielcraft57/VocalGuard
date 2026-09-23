@@ -1935,6 +1935,14 @@ html.vg-theme-dark .vg-search-field input {
   min-width: 0;
 }
 
+.vg-call-icons {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.28rem;
+  flex-shrink: 0;
+}
+
 .vg-call-direction {
   display: inline-flex;
   align-items: center;
@@ -1943,6 +1951,26 @@ html.vg-theme-dark .vg-search-field input {
   height: 1.75rem;
   border-radius: 999px;
   flex-shrink: 0;
+}
+
+.vg-call-osint-brand {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 999px;
+  font-size: 0.55rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.vg-call-osint-brand--empty {
+  background: transparent;
+  color: transparent;
 }
 
 .vg-call-direction--in {
@@ -2191,6 +2219,12 @@ html.vg-theme-dark .vg-search-field input {
   .vg-call-direction {
     width: 1.5rem;
     height: 1.5rem;
+  }
+
+  .vg-call-osint-brand {
+    width: 1.5rem;
+    height: 1.5rem;
+    font-size: 0.48rem;
   }
 
   .vg-call-direction .material-icons {

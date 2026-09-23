@@ -12,6 +12,8 @@ import {
   getReputationColor,
   getReputationLabel,
 } from "../utils/osintLabels";
+import { resolveOsintBrand } from "../utils/osintBrand";
+import { OsintBrandIcon } from "./OsintBrandIcon";
 import { colors } from "../theme/colors";
 import { icons } from "../theme/icons";
 
@@ -41,6 +43,7 @@ export function CallListItem({ item, onPress }: Props) {
   const repColors = getReputationColor(repCat);
   const directionIcon = direction === "out" ? icons.outgoing : icons.incoming;
   const directionColor = direction === "out" ? "#38bdf8" : colors.primary;
+  const brand = resolveOsintBrand(osint);
 
   return (
     <Pressable
@@ -49,8 +52,11 @@ export function CallListItem({ item, onPress }: Props) {
       accessibilityRole="button"
       accessibilityLabel={`Appel ${direction === "out" ? "sortant" : "entrant"} ${title}`}
     >
-      <View style={[styles.iconWrap, { backgroundColor: `${directionColor}22` }]}>
-        <MaterialCommunityIcons name={directionIcon} size={22} color={directionColor} />
+      <View style={styles.iconCol}>
+        <View style={[styles.iconWrap, { backgroundColor: `${directionColor}22` }]}>
+          <MaterialCommunityIcons name={directionIcon} size={22} color={directionColor} />
+        </View>
+        <OsintBrandIcon brand={brand} size={40} />
       </View>
       <View style={styles.body}>
         <View style={styles.titleRow}>
@@ -104,6 +110,12 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   rowPressed: { backgroundColor: colors.slateLight },
+  iconCol: {
+    width: 40,
+    alignItems: "center",
+    gap: 6,
+    paddingTop: 2,
+  },
   iconWrap: {
     width: 40,
     height: 40,

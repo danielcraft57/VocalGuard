@@ -27,6 +27,7 @@ import {
   parseApiUtcDate
 } from "../../utils/dateTime";
 import { getCallIncomingProfile, getIncomingProfileHint, isCallWithoutMessage, CALL_NO_MESSAGE_LABEL } from "../../utils/callProfile";
+import { resolveOsintBrand } from "../../utils/osintBrand";
 
 function formatStatus(status: string): { label: string; className: string } {
   const normalized = status.toLowerCase();
@@ -523,6 +524,7 @@ export default function CallsPage() {
     const incomingProfile = getCallIncomingProfile(call);
     const direction = getCallDirection(call);
     const directionLabel = direction === "out" ? "Sortant" : "Entrant";
+    const brand = resolveOsintBrand(call.osint);
     const intent =
       (call.extra_data && typeof call.extra_data === "object" && "ivr_intent" in call.extra_data
         ? (call.extra_data as { ivr_intent?: string | null }).ivr_intent
@@ -562,15 +564,29 @@ export default function CallsPage() {
         </td>
         <td className="vg-calls-col-contact">
           <div className="vg-call-contact">
-            <span
-              className={`vg-call-direction vg-call-direction--${direction}`}
-              title={directionLabel}
-              aria-label={directionLabel}
-            >
-              <span className="material-icons" aria-hidden>
-                {direction === "out" ? "call_made" : "call_received"}
+            <div className="vg-call-icons">
+              <span
+                className={`vg-call-direction vg-call-direction--${direction}`}
+                title={directionLabel}
+                aria-label={directionLabel}
+              >
+                <span className="material-icons" aria-hidden>
+                  {direction === "out" ? "call_made" : "call_received"}
+                </span>
               </span>
-            </span>
+              {brand ? (
+                <span
+                  className={`vg-call-osint-brand vg-call-osint-brand--${brand.id}`}
+                  title={brand.title}
+                  aria-label={brand.title}
+                  style={{ backgroundColor: brand.bg, color: brand.fg }}
+                >
+                  {brand.short}
+                </span>
+              ) : (
+                <span className="vg-call-osint-brand vg-call-osint-brand--empty" aria-hidden />
+              )}
+            </div>
             <div className="vg-call-contact-text">
               <span className="vg-call-phone">{phone}</span>
               {call.osint?.company_name || call.osint?.name ? (
