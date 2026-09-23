@@ -73,6 +73,11 @@ class Config(BaseSettings):
     edge_tts_rate: str = Field(default="+0%")  # vitesse IVR edge-tts
     edge_tts_pitch: str = Field(default="+2Hz")  # hauteur edge-tts (ex. +2Hz)
     edge_tts_voice_gain_db: float = Field(default=-6.0)  # niveau voix TTS (dB)
+
+    # ElevenLabs TTS (accueil / KB) — clef via .env uniquement
+    elevenlabs_api_key: Optional[str] = Field(default=None)
+    elevenlabs_voice_id: Optional[str] = Field(default="JBFqnCBsd6RMkjVDRZzb")
+    elevenlabs_model_id: str = Field(default="eleven_multilingual_v2")
     
     # Whisper
     whisper_model: str = Field(default="base")
@@ -94,10 +99,10 @@ class Config(BaseSettings):
     
     # Appels
     rings_before_answer: int = Field(default=0)
-    # Fenetre courte pour capter NMBR= avant ATA (meme si rings=0 coupe-sonnerie).
-    cid_wait_sec: float = Field(default=2.5)
-    # Delai max (s) avant VLS=1 au 1er RING si rings=0 (CID FR arrive souvent apres ~0.3s).
-    instant_seize_cid_grace_sec: float = Field(default=0.35)
+    # Fenetre pour capter NMBR= avant decision (FR ETSI : entre 1ere et 2e sonnerie).
+    cid_wait_sec: float = Field(default=6.0)
+    # Delai max (s) avant ATA au 1er RING si rings=0 (laisse passer NMBR= ETSI).
+    instant_seize_cid_grace_sec: float = Field(default=5.5)
     # Nombre de sonneries laissees au fixe en mode telephone (UI topbar).
     phone_mode_rings: int = Field(default=4)
     # Mode telephone : apres decroche fixe, greffe silencieuse + enregistrement / STT.
@@ -116,8 +121,8 @@ class Config(BaseSettings):
     modem_country_gci: Optional[str] = Field(default="3D")
     modem_distinctive_ring: bool = Field(default=False)
     modem_pcw_off_for_cid: bool = Field(default=True)
-    # Sortant : essai full-duplex VTR (fallback talkspurt si False / echec).
-    outgoing_use_vtr: bool = Field(default=False)
+    # Sortant : full-duplex AT+VTR (fallback talkspurt VRX/VTX si echec).
+    outgoing_use_vtr: bool = Field(default=True)
     # VAD micro sortant (RMS s16le).
     mic_vad_rms: int = Field(default=500)
     mic_vad_hangover_ms: int = Field(default=500)
@@ -236,6 +241,14 @@ class Config(BaseSettings):
             self.stt_internal_token = os.environ.get("STT_INTERNAL_TOKEN", "").strip() or None
         if os.environ.get("TTS_SERVICE_URL"):
             self.tts_service_url = os.environ.get("TTS_SERVICE_URL", "").strip().rstrip("/") or None
+        if os.environ.get("ELEVENLABS_API_KEY"):
+            self.elevenlabs_api_key = os.environ.get("ELEVENLABS_API_KEY", "").strip() or None
+        if os.environ.get("ELEVENLABS_VOICE_ID"):
+            self.elevenlabs_voice_id = os.environ.get("ELEVENLABS_VOICE_ID", "").strip() or None
+        if os.environ.get("ELEVENLABS_MODEL_ID"):
+            mid = os.environ.get("ELEVENLABS_MODEL_ID", "").strip()
+            if mid:
+                self.elevenlabs_model_id = mid
         if os.environ.get("VOICEMAIL_MODE"):
             mode = os.environ.get("VOICEMAIL_MODE", "").strip().lower()
             if mode in ("simple", "ivr", "conversation"):
@@ -306,6 +319,13 @@ class Config(BaseSettings):
                 pass
         if os.environ.get("WHITELIST_RING_ONLY"):
             self.whitelist_ring_only = os.environ.get("WHITELIST_RING_ONLY", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+        if os.environ.get("OUTGOING_USE_VTR"):
+            self.outgoing_use_vtr = os.environ.get("OUTGOING_USE_VTR", "").strip().lower() in (
                 "1",
                 "true",
                 "yes",

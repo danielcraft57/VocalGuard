@@ -1,7 +1,13 @@
 /**
  * Types et mock memoire SQLite (tests + web dev).
  */
-import { MIGRATION_V1, MIGRATION_V1_STATEMENTS, MIGRATION_V2_STATEMENTS } from "./schema";
+import {
+  MIGRATION_V1,
+  MIGRATION_V1_STATEMENTS,
+  MIGRATION_V2_STATEMENTS,
+  MIGRATION_V3_STATEMENTS,
+  MIGRATION_V4_STATEMENTS,
+} from "./schema";
 
 export type SqlDb = {
   execAsync: (sql: string) => Promise<void>;
@@ -22,6 +28,11 @@ type CallMem = {
   call_time: string | null;
   duration: number;
   synced_at: string | null;
+  audio_file: string | null;
+  transcription: string | null;
+  transcription_cues_json: string | null;
+  no_message: number;
+  osint_json: string | null;
 };
 type VoicemailMem = {
   id: number;
@@ -92,6 +103,13 @@ export function createMemoryDb(): SqlDb {
         }
         return { changes: 1, lastInsertRowId: 0 };
       }
+      if (sql.includes("UPDATE calls SET osint_json")) {
+        const rows = memoryDb!.get("calls") as CallMem[];
+        const id = Number(params[1]);
+        const row = rows.find((r) => r.id === id);
+        if (row) row.osint_json = (params[0] as string | null) ?? null;
+        return { changes: row ? 1 : 0, lastInsertRowId: 0 };
+      }
       if (sql.includes("INSERT OR REPLACE INTO calls")) {
         const rows = memoryDb!.get("calls") as CallMem[];
         const row: CallMem = {
@@ -102,6 +120,11 @@ export function createMemoryDb(): SqlDb {
           call_time: params[4] as string | null,
           duration: Number(params[5]),
           synced_at: String(params[6]),
+          audio_file: (params[7] as string | null) ?? null,
+          transcription: (params[8] as string | null) ?? null,
+          no_message: Number(params[9] ?? 0),
+          osint_json: (params[10] as string | null) ?? null,
+          transcription_cues_json: (params[11] as string | null) ?? null,
         };
         const idx = rows.findIndex((r) => r.id === row.id);
         if (idx >= 0) rows[idx] = row;
@@ -160,7 +183,7 @@ export function createMemoryDb(): SqlDb {
       }
       return { changes: 0, lastInsertRowId: 0 };
     },
-    async getAllAsync<T>(sql: string, params: unknown[] = []) {
+    async getAllAsync<T>(sql: string, _params: unknown[] = []) {
       if (sql.includes("FROM pending_actions")) {
         return (memoryDb!.get("pending_actions") ?? []) as T[];
       }
@@ -186,6 +209,11 @@ export function createMemoryDb(): SqlDb {
         const id = Number(params[0]);
         return (rows.find((r) => r.id === id) as T) ?? null;
       }
+      if (sql.includes("FROM calls") && sql.includes("WHERE id")) {
+        const rows = memoryDb!.get("calls") as CallMem[];
+        const id = Number(params[0]);
+        return (rows.find((r) => r.id === id) as T) ?? null;
+      }
       return null;
     },
   };
@@ -204,6 +232,20 @@ export async function migrateDb(db: SqlDb): Promise<void> {
     await db.execAsync(statement);
   }
   for (const statement of MIGRATION_V2_STATEMENTS) {
+    try {
+      await db.execAsync(statement);
+    } catch {
+      /* colonne deja presente */
+    }
+  }
+  for (const statement of MIGRATION_V3_STATEMENTS) {
+    try {
+      await db.execAsync(statement);
+    } catch {
+      /* colonne deja presente */
+    }
+  }
+  for (const statement of MIGRATION_V4_STATEMENTS) {
     try {
       await db.execAsync(statement);
     } catch {

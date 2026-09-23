@@ -10,11 +10,17 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from pathlib import Path
-from sqlalchemy import func
+from sqlalchemy import desc, func
 from sqlalchemy.orm import Session
 
-from backend.api.dependencies import get_block_service, get_config, get_voicemail_repository
+from backend.api.dependencies import (
+    get_block_service,
+    get_call_repository,
+    get_config,
+    get_voicemail_repository,
+)
 from backend.api.models import (
+    CallResponse,
     MobileClaimRequest,
     MobileClaimResponse,
     TrustedContactImportRequest,
@@ -29,14 +35,25 @@ from backend.api.routes.calls import (
     DtmfRequest,
     OutgoingCallActionResponse,
     OutgoingCallStartRequest,
+    _profile_to_osint_response,
+    _safe_recording_path,
 )
 from backend.api.routes.voicemails import _resolve_voicemail_audio
 from backend.core.config import Config
 from backend.database.database import get_db
-from backend.database.models import ApiPublicToken, Call, Caller, MobilePairingSession, Voicemail
-from backend.services.pairing_time import is_pairing_expired, utc_now_naive
+from backend.database.models import (
+    ApiPublicToken,
+    Call,
+    Caller,
+    MobilePairingSession,
+    PhoneNumberProfile,
+    Voicemail,
+)
+from backend.osint.services import PhoneOsintService
+from backend.repositories.call_repository import CallRepository
 from backend.repositories.caller_repository import CallerRepository
 from backend.services.block_service import BlockService
+from backend.services.pairing_time import is_pairing_expired, utc_now_naive
 from backend.voice.audio_utils import export_listen_preview_wav
 
 router = APIRouter(prefix="/public", tags=["public-mobile"])
@@ -86,6 +103,116 @@ def _normalize_fr_phone(raw: str) -> Optional[str]:
     if digits.startswith("0") and len(digits) >= 10:
         return digits[:11]
     return digits
+
+
+def _truncate_transcript(text: Optional[str], max_len: int = 4000) -> Optional[str]:
+    """
+    Tronque une transcription pour le delta liste mobile (assez long pour karaoke).
+
+    @param text Texte brut.
+    @param max_len Longueur max.
+    @returns Texte tronque ou None.
+    """
+    if not text:
+        return None
+    trimmed = text.strip()
+    if not trimmed:
+        return None
+    if len(trimmed) <= max_len:
+        return trimmed
+    return trimmed[: max_len - 3] + "..."
+
+
+def _osint_profiles_by_phone(
+    db: Session,
+    phones: List[str],
+) -> dict[str, PhoneNumberProfile]:
+    """
+    Charge les profils OSINT en base pour une liste de numeros.
+
+    @param db Session SQLAlchemy.
+    @param phones Numeros bruts.
+    @returns Map phone_number -> PhoneNumberProfile.
+    """
+    unique = [p for p in set(phones) if p]
+    if not unique:
+        return {}
+    osint_svc = PhoneOsintService(db, Config())
+    norms = {p: osint_svc._normalize_number(p) for p in unique}
+    norm_values = [n for n in norms.values() if n]
+    if not norm_values:
+        return {}
+    rows = (
+        db.query(PhoneNumberProfile)
+        .filter(PhoneNumberProfile.normalized_number.in_(norm_values))
+        .order_by(
+            PhoneNumberProfile.normalized_number,
+            desc(PhoneNumberProfile.last_checked_at),
+        )
+        .all()
+    )
+    profile_by_norm: dict[str, PhoneNumberProfile] = {}
+    for p in rows:
+        if p.normalized_number not in profile_by_norm:
+            profile_by_norm[p.normalized_number] = p
+    out: dict[str, PhoneNumberProfile] = {}
+    for phone, norm in norms.items():
+        if norm and norm in profile_by_norm:
+            out[phone] = profile_by_norm[norm]
+    return out
+
+
+def _osint_light_dict(profile: PhoneNumberProfile, phone_number: str) -> dict:
+    """
+    Payload OSINT leger pour la liste mobile (offline).
+
+    @param profile Profil en base.
+    @param phone_number Numero affiche.
+    @returns Dict serialisable.
+    """
+    full = _profile_to_osint_response(profile, phone_number)
+    return {
+        "phone_number": full.phone_number,
+        "reputation": full.reputation,
+        "recommendation": full.recommendation,
+        "is_spam": full.is_spam,
+        "is_scam": full.is_scam,
+        "operator": full.operator,
+        "city": full.city,
+        "region": full.region,
+        "is_company": full.is_company,
+        "name": full.name,
+        "company_name": full.company_name,
+    }
+
+
+def _call_delta_item(call: Call, profile: Optional[PhoneNumberProfile]) -> dict:
+    """
+    Serialise un appel pour le delta sync mobile.
+
+    @param call Modele Call.
+    @param profile Profil OSINT ou None.
+    @returns Dict liste.
+    """
+    phone = call.phone_number or ""
+    osint = _osint_light_dict(profile, phone) if profile and phone else None
+    item: dict = {
+        "id": call.id,
+        "phone_number": call.phone_number,
+        "caller_name": call.caller_name,
+        "call_time": call.call_time.isoformat() if call.call_time else None,
+        "status": call.status,
+        "duration": call.duration,
+        "audio_file": call.audio_file,
+        "transcription": _truncate_transcript(call.transcription),
+        "no_message": bool(call.no_message),
+        "osint": osint,
+    }
+    # Cues karaoke pour lecture offline (meme sans GET /calls/{id}).
+    cues = getattr(call, "transcription_cues", None)
+    if cues:
+        item["transcription_cues"] = cues
+    return item
 
 
 @router.get("/voicemails")
@@ -190,6 +317,9 @@ async def public_sync_delta(
         .limit(500)
         .all()
     )
+    phones = [c.phone_number for c in calls if c.phone_number]
+    profiles = _osint_profiles_by_phone(db, phones)
+
     vms: List[Voicemail] = []
     if bool(getattr(token, "can_read_voicemails", False)):
         # Toujours renvoyer les messages des 72 dernieres heures pour capter les transcriptions STT tardives.
@@ -206,18 +336,86 @@ async def public_sync_delta(
         "since": since_dt.isoformat(),
         "server_time": utc_now_naive().isoformat(),
         "calls": [
-            {
-                "id": c.id,
-                "phone_number": c.phone_number,
-                "caller_name": c.caller_name,
-                "call_time": c.call_time.isoformat() if c.call_time else None,
-                "status": c.status,
-                "duration": c.duration,
-            }
+            _call_delta_item(c, profiles.get(c.phone_number or ""))
             for c in calls
         ],
         "voicemails": [VoicemailResponse.model_validate(vm).model_dump() for vm in vms],
     }
+
+
+@router.get("/calls/{call_id}", response_model=CallResponse)
+async def public_get_call(
+    call_id: int,
+    db: Session = Depends(get_db),
+    call_repo: CallRepository = Depends(get_call_repository),
+    token: ApiPublicToken = Depends(_require_public_token),
+) -> CallResponse:
+    """
+    Detail d un appel pour l app mobile (OSINT + cues karaoke via extra_data).
+
+    @param call_id Identifiant appel.
+    @returns CallResponse complet.
+    """
+    _require_token_permission(token, "can_read_calls", "Ce token ne peut pas lire les appels.")
+    call = call_repo.get_by_id(call_id)
+    if not call:
+        raise HTTPException(status_code=404, detail="Appel introuvable.")
+
+    data = CallResponse.model_validate(call).model_dump()
+    # Garantir les cues karaoke meme si la serialisation omet la property extra_data.
+    if not data.get("extra_data") and getattr(call, "transcription_cues", None) is not None:
+        data["extra_data"] = {"transcription_cues": call.transcription_cues}
+    elif isinstance(data.get("extra_data"), dict) and "transcription_cues" not in data["extra_data"]:
+        if getattr(call, "transcription_cues", None) is not None:
+            data["extra_data"] = {
+                **data["extra_data"],
+                "transcription_cues": call.transcription_cues,
+            }
+    if call.phone_number:
+        profiles = _osint_profiles_by_phone(db, [call.phone_number])
+        profile = profiles.get(call.phone_number)
+        data["osint"] = (
+            _profile_to_osint_response(profile, call.phone_number) if profile else None
+        )
+    else:
+        data["osint"] = None
+    return CallResponse(**data)
+
+
+@router.get("/calls/{call_id}/recording")
+async def public_call_recording(
+    call_id: int,
+    call_repo: CallRepository = Depends(get_call_repository),
+    config: Config = Depends(get_config),
+    token: ApiPublicToken = Depends(_require_public_token),
+):
+    """
+    Stream WAV d un enregistrement d appel (format lisible mobile / web).
+
+    @param call_id Identifiant appel.
+    """
+    _require_token_permission(token, "can_read_calls", "Ce token ne peut pas lire les appels.")
+    call = call_repo.get_by_id(call_id)
+    if not call:
+        raise HTTPException(status_code=404, detail="Appel introuvable.")
+
+    path = _safe_recording_path(config, call.audio_file)
+    if not path:
+        raise HTTPException(status_code=404, detail="Enregistrement indisponible.")
+
+    try:
+        playable = _mobile_voicemail_audio_path(path)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Conversion audio mobile echouee.") from exc
+    return FileResponse(
+        str(playable),
+        media_type="audio/wav",
+        filename=f"call_{call_id}.wav",
+        headers={
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "private, max-age=60",
+        },
+    )
 
 
 @router.get("/trusted")

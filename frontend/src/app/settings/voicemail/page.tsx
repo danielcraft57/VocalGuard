@@ -36,6 +36,8 @@ type VoicemailBlock = {
   dtmf_timeout_sec?: number;
   max_record_sec?: number;
   silence_end_sec?: number;
+  goodbye_enabled?: boolean;
+  goodbye_text?: string;
 };
 
 const FLOW_STEPS = ["Accueil", "DTMF", "Bip", "Enregistrement", "Fin"];
@@ -209,6 +211,40 @@ export default function VoicemailSettingsPage() {
                 onChange={(_, v) => patchVm({ silence_end_sec: v as number })}
               />
             </Box>
+          </VgSettingsSection>
+
+          <VgSettingsSection
+            title="Message de fin"
+            description="Joue apres le silence (ou fin d'enregistrement), puis raccroche. Voix / debit / pitch = meme reglage que l'accueil (Parametres audio entrant)."
+          >
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={vm.goodbye_enabled !== false}
+                  onChange={(e) => patchVm({ goodbye_enabled: e.target.checked })}
+                />
+              }
+              label="Jouer un message avant de raccrocher"
+            />
+            {vm.goodbye_enabled !== false ? (
+              <Box sx={{ mt: 2, display: "flex", flexDirection: "column", gap: 1.5 }}>
+                <TextField
+                  size="small"
+                  label="Texte du message de fin"
+                  value={vm.goodbye_text ?? "Merci de votre appel."}
+                  onChange={(e) => patchVm({ goodbye_text: e.target.value })}
+                  multiline
+                  minRows={2}
+                  fullWidth
+                  helperText="Exemple : Merci de votre appel, a bientot."
+                />
+                <Typography variant="caption" color="text.secondary">
+                  Pour changer la voix :{" "}
+                  <Link href="/settings/incoming-audio">Audio entrant</Link>
+                  {" "}(meme Edge TTS / ElevenLabs que l'accueil).
+                </Typography>
+              </Box>
+            ) : null}
           </VgSettingsSection>
 
           <VgSaveBar

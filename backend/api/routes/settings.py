@@ -200,6 +200,12 @@ def _reload_call_manager_policy(request: Request, config: Config) -> None:
         cm._refresh_instant_ring_seize()
     if getattr(cm, "config", None) is not None and cm.config is not config:
         apply_incoming_call_settings(cm.config, load_incoming_call_settings(config))
+    # Rafraichit le cache « merci » si texte / voix ont change (meme TTS que l'accueil).
+    if hasattr(cm, "schedule_voicemail_goodbye_refresh"):
+        try:
+            cm.schedule_voicemail_goodbye_refresh()
+        except Exception as exc:
+            logger.warning("refresh goodbye: {}", exc)
 
 
 @router.get("/settings/incoming-call", response_model=IncomingCallConfigResponse)

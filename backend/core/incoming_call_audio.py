@@ -43,6 +43,38 @@ DEFAULT_GREETING_TTS = (
 )
 
 
+def audio_float(value: object, default: float) -> float:
+    """
+    Convertit une valeur audio config en float (None / invalide -> default).
+
+    @param value Valeur brute (str, int, float, None).
+    @param default Fallback.
+    @returns Float exploitable.
+    """
+    if value is None or value == "":
+        return float(default)
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def audio_int(value: object, default: int) -> int:
+    """
+    Convertit une valeur audio config en int (None / invalide -> default).
+
+    @param value Valeur brute.
+    @param default Fallback.
+    @returns Entier exploitable.
+    """
+    if value is None or value == "":
+        return int(default)
+    try:
+        return int(round(float(value)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return int(default)
+
+
 def project_base(config: Config) -> Path:
     """
     Racine projet pour chemins relatifs.

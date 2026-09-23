@@ -52,6 +52,39 @@ export function formatDuration(seconds: number): string {
 }
 
 /**
+ * Duree style web (chips detail appel) : "0 min 14 s".
+ *
+ * @param seconds Duree en secondes.
+ * @returns Libelle FR ou vide.
+ */
+export function formatDurationMinSec(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  const total = Math.floor(seconds);
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m} min ${s} s`;
+}
+
+/**
+ * Date/heure style chip web detail : "23/09/2026 13:51".
+ *
+ * @param iso Date ISO ou null.
+ * @returns Libelle FR ou vide.
+ */
+export function formatDetailDateTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/**
  * Formate un numero FR en groupes lisibles.
  *
  * @param phone Numero brut.
