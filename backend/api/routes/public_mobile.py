@@ -60,6 +60,8 @@ router = APIRouter(prefix="/public", tags=["public-mobile"])
 
 # Fenetre de re-sync messages vocaux (transcription STT arrive souvent apres le 1er delta).
 _VM_DELTA_LOOKBACK_HOURS = 72
+# Fenetre de re-sync appels (OSINT / cues arrivent souvent apres le 1er delta).
+_CALL_DELTA_LOOKBACK_DAYS = 7
 
 
 def _mobile_voicemail_audio_path(source: Path) -> Path:
@@ -299,7 +301,11 @@ async def public_sync_delta(
     """
     Retourne appels et messages vocaux modifies depuis une date ISO8601.
 
-    @param since Horodatage ISO (UTC) ; si absent, retourne les 7 derniers jours.
+    Les appels sont toujours renvoyes sur une fenetre glissante (7 j) pour
+    rattacher l OSINT / les cues meme si l appel etait deja en cache mobile.
+    Le parametre ``since`` reste expose pour compat client.
+
+    @param since Horodatage ISO (UTC) ; si absent, meme fenetre 7 jours.
     """
     _require_token_permission(token, "can_read_calls", "Ce token ne peut pas lire les appels.")
     if since:
@@ -308,11 +314,13 @@ async def public_sync_delta(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail="Parametre since invalide.") from exc
     else:
-        since_dt = datetime.utcnow() - timedelta(days=7)
+        since_dt = datetime.utcnow() - timedelta(days=_CALL_DELTA_LOOKBACK_DAYS)
 
+    # Toujours re-pousser les appels recents (OSINT / transcription tardifs).
+    call_since = datetime.utcnow() - timedelta(days=_CALL_DELTA_LOOKBACK_DAYS)
     calls = (
         db.query(Call)
-        .filter(Call.call_time >= since_dt)
+        .filter(Call.call_time >= call_since)
         .order_by(Call.call_time.desc())
         .limit(500)
         .all()

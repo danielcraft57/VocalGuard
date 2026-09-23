@@ -103,6 +103,7 @@ export function CallListItem({ item, onPress }: Props) {
 const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
+    alignItems: "flex-start",
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderBottomWidth: 1,
@@ -113,7 +114,6 @@ const styles = StyleSheet.create({
   iconCol: {
     width: 40,
     alignItems: "center",
-    gap: 6,
     paddingTop: 2,
   },
   iconWrap: {
@@ -122,6 +122,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     alignItems: "center",
     justifyContent: "center",
+    marginBottom: 6,
   },
   body: { flex: 1, minWidth: 0 },
   titleRow: {

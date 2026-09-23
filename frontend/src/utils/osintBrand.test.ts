@@ -22,9 +22,9 @@ describe("resolveOsintBrand", () => {
     expect(resolveOsintBrand({ company_name: "Proman Interim" })?.id).toBe("proman");
   });
 
-  it("priorise l entreprise sur l operateur", () => {
-    expect(
-      resolveOsintBrand({ company_name: "Manpower", operator: "Orange" })?.id,
-    ).toBe("manpower");
+  it("pastille generique si marque inconnue", () => {
+    const v = resolveOsintBrand({ company_name: "DanielCraft SARL" });
+    expect(v?.id).toBe("generic");
+    expect(v?.short).toBe("DS");
   });
 });

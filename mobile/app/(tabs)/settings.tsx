@@ -74,10 +74,7 @@ export default function SettingsScreen() {
         return;
       }
       const db = await getAppDb();
-      const sync = await db.getFirstAsync<{ last_sync_at: string | null }>(
-        "SELECT last_sync_at FROM sync_state WHERE id = 1",
-      );
-      const merged = await syncFromServer(db, { baseUrl: creds.baseUrl, token: creds.token }, sync?.last_sync_at ?? null);
+      const merged = await syncFromServer(db, { baseUrl: creds.baseUrl, token: creds.token }, null);
       Alert.alert("Synchronisation", `${merged} element(s) mis a jour.`);
       await refreshStatus();
     } catch (err) {

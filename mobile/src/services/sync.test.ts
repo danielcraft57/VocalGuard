@@ -178,4 +178,27 @@ describe("sync", () => {
     const merged = await syncFromServer(db, { baseUrl: "https://test", token: "tok" }, null);
     expect(merged).toBe(1);
   });
+
+  it("purge les anciens appels hors fenetre et absents du delta", async () => {
+    const db = createMemoryDb();
+    const oldIso = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000).toISOString();
+    const midIso = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+    const freshIso = new Date().toISOString();
+    await applySyncDelta(db, {
+      calls: [
+        { id: 1, phone_number: "0600000001", call_time: oldIso, status: "missed" },
+        { id: 2, phone_number: "0600000002", call_time: midIso, status: "answered" },
+        { id: 3, phone_number: "0600000003", call_time: freshIso, status: "answered" },
+      ],
+    });
+    await applySyncDelta(
+      db,
+      {
+        calls: [{ id: 3, phone_number: "0600000003", call_time: freshIso, status: "answered" }],
+      },
+      { pruneCalls: true },
+    );
+    const rows = await db.getAllAsync<{ id: number }>("SELECT id FROM calls ORDER BY id");
+    expect(rows.map((r) => r.id)).toEqual([3]);
+  });
 });

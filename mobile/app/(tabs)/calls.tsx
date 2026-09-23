@@ -79,7 +79,8 @@ export default function CallsScreen() {
 
         if (url && tok) {
           const db = await getAppDb();
-          await syncFromServer(db, { baseUrl: url, token: tok }, lastSyncRef.current);
+          // Fenetre 7 j (pas last_sync) : sinon l OSINT des appels deja caches ne revient jamais.
+          await syncFromServer(db, { baseUrl: url, token: tok }, null);
           await loadStats(url, tok);
         }
 
@@ -124,6 +125,8 @@ export default function CallsScreen() {
       <FlatList
         data={calls}
         keyExtractor={(item) => String(item.id)}
+        // Android coupe sinon le bas des lignes (pastille OSINT sous la direction).
+        removeClippedSubviews={false}
         refreshControl={
           <RefreshControl
             refreshing={pullRefreshing}

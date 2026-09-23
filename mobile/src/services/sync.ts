@@ -5,6 +5,12 @@ import type { SqlDb } from "../db/client";
 import { apiGet, ApiConfig, SyncDeltaResponse } from "./api";
 import { log } from "./log";
 
+/** Aligne sur le lookback appels du delta public (7 j). */
+export const CALL_SYNC_LOOKBACK_DAYS = 7;
+
+/** Aligne sur le lookback messages du delta public (72 h). */
+export const VM_SYNC_LOOKBACK_HOURS = 72;
+
 /**
  * Serialise le bloc OSINT du delta en JSON local.
  *
@@ -17,6 +23,29 @@ function serializeOsint(osint: unknown): string | null {
     return JSON.stringify(osint);
   } catch {
     return null;
+  }
+}
+
+/**
+ * Garde l OSINT le plus riche entre incoming et cache local.
+ *
+ * @param incoming JSON OSINT du delta (ou null).
+ * @param existing JSON deja en base locale.
+ * @returns JSON a persister.
+ */
+function preferOsintJson(incoming: string | null, existing: string | null): string | null {
+  if (!incoming) return existing;
+  if (!existing) return incoming;
+  try {
+    const a = JSON.parse(incoming) as Record<string, unknown>;
+    const b = JSON.parse(existing) as Record<string, unknown>;
+    const score = (o: Record<string, unknown>) =>
+      [o.operator, o.carrier, o.company_name, o.name, o.city, o.reputation].filter(
+        (v) => typeof v === "string" && v.trim().length > 0,
+      ).length;
+    return score(a) >= score(b) ? incoming : existing;
+  } catch {
+    return incoming;
   }
 }
 
@@ -35,14 +64,68 @@ function serializeCues(cues: unknown): string | null {
   }
 }
 
+type ApplySyncOptions = {
+  /** Purge les appels hors fenetre / absents du delta (sync fenetre complete). */
+  pruneCalls?: boolean;
+  /** Purge les messages hors fenetre / absents du delta. */
+  pruneVoicemails?: boolean;
+};
+
+/**
+ * Supprime les lignes locales hors fenetre, et celles absentes du delta serveur.
+ *
+ * @param db Base locale.
+ * @param table Nom table.
+ * @param timeColumn Colonne horodatage ISO.
+ * @param cutoffIso Borne basse ISO.
+ * @param keepIds Ids renvoyes par le serveur (fenetre complete).
+ * @returns Nombre de suppressions.
+ */
+async function pruneTableByWindow(
+  db: SqlDb,
+  table: "calls" | "voicemails",
+  timeColumn: "call_time" | "recorded_at",
+  cutoffIso: string,
+  keepIds: number[] | null,
+): Promise<number> {
+  let removed = 0;
+  const stale = await db.getAllAsync<{ id: number }>(
+    `SELECT id FROM ${table} WHERE ${timeColumn} IS NULL OR ${timeColumn} < ?`,
+    [cutoffIso],
+  );
+  for (const row of stale) {
+    await db.runAsync(`DELETE FROM ${table} WHERE id = ?`, [row.id]);
+    removed += 1;
+  }
+  if (keepIds == null) return removed;
+  const keep = new Set(keepIds);
+  const recent = await db.getAllAsync<{ id: number }>(
+    `SELECT id FROM ${table} WHERE ${timeColumn} >= ?`,
+    [cutoffIso],
+  );
+  for (const row of recent) {
+    if (!keep.has(row.id)) {
+      await db.runAsync(`DELETE FROM ${table} WHERE id = ?`, [row.id]);
+      removed += 1;
+    }
+  }
+  return removed;
+}
+
 /**
  * Applique le delta serveur dans SQLite local.
  *
  * @param db Base locale.
  * @param delta Reponse /public/sync/delta.
+ * @param options Options de purge cache.
  */
-export async function applySyncDelta(db: SqlDb, delta: SyncDeltaResponse): Promise<number> {
+export async function applySyncDelta(
+  db: SqlDb,
+  delta: SyncDeltaResponse,
+  options: ApplySyncOptions = {},
+): Promise<number> {
   const now = new Date().toISOString();
+  const nowMs = Date.now();
   let count = 0;
   for (const call of delta.calls ?? []) {
     const callId = Number(call.id);
@@ -57,7 +140,7 @@ export async function applySyncDelta(db: SqlDb, delta: SyncDeltaResponse): Promi
     const incomingCues = serializeCues(call.transcription_cues);
     const cuesJson = incomingCues ?? existing?.transcription_cues_json ?? null;
     const incomingOsint = serializeOsint(call.osint);
-    const osintJson = incomingOsint ?? existing?.osint_json ?? null;
+    const osintJson = preferOsintJson(incomingOsint, existing?.osint_json ?? null);
 
     await db.runAsync(
       `INSERT OR REPLACE INTO calls (
@@ -115,6 +198,20 @@ export async function applySyncDelta(db: SqlDb, delta: SyncDeltaResponse): Promi
     );
     count += 1;
   }
+
+  if (options.pruneCalls) {
+    const cutoff = new Date(nowMs - CALL_SYNC_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const keepIds = (delta.calls ?? []).map((c) => Number(c.id)).filter((id) => Number.isFinite(id));
+    const removed = await pruneTableByWindow(db, "calls", "call_time", cutoff, keepIds);
+    if (removed > 0) log.info("sync", "appels purges du cache local", { removed });
+  }
+  if (options.pruneVoicemails) {
+    const cutoff = new Date(nowMs - VM_SYNC_LOOKBACK_HOURS * 60 * 60 * 1000).toISOString();
+    const keepIds = (delta.voicemails ?? []).map((v) => Number(v.id)).filter((id) => Number.isFinite(id));
+    const removed = await pruneTableByWindow(db, "voicemails", "recorded_at", cutoff, keepIds);
+    if (removed > 0) log.info("sync", "messages purges du cache local", { removed });
+  }
+
   return count;
 }
 
@@ -123,14 +220,18 @@ export async function applySyncDelta(db: SqlDb, delta: SyncDeltaResponse): Promi
  *
  * @param db Base SQLite.
  * @param config API Bearer.
- * @param since Horodatage ISO8601 ou null pour full sync.
+ * @param since Horodatage ISO8601 ou null pour fenetre complete (+ purge cache).
  */
 export async function syncFromServer(db: SqlDb, config: ApiConfig, since: string | null): Promise<number> {
   const qs = since ? `?since=${encodeURIComponent(since)}` : "";
   const path = `/public/sync/delta${qs}`;
   log.debug("sync", "pull delta", { path, since });
   const delta = await apiGet<SyncDeltaResponse>(config, path);
-  const merged = await applySyncDelta(db, delta);
+  const fullWindow = !since;
+  const merged = await applySyncDelta(db, delta, {
+    pruneCalls: fullWindow,
+    pruneVoicemails: fullWindow,
+  });
   const pending = await db.getAllAsync<{ id: number }>("SELECT id FROM pending_actions ORDER BY id ASC");
   const serverTime = delta.server_time ?? new Date().toISOString();
   await db.runAsync("UPDATE sync_state SET last_sync_at = ?, pending_count = ? WHERE id = 1", [
@@ -143,6 +244,7 @@ export async function syncFromServer(db: SqlDb, config: ApiConfig, since: string
     serverTime,
     calls: delta.calls?.length ?? 0,
     voicemails: delta.voicemails?.length ?? 0,
+    pruned: fullWindow,
   });
   return merged;
 }

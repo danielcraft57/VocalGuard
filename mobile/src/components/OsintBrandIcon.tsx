@@ -57,7 +57,9 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   label: {
-    fontWeight: "800",
+    fontWeight: "700",
     letterSpacing: -0.4,
+    includeFontPadding: false,
+    textAlign: "center",
   },
 });

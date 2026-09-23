@@ -166,7 +166,7 @@ export default function MessagesScreen() {
         baseUrl = creds.baseUrl ?? "";
         if (baseUrl && creds.token) {
           const db = await getAppDb();
-          await syncFromServer(db, { baseUrl, token: creds.token }, lastSyncRef.current);
+          await syncFromServer(db, { baseUrl, token: creds.token }, null);
         }
         await loadLocal();
         setConnState(await resolveConnectivityState(baseUrl));

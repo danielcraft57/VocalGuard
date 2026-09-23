@@ -93,10 +93,7 @@ async function handleWsEvent(type: string, payload: Record<string, unknown>): Pr
       const creds = await getStoredCredentials();
       if (!creds.baseUrl || !creds.token) return;
       const db = await getAppDb();
-      const sync = await db.getFirstAsync<{ last_sync_at: string | null }>(
-        "SELECT last_sync_at FROM sync_state WHERE id = 1",
-      );
-      await syncFromServer(db, { baseUrl: creds.baseUrl, token: creds.token }, sync?.last_sync_at ?? null);
+      await syncFromServer(db, { baseUrl: creds.baseUrl, token: creds.token }, null);
     } catch (err) {
       log.warn("realtime", "sync apres event echouee", err);
     }
@@ -141,10 +138,7 @@ async function catchUpAfterForeground(): Promise<void> {
     const known = new Set(
       (await db.getAllAsync<{ id: number }>("SELECT id FROM voicemails")).map((r) => r.id),
     );
-    const sync = await db.getFirstAsync<{ last_sync_at: string | null }>(
-      "SELECT last_sync_at FROM sync_state WHERE id = 1",
-    );
-    await syncFromServer(db, { baseUrl: creds.baseUrl, token: creds.token }, sync?.last_sync_at ?? null);
+    await syncFromServer(db, { baseUrl: creds.baseUrl, token: creds.token }, null);
     const fresh = await db.getAllAsync<VoicemailRow>(
       "SELECT * FROM voicemails ORDER BY recorded_at DESC LIMIT 20",
     );

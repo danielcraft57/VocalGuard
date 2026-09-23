@@ -79,6 +79,20 @@ export function createMemoryDb(): SqlDb {
         if (idx >= 0) rows.splice(idx, 1);
         return { changes: 1, lastInsertRowId: 0 };
       }
+      if (sql.includes("DELETE FROM calls") && sql.includes("WHERE id")) {
+        const rows = memoryDb!.get("calls") as CallMem[];
+        const id = Number(params[0]);
+        const idx = rows.findIndex((r) => r.id === id);
+        if (idx >= 0) rows.splice(idx, 1);
+        return { changes: idx >= 0 ? 1 : 0, lastInsertRowId: 0 };
+      }
+      if (sql.includes("DELETE FROM voicemails") && sql.includes("WHERE id")) {
+        const rows = memoryDb!.get("voicemails") as VoicemailMem[];
+        const id = Number(params[0]);
+        const idx = rows.findIndex((r) => r.id === id);
+        if (idx >= 0) rows.splice(idx, 1);
+        return { changes: idx >= 0 ? 1 : 0, lastInsertRowId: 0 };
+      }
       if (sql.includes("INSERT INTO pending_actions")) {
         const rows = memoryDb!.get("pending_actions") as PendingRow[];
         const id = rows.length + 1;
@@ -183,15 +197,31 @@ export function createMemoryDb(): SqlDb {
       }
       return { changes: 0, lastInsertRowId: 0 };
     },
-    async getAllAsync<T>(sql: string, _params: unknown[] = []) {
+    async getAllAsync<T>(sql: string, params: unknown[] = []) {
       if (sql.includes("FROM pending_actions")) {
         return (memoryDb!.get("pending_actions") ?? []) as T[];
       }
       if (sql.includes("FROM calls")) {
-        return (memoryDb!.get("calls") ?? []) as T[];
+        let rows = (memoryDb!.get("calls") ?? []) as CallMem[];
+        if (sql.includes("call_time IS NULL OR call_time <")) {
+          const cutoff = String(params[0] ?? "");
+          rows = rows.filter((r) => !r.call_time || r.call_time < cutoff);
+        } else if (sql.includes("call_time >=")) {
+          const cutoff = String(params[0] ?? "");
+          rows = rows.filter((r) => !!r.call_time && r.call_time >= cutoff);
+        }
+        return rows as T[];
       }
       if (sql.includes("FROM voicemails")) {
-        return (memoryDb!.get("voicemails") ?? []) as T[];
+        let rows = (memoryDb!.get("voicemails") ?? []) as VoicemailMem[];
+        if (sql.includes("recorded_at IS NULL OR recorded_at <")) {
+          const cutoff = String(params[0] ?? "");
+          rows = rows.filter((r) => !r.recorded_at || r.recorded_at < cutoff);
+        } else if (sql.includes("recorded_at >=")) {
+          const cutoff = String(params[0] ?? "");
+          rows = rows.filter((r) => !!r.recorded_at && r.recorded_at >= cutoff);
+        }
+        return rows as T[];
       }
       if (sql.includes("FROM trusted_contacts")) {
         const rows = (memoryDb!.get("trusted_contacts") ?? []) as TrustedMem[];
