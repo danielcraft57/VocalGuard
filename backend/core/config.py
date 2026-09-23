@@ -116,8 +116,8 @@ class Config(BaseSettings):
     modem_country_gci: Optional[str] = Field(default="3D")
     modem_distinctive_ring: bool = Field(default=False)
     modem_pcw_off_for_cid: bool = Field(default=True)
-    # Sortant : essai full-duplex VTR (fallback talkspurt si False / echec).
-    outgoing_use_vtr: bool = Field(default=False)
+    # Sortant : full-duplex AT+VTR (fallback talkspurt VRX/VTX si False / echec).
+    outgoing_use_vtr: bool = Field(default=True)
     # VAD micro sortant (RMS s16le).
     mic_vad_rms: int = Field(default=500)
     mic_vad_hangover_ms: int = Field(default=500)
@@ -306,6 +306,13 @@ class Config(BaseSettings):
                 pass
         if os.environ.get("WHITELIST_RING_ONLY"):
             self.whitelist_ring_only = os.environ.get("WHITELIST_RING_ONLY", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            )
+        if os.environ.get("OUTGOING_USE_VTR"):
+            self.outgoing_use_vtr = os.environ.get("OUTGOING_USE_VTR", "").strip().lower() in (
                 "1",
                 "true",
                 "yes",

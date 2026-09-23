@@ -5,6 +5,7 @@ Supporte deux façons de jouer un WAV vers la ligne :
 - ALSA (aplay) : le modem expose une carte son, on joue sur ce device.
 - Mode voix série (comme callattendant) : commandes AT+FCLASS=8, AT+VTX puis envoi
   des trames PCM (USR : 16-bit 11 kHz ; Conexant : 8-bit 8 kHz) sur le port série.
+  AT+VTR (full-duplex TX+RX) pour émission et écoute simultanées (USR5637 / V.253).
   Voir https://github.com/emxsys/callattendant (modem USR 5637 / Conexant).
 """
 
@@ -44,9 +45,11 @@ _VOICE_COMPRESSION_CONEXANT = CONEXANT_VOICE_PROFILE.vsm_command
 _TAD_OFF_HOOK = "AT+VLS=1"
 _VOICE_TX = "AT+VTX"
 _VOICE_RX = "AT+VRX"
+_VOICE_TR = "AT+VTR"  # full-duplex TX+RX (USR5637 / V.253)
 _DLE = 0x10
 _DTE_END_VOICE_TX = (chr(16) + chr(3)).encode()  # DLE ETX (USR) — fin VTX
 _DTE_END_VOICE_RX_USR = (chr(16) + "!").encode()  # DLE ! (USR) — fin etat receive / VRX
+_DTE_END_VOICE_TX_RX = (chr(16) + chr(94)).encode()  # DLE ^ — fin full-duplex VTR (USR)
 _DTE_END_VOICE_TX_CONEXANT = (chr(16) * 3 + chr(3)).encode()   # DLE DLE DLE ETX (Conexant)
 _DTE_END_VOICE_RX_CONEXANT = (chr(16) * 3 + chr(33)).encode()   # DLE DLE DLE ! (Conexant)
 _VRX_SAMPLE_RATE = USR_VOICE_PROFILE.sample_rate
@@ -119,8 +122,8 @@ def _escape_dle_pcm(data: bytes) -> bytes:
     """
     Double les octets DLE (0x10) dans le PCM pour le mode transparent V.253.
 
-    @param data PCM 8-bit brut.
-    @returns PCM safe pour VTX.
+    @param data PCM brut (8-bit ou 16-bit) / VTX / VTR.
+    @returns PCM safe pour VTX / VTR.
     """
     if not data or _DLE not in data:
         return data
@@ -130,6 +133,24 @@ def _escape_dle_pcm(data: bytes) -> bytes:
         if b == _DLE:
             out.append(_DLE)
     return bytes(out)
+
+
+def modem_silence_pcm(profile: ModemVoiceProfile, duration_sec: float) -> bytes:
+    """
+    Genere du silence PCM au format du profil (evite underrun TX en VTR).
+
+    @param profile Profil voix actif.
+    @param duration_sec Duree a generer (s).
+    @returns Octets silence (0x80 en u8, 0x00 en s16le), aligns sur sample_width.
+    """
+    n = int(float(profile.bytes_per_sec) * max(0.0, float(duration_sec)))
+    width = max(1, int(profile.sample_width))
+    n -= n % width
+    if n <= 0:
+        return b""
+    if width <= 1:
+        return bytes([0x80] * n)
+    return bytes(n)
 
 
 # Delai minimum apres ouverture VRX avant detection raccrochage (settle ligne, pas 2s).
@@ -585,6 +606,8 @@ class ModemHandler:
         self._vrx_saved_timeout: Optional[float] = None
         # True pendant AT+VTX (talkspurt micro) : pas de lecture VRX.
         self._vtx_active = False
+        # True pendant AT+VTR (full-duplex TX+RX simultanes).
+        self._vtr_active = False
         # Demande d'arret urgent (raccrochage UI) : coupe les ecritures VTX pacees.
         self._voice_abort = False
         # Diagnostics sante / CID (exposes via /health).
@@ -862,19 +885,7 @@ class ModemHandler:
             self.log_voice_session("fast_cleanup_ok", port=0)
             return True
         try:
-            if self._vtx_active:
-                end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
-                try:
-                    self.serial_connection.write(end_seq)
-                    self.serial_connection.flush()
-                    time.sleep(0.05)
-                except (OSError, serial.SerialException):
-                    pass
-                self._vtx_active = False
-            try:
-                self._vrx_transparent_close_sync()
-            except Exception:
-                pass
+            self._end_voice_transparent_sync()
             self._flush_serial_rx_sync(max_sec=0.2)
 
             ath_ok = False
@@ -1462,16 +1473,7 @@ class ModemHandler:
             if not self.serial_connection or not self.serial_connection.is_open:
                 return False
             try:
-                if self._vtx_active:
-                    try:
-                        end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
-                        self.serial_connection.write(end_seq)
-                        self.serial_connection.flush()
-                        time.sleep(0.08)
-                    except (OSError, serial.SerialException):
-                        pass
-                    self._vtx_active = False
-                self._vrx_transparent_close_sync()
+                self._end_voice_transparent_sync()
                 try:
                     if self._vrx_saved_timeout is not None:
                         self.serial_connection.timeout = self._vrx_saved_timeout
@@ -1531,9 +1533,39 @@ class ModemHandler:
                 self._reset_voice_session_flags()
                 return False
 
+    def _end_voice_transparent_sync(self) -> None:
+        """
+        Ferme proprement un mode transparent voix (VTR, VTX, puis VRX).
+
+        Ordre USR5637 : DLE ^ pour VTR, DLE ETX pour VTX, DLE ! pour VRX.
+        """
+        if not self.serial_connection or not self.serial_connection.is_open:
+            return
+        if self._vtr_active:
+            try:
+                self.serial_connection.write(_DTE_END_VOICE_TX_RX)
+                self.serial_connection.flush()
+                time.sleep(0.06)
+            except (OSError, serial.SerialException):
+                pass
+            self._vtr_active = False
+            self._vtx_active = False
+            self._vrx_stream_active = False
+            return
+        if self._vtx_active:
+            end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
+            try:
+                self.serial_connection.write(end_seq)
+                self.serial_connection.flush()
+                time.sleep(0.06)
+            except (OSError, serial.SerialException):
+                pass
+            self._vtx_active = False
+        self._vrx_transparent_close_sync()
+
     def _abort_voice_session_sync(self) -> None:
         """
-        Coupe VTX/VRX transparent avant ATH (raccrochage UI / release).
+        Coupe VTX/VRX/VTR transparent avant ATH (raccrochage UI / release).
 
         Evite de laisser le modem en flux PCM binaire qui bloque les commandes AT.
         """
@@ -1542,13 +1574,7 @@ class ModemHandler:
         if not self.serial_connection or not self.serial_connection.is_open:
             return
         try:
-            if self._vtx_active:
-                end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
-                self.serial_connection.write(end_seq)
-                self.serial_connection.flush()
-                time.sleep(0.06)
-                self._vtx_active = False
-            self._vrx_transparent_close_sync()
+            self._end_voice_transparent_sync()
             self._flush_serial_rx_sync(max_sec=0.25)
         except (OSError, serial.SerialException) as exc:
             logger.warning("_abort_voice_session_sync: {}", exc)
@@ -1559,6 +1585,8 @@ class ModemHandler:
         self._playback_interrupted = False
         self._voice_line_ready = False
         self._vtx_ignore_interrupt_until = 0.0
+        self._vtr_active = False
+        self._vtx_active = False
         # Ne pas garder un "silence" du tour / appel precedent
         # (sinon caller_line_finished() coupe la conversation au demarrage).
         self.last_vrx_stop_reason = None
@@ -1572,6 +1600,7 @@ class ModemHandler:
         """
         return {
             "vtx": int(self._vtx_active),
+            "vtr": int(self._vtr_active),
             "seize": int(self._incoming_line_seized),
             "seize_ok": int(self._incoming_seize_ok),
             "line_ready": int(self._voice_line_ready),
@@ -2215,20 +2244,11 @@ class ModemHandler:
             return False
 
     def _vrx_stream_finalize_sync(self) -> None:
-        """Ferme VTX si ouvert, puis le flux VRX transparent, et restaure le timeout serie."""
+        """Ferme VTX/VTR si ouvert, puis le flux VRX transparent, et restaure le timeout serie."""
         self._vrx_stream_active = False
         self._vrx_stream_hangup_scanner = None
         self._vrx_stream_tone_scanner = None
-        if self._vtx_active and self.serial_connection and self.serial_connection.is_open:
-            try:
-                end_seq = _DTE_END_VOICE_TX_CONEXANT if self._is_conexant else _DTE_END_VOICE_TX
-                self.serial_connection.write(end_seq)
-                self.serial_connection.flush()
-                time.sleep(0.05)
-            except (OSError, serial.SerialException):
-                pass
-            self._vtx_active = False
-        self._vrx_transparent_close_sync()
+        self._end_voice_transparent_sync()
         try:
             if self.serial_connection and self.serial_connection.is_open and self._vrx_saved_timeout is not None:
                 self.serial_connection.timeout = self._vrx_saved_timeout
@@ -2237,6 +2257,79 @@ class ModemHandler:
         self._vrx_saved_timeout = None
         # NO CARRIER arrive souvent juste apres sortie du mode transparent.
         self._poll_remote_hangup_sync(max_sec=0.15)
+
+    def _vtr_stream_open_sync(self, already_in_voice_mode: bool) -> bool:
+        """
+        Passe en mode voix et ouvre AT+VTR (full-duplex TX+RX, USR5637).
+
+        @param already_in_voice_mode True si FCLASS=8 / VLS sont deja actifs.
+        @returns True si CONNECT VTR obtenu.
+        """
+        if not self.serial_connection or not self.serial_connection.is_open:
+            logger.warning("vtr_stream_open: modem non connecte")
+            return False
+        if self._is_conexant:
+            logger.warning("vtr_stream_open: AT+VTR non supporte sur Conexant")
+            return False
+        try:
+            if not already_in_voice_mode:
+                if not self._send_command_sync(_VOICE_MODE):
+                    logger.warning("vtr_stream_open: AT+FCLASS=8 a echoue")
+                    return False
+            vsd = _VSD_DISABLE_CONEXANT if self._is_conexant else _VSD_DISABLE_USR
+            self._send_command_sync(vsd)
+            self._apply_vsm_sync()
+            if not already_in_voice_mode:
+                if not self._send_command_sync(_TAD_OFF_HOOK):
+                    logger.warning("vtr_stream_open: AT+VLS=1 a echoue")
+                    return False
+            if not self._send_command_sync(_VOICE_TR, expect="CONNECT", timeout=10.0):
+                logger.warning("vtr_stream_open: AT+VTR (CONNECT) a echoue")
+                return False
+            self._vrx_saved_timeout = self.serial_connection.timeout
+            self.serial_connection.timeout = 0.05
+            self._vtr_active = True
+            self._vtx_active = True
+            self._vrx_stream_active = True
+            self._vrx_stream_hangup_scanner = _VrxHangupScanner()
+            tone_threshold = 28 if self.voice_profile.sample_width <= 1 else 5000
+            self._vrx_stream_tone_scanner = _VrxDisconnectToneScanner(
+                threshold=tone_threshold,
+                sample_rate=int(self.voice_profile.sample_rate),
+                min_beeps=3,
+            )
+            self._vrx_stream_opened_at = time.monotonic()
+            self.last_vrx_stop_reason = None
+            logger.info("Ecoute+emission ligne: AT+VTR (full-duplex)")
+            return True
+        except Exception as e:
+            logger.exception("vtr_stream_open: {}", e)
+            self._vtr_active = False
+            self._vtx_active = False
+            self._vrx_stream_active = False
+            return False
+
+    def _vtr_duplex_tick_sync(self, tx_pcm: bytes, read_nbytes: int = 2048) -> bytes:
+        """
+        Un cran full-duplex : ecrit le PCM TX (ou silence) puis lit le RX ligne.
+
+        @param tx_pcm PCM a envoyer (vide = silence profil).
+        @param read_nbytes Taille max de lecture RX.
+        @returns PCM brut recu (peut etre vide).
+        """
+        if not self._vtr_active:
+            return b""
+        if not self.serial_connection or not self.serial_connection.is_open:
+            return b""
+        pcm = tx_pcm if tx_pcm else modem_silence_pcm(self.voice_profile, 0.04)
+        try:
+            if pcm:
+                self.serial_connection.write(_escape_dle_pcm(pcm))
+                self.serial_connection.flush()
+        except (OSError, serial.SerialException) as exc:
+            logger.warning("vtr_duplex_tick write: {}", exc)
+            return b""
+        return self._serial_read_vrx_stream(read_nbytes)
 
     def _apply_voice_pcm_params_sync(self) -> None:
         """Configure VSD / VSM / gains pour le PCM du profil actif (avant VTX ou VRX)."""
@@ -2521,8 +2614,38 @@ class ModemHandler:
                 timeout=12.0,
             )
 
+    async def start_outgoing_vtr_stream(self, already_in_voice_mode: bool = False) -> bool:
+        """
+        Ouvre AT+VTR (full-duplex) pour une session sortante.
+
+        @param already_in_voice_mode True si FCLASS=8 / VLS sont deja actifs.
+        @returns True si le flux VTR est ouvert.
+        """
+        async with self._serial_io_lock:
+            return await self.run_modem_sync(
+                self._vtr_stream_open_sync,
+                already_in_voice_mode,
+                timeout=12.0,
+            )
+
+    async def vtr_duplex_tick(self, tx_pcm: bytes = b"", *, read_nbytes: int = 2048) -> bytes:
+        """
+        Cran full-duplex : TX micro (ou silence) + lecture ligne.
+
+        @param tx_pcm PCM a envoyer (vide = silence profil).
+        @param read_nbytes Taille max de lecture RX.
+        @returns PCM brut recu (peut etre vide).
+        """
+        async with self._serial_io_lock:
+            return await self.run_modem_sync(
+                self._vtr_duplex_tick_sync,
+                tx_pcm,
+                read_nbytes,
+                timeout=2.0,
+            )
+
     async def end_outgoing_vrx_stream(self) -> None:
-        """Ferme le flux VRX (avant ATH)."""
+        """Ferme le flux VRX / VTR (avant ATH)."""
         async with self._serial_io_lock:
             await self.run_modem_sync(self._vrx_stream_finalize_sync, timeout=5.0)
 

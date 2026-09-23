@@ -323,20 +323,23 @@ Exemples :
 
 Duree par defaut via `+VTD` (defaut souvent 100 = 1.00 s selon table ; DTMF aussi lies a `S9` / `S11`).
 
-### Flux audio transparent (`+VTX` / `+VRX`)
+### Flux audio transparent (`+VTX` / `+VRX` / `+VTR`)
 
 1. `AT+FCLASS=8`
 2. Configurer `+VSD`, `+VSM`, eventuellement `+VGT` / `+VGR`
 3. `AT+VLS=1` (off-hook TAD) si besoin
-4. `AT+VTX` ou `AT+VRX` -> attendre `CONNECT`
+4. `AT+VTX` (TX), `AT+VRX` (RX) ou `AT+VTR` (full-duplex) -> attendre `CONNECT`
 5. Envoyer / lire des octets PCM bruts sur le port serie
 6. Terminer avec sequences **DLE** (caractere `0x10`) :
 
-Evenements DCE -> DTE (apres DLE) : digits DTMF, `a` answer, `b` busy, `c` fax tone, `d` dialtone, `e` data tone, `h`/`H` local on/off-hook, `R` ring, `s` silence, `@` CAS, etc.
+Evenements DCE -> DTE (apres DLE) : digits DTMF, `a` answer, `b` busy, `c` fax tone, `d` dialtone, `e` data tone, `h`/`H` local on/off-hook, `R` ring, `s` silence, `u` TX underrun, `@` CAS, etc.
 
-Codes DTE -> DCE utiles : fin de TX, `!` fin de receive state, `u`/`d` volume +/- 1 dB.
+Codes DTE -> DCE utiles : fin de TX (`DLE ETX`), fin de RX (`DLE !`), fin VTR (`DLE ^` = `0x10 0x5E`), `u`/`d` volume +/- 1 dB.
+
+En **VTR**, nourrir le TX en continu (silence PCM si pas de micro) pour eviter les underruns.
 
 Sequence TAD typique (guide USR) : greeting via `+VTX`, bip `+VTS`, record `+VRX`, puis `ATH`.
+Sortant VocalGuard : preferer `+VTR` (full-duplex) avec fallback talkspurt `+VRX`/`+VTX`.
 
 ---
 

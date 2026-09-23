@@ -36,7 +36,8 @@ edge_tts_rate: "+12%"
 # rings=0 = coupe-sonnerie + decrochage immediat (CID en parallele / via ATA)
 rings_before_answer: 0
 # Fenetre CID avant seize voix au 1er RING (rings=0) : plus bas = moins de sonnerie fixe parallele.
-instant_seize_cid_grace_sec: 0.35
+instant_seize_cid_grace_sec: 5.5
+cid_wait_sec: 6.0
 # Sonneries laissees au fixe en mode telephone (UI topbar).
 phone_mode_rings: 4
 # WIP : greffe silencieuse + enregistrement / STT apres decroche fixe (audio encore a stabiliser).
@@ -64,7 +65,7 @@ modem_distinctive_ring: false
 # Gains V.253 (null = ne pas envoyer) ; calibrer sur node14
 modem_voice_vgr: null
 modem_voice_vgt: null
-outgoing_use_vtr: false  # reserve ; fallback talkspurt si true sans support
+outgoing_use_vtr: true  # full-duplex AT+VTR ; fallback talkspurt si CONNECT echoue
 mic_vad_rms: 500
 mic_vad_hangover_ms: 500
 
