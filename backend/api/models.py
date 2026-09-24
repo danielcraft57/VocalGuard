@@ -616,7 +616,7 @@ class IncomingCallConfigResponse(BaseModel):
 
     incoming_line_mode: Literal["voicemail", "phone"] = "voicemail"
     cid_wait_sec: float = 2.5
-    instant_seize_cid_grace_sec: float = 0.35
+    instant_seize_cid_grace_sec: float = 5.5
     ring_cycle_sec: float = 6.0
     ring_quiet_abort_sec: float = 6.0
     max_incoming_wait_sec: float = 45.0
@@ -641,7 +641,7 @@ class IncomingCallConfigPatch(BaseModel):
     """Patch partiel de la configuration appels entrants."""
 
     cid_wait_sec: Optional[float] = Field(None, ge=0.0, le=30.0)
-    instant_seize_cid_grace_sec: Optional[float] = Field(None, ge=0.0, le=5.0)
+    instant_seize_cid_grace_sec: Optional[float] = Field(None, ge=0.0, le=15.0)
     ring_cycle_sec: Optional[float] = Field(None, ge=3.0, le=15.0)
     ring_quiet_abort_sec: Optional[float] = Field(None, ge=2.0, le=20.0)
     max_incoming_wait_sec: Optional[float] = Field(None, ge=10.0, le=120.0)
@@ -670,11 +670,35 @@ class GreetingPreviewRequest(BaseModel):
         default="full",
         description="full = mix complet, voice = TTS seul, intro = fichier jingle source brut.",
     )
+    audience: Optional[str] = Field(
+        default="unknown",
+        description="Slot accueil: known | unknown | commercial.",
+    )
+
+
+class BeepPreviewRequest(BaseModel):
+    """Apercu de la partition bip (notes + tempo), sans regenerer l'accueil."""
+
+    audio: Optional[Dict[str, Any]] = Field(
+        None,
+        description="Patch audio (record_beep_notes, bpm, gap).",
+    )
+
+
+class ElevenLabsVoicePreviewRequest(BaseModel):
+    """Apercu court d'une voix ElevenLabs (economise le quota gratuit)."""
+
+    voice_id: str = Field(..., min_length=8, max_length=64, description="Voice id ElevenLabs.")
+    text: Optional[str] = Field(
+        default=None,
+        description="Texte court (defaut: phrase de test FR).",
+    )
 
 
 class GreetingAudioStatusResponse(BaseModel):
     """Etat ou resultat de regeneration du cache accueil."""
 
+    audience: Optional[str] = None
     track_wav: Optional[str] = None
     voice_wav: Optional[str] = None
     duration_sec: Optional[float] = None

@@ -1,4 +1,11 @@
-import { formatCallTime, formatDuration, formatPhone, voicemailCallerLabel } from "./format";
+import {
+  formatCallTime,
+  formatDetailDateTime,
+  formatDuration,
+  formatDurationMinSec,
+  formatPhone,
+  voicemailCallerLabel,
+} from "./format";
 
 describe("formatCallTime", () => {
   it("retourne une chaine vide si null", () => {
@@ -19,6 +26,31 @@ describe("formatDuration", () => {
 
   it("formate mm:ss", () => {
     expect(formatDuration(125)).toBe("2:05");
+  });
+});
+
+describe("formatDurationMinSec", () => {
+  it("retourne vide pour 0", () => {
+    expect(formatDurationMinSec(0)).toBe("");
+  });
+
+  it("formate comme le web", () => {
+    expect(formatDurationMinSec(14)).toBe("0 min 14 s");
+    expect(formatDurationMinSec(74)).toBe("1 min 14 s");
+  });
+});
+
+describe("formatDetailDateTime", () => {
+  it("retourne vide si null", () => {
+    expect(formatDetailDateTime(null)).toBe("");
+  });
+
+  it("formate jour/mois/annee heure", () => {
+    const out = formatDetailDateTime("2026-09-23T13:51:00");
+    expect(out).toMatch(/23/);
+    expect(out).toMatch(/09/);
+    expect(out).toMatch(/2026/);
+    expect(out).toMatch(/13/);
   });
 });
 

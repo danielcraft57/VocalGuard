@@ -81,6 +81,73 @@ describe("sync", () => {
     expect(row?.transcription).toBe("deja transcrit");
   });
 
+  it("stocke transcription et cues karaoke des appels", async () => {
+    const db = createMemoryDb();
+    await applySyncDelta(db, {
+      calls: [
+        {
+          id: 163,
+          phone_number: "0780833873",
+          status: "answered",
+          duration: 14,
+          transcription: "Voila, voila, c est Louis.",
+          transcription_cues: [
+            {
+              start: 0,
+              end: 2,
+              words: [
+                { text: "Voila,", start: 0, end: 0.5 },
+                { text: "voila,", start: 0.5, end: 1 },
+                { text: "c", start: 1, end: 1.2 },
+                { text: "est", start: 1.2, end: 1.5 },
+                { text: "Louis.", start: 1.5, end: 2 },
+              ],
+            },
+          ],
+          osint: { operator: "Orange", reputation: "neutral" },
+        },
+      ],
+    });
+    const row = await db.getFirstAsync<{
+      transcription: string | null;
+      transcription_cues_json: string | null;
+      osint_json: string | null;
+    }>("SELECT transcription, transcription_cues_json, osint_json FROM calls WHERE id = ?", [163]);
+    expect(row?.transcription).toBe("Voila, voila, c est Louis.");
+    expect(row?.transcription_cues_json).toContain("Louis");
+    expect(row?.osint_json).toContain("Orange");
+  });
+
+  it("conserve transcription et cues appels si le delta renvoie null", async () => {
+    const db = createMemoryDb();
+    await applySyncDelta(db, {
+      calls: [
+        {
+          id: 10,
+          phone_number: "0600000000",
+          transcription: "deja la",
+          transcription_cues: [{ start: 0, end: 1, text: "deja la" }],
+        },
+      ],
+    });
+    await applySyncDelta(db, {
+      calls: [
+        {
+          id: 10,
+          phone_number: "0600000000",
+          transcription: null,
+          transcription_cues: null,
+        },
+      ],
+    });
+    const row = await db.getFirstAsync<{
+      transcription: string | null;
+      transcription_cues_json: string | null;
+    }>("SELECT transcription, transcription_cues_json FROM calls WHERE id = ?", [10]);
+    expect(row?.transcription).toBe("deja la");
+    expect(row?.transcription_cues_json).toContain("deja la");
+  });
+
   it("enqueue pending action offline", async () => {
     const db = createMemoryDb();
     await enqueuePendingAction(db, "mark_read", { voicemail_id: 3 });

@@ -12,14 +12,11 @@ import {
   DialogContent,
   IconButton,
   LinearProgress,
-  Slider,
   Stack,
   Typography,
   useTheme
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
-import PlayArrowIcon from "@mui/icons-material/PlayArrow";
-import PauseIcon from "@mui/icons-material/Pause";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import SubtitlesIcon from "@mui/icons-material/Subtitles";
@@ -37,6 +34,7 @@ import {
   findWordIndexAt,
   type TranscriptCue
 } from "../utils/transcriptCues";
+import { CallSoundtrackBar } from "./CallSoundtrackBar";
 
 const WORD_COLORS = ["#4ade80", "#38bdf8", "#fbbf24", "#c084fc", "#fb7185"];
 
@@ -67,13 +65,6 @@ function getCallDurationSec(call: CallWithOsint): number {
     }
   }
   return Number.isFinite(totalSec) && totalSec > 0 ? totalSec : 0;
-}
-
-function formatClock(sec: number): string {
-  if (!Number.isFinite(sec) || sec < 0) return "0:00";
-  const s = Math.floor(sec);
-  const m = Math.floor(s / 60);
-  return `${m}:${(s % 60).toString().padStart(2, "0")}`;
 }
 
 function statusChip(status: string): { label: string; color: "success" | "warning" | "error" | "info" | "default" } {
@@ -362,11 +353,16 @@ export function CallDetailModal({
   }, []);
 
   const seekTo = useCallback((sec: number, playAfter: boolean = false) => {
+    if (!Number.isFinite(sec)) return;
     const t = Math.max(0, sec);
     const el = audioRef.current;
     if (el) {
-      el.currentTime = t;
-      setCurrentTime(el.currentTime);
+      try {
+        el.currentTime = t;
+      } catch {
+        return;
+      }
+      setCurrentTime(Number.isFinite(el.currentTime) ? el.currentTime : t);
       if (playAfter) {
         void el.play().then(() => setPlaying(true)).catch(() => undefined);
       }
@@ -557,52 +553,24 @@ export function CallDetailModal({
                   onSeekWord={(start) => seekTo(start, true)}
                   onSeekCue={(start) => seekTo(start, true)}
                 />
-                <Box sx={{ px: 2, pb: 2, display: "flex", alignItems: "center", gap: 1.5 }}>
-                  <IconButton
-                    color="primary"
-                    onClick={togglePlay}
-                    disabled={!showPlayer}
-                    aria-label={playing ? "Pause" : "Lecture"}
-                    sx={{
-                      bgcolor: "primary.main",
-                      color: "primary.contrastText",
-                      width: 48,
-                      height: 48,
-                      "&:hover": { bgcolor: "primary.dark" },
-                      "&.Mui-disabled": { bgcolor: "action.disabledBackground" }
-                    }}
-                  >
-                    {playing ? <PauseIcon /> : <PlayArrowIcon />}
-                  </IconButton>
-                  <Typography
-                    variant="caption"
-                    sx={{ fontVariantNumeric: "tabular-nums", minWidth: 36, color: "text.secondary" }}
-                  >
-                    {formatClock(currentTime)}
-                  </Typography>
-                  <Slider
-                    size="small"
-                    disabled={!showPlayer || duration <= 0}
-                    min={0}
-                    max={Math.max(duration, 0.01)}
-                    step={0.05}
-                    value={Math.min(currentTime, duration || 0)}
-                    onChange={(_e, v) => seekTo(Array.isArray(v) ? v[0] : v, false)}
-                    aria-label="Position lecture"
-                    sx={{ flex: 1 }}
-                  />
-                  <Typography
-                    variant="caption"
-                    sx={{ fontVariantNumeric: "tabular-nums", minWidth: 36, color: "text.secondary" }}
-                  >
-                    {formatClock(duration)}
-                  </Typography>
-                </Box>
-                {!recordingUrl ? (
-                  <Typography variant="body2" color="text.secondary" sx={{ px: 2, pb: 2 }}>
-                    Aucun fichier audio pour cet appel.
-                  </Typography>
-                ) : null}
+                <CallSoundtrackBar
+                  callId={call.id}
+                  currentTime={currentTime}
+                  duration={duration}
+                  playing={playing}
+                  loading={Boolean(recordingUrl) && audioDuration <= 0 && !playing}
+                  disabled={!showPlayer}
+                  cueMarks={cues.map((c) => c.start)}
+                  onTogglePlay={togglePlay}
+                  onSeek={seekTo}
+                  onSkip={(delta) => {
+                    if (!Number.isFinite(duration) || duration <= 0) return;
+                    if (!Number.isFinite(currentTime) || !Number.isFinite(delta)) return;
+                    const next = Math.min(duration, Math.max(0, currentTime + delta));
+                    seekTo(next, playing);
+                  }}
+                  error={!recordingUrl ? "Aucun fichier audio pour cet appel." : null}
+                />
               </Box>
             )}
 

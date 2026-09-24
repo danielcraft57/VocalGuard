@@ -48,6 +48,10 @@
       "expo-audio",
       "expo-asset"
     ],
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/icon.png"
+    },
     "experiments": {
       "typedRoutes": true
     }

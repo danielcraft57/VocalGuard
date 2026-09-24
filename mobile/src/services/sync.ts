@@ -6,6 +6,36 @@ import { apiGet, ApiConfig, SyncDeltaResponse } from "./api";
 import { log } from "./log";
 
 /**
+ * Serialise le bloc OSINT du delta en JSON local.
+ *
+ * @param osint Objet OSINT ou null.
+ * @returns Chaine JSON ou null.
+ */
+function serializeOsint(osint: unknown): string | null {
+  if (!osint || typeof osint !== "object") return null;
+  try {
+    return JSON.stringify(osint);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Serialise les cues karaoke du delta.
+ *
+ * @param cues Tableau cues ou null.
+ * @returns Chaine JSON ou null.
+ */
+function serializeCues(cues: unknown): string | null {
+  if (!Array.isArray(cues) || cues.length === 0) return null;
+  try {
+    return JSON.stringify(cues);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Applique le delta serveur dans SQLite local.
  *
  * @param db Base locale.
@@ -15,17 +45,38 @@ export async function applySyncDelta(db: SqlDb, delta: SyncDeltaResponse): Promi
   const now = new Date().toISOString();
   let count = 0;
   for (const call of delta.calls ?? []) {
+    const callId = Number(call.id);
+    const existing = await db.getFirstAsync<{
+      transcription: string | null;
+      transcription_cues_json: string | null;
+      osint_json: string | null;
+    }>("SELECT transcription, transcription_cues_json, osint_json FROM calls WHERE id = ?", [callId]);
+
+    const incomingTranscription = ((call.transcription as string | null) ?? "").trim() || null;
+    const transcription = incomingTranscription ?? existing?.transcription ?? null;
+    const incomingCues = serializeCues(call.transcription_cues);
+    const cuesJson = incomingCues ?? existing?.transcription_cues_json ?? null;
+    const incomingOsint = serializeOsint(call.osint);
+    const osintJson = incomingOsint ?? existing?.osint_json ?? null;
+
     await db.runAsync(
-      `INSERT OR REPLACE INTO calls (id, phone_number, caller_name, status, call_time, duration, synced_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT OR REPLACE INTO calls (
+        id, phone_number, caller_name, status, call_time, duration, synced_at,
+        audio_file, transcription, no_message, osint_json, transcription_cues_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        Number(call.id),
+        callId,
         String(call.phone_number ?? ""),
         (call.caller_name as string | null) ?? null,
         (call.status as string | null) ?? null,
         (call.call_time as string | null) ?? null,
         Number(call.duration ?? 0),
         now,
+        (call.audio_file as string | null) ?? null,
+        transcription,
+        call.no_message ? 1 : 0,
+        osintJson,
+        cuesJson,
       ],
     );
     count += 1;

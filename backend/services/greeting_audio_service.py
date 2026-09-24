@@ -48,25 +48,41 @@ if TYPE_CHECKING:
 GREETING_MODEM_ACTIVE_BASENAME = "greeting_modem_active"
 
 
-def greeting_modem_active_wav_path(config: Config) -> Path:
+def _audience_cache_suffix(audience: Optional[str]) -> str:
+    """
+    Suffixe fichier cache pour une audience (unknown = pas de suffixe).
+
+    @param audience Cle known/unknown/commercial (ou legacy).
+    @returns Suffixe ``_{audience}`` ou chaine vide.
+    """
+    key = (audience or "unknown").strip().lower()
+    if key in ("", "unknown"):
+        return ""
+    return f"_{key}"
+
+
+def greeting_modem_active_wav_path(config: Config, audience: Optional[str] = None) -> Path:
     """
     Chemin du WAV accueil pret pour le modem (mix final 8 kHz).
 
     @param config Configuration (base_path).
+    @param audience Slot known/unknown/commercial (unknown = fichier sans suffixe).
     @returns Fichier sous ivr_wav/.
     """
     base = Path(config.base_path) if config.base_path else Path.cwd()
-    return base / "ivr_wav" / f"{GREETING_MODEM_ACTIVE_BASENAME}.wav"
+    suffix = _audience_cache_suffix(audience)
+    return base / "ivr_wav" / f"{GREETING_MODEM_ACTIVE_BASENAME}{suffix}.wav"
 
 
-def greeting_modem_active_meta_path(config: Config) -> Path:
+def greeting_modem_active_meta_path(config: Config, audience: Optional[str] = None) -> Path:
     """
     Metadonnees du cache accueil modem actif.
 
     @param config Configuration.
+    @param audience Slot audience (aligne sur le WAV).
     @returns Fichier JSON a cote du WAV actif.
     """
-    return greeting_modem_active_wav_path(config).with_suffix(".meta.json")
+    return greeting_modem_active_wav_path(config, audience).with_suffix(".meta.json")
 
 
 def greeting_settings_signature(
@@ -98,17 +114,19 @@ def is_greeting_modem_active_fresh(
     config: Config,
     settings: IncomingCallSettingsData,
     greeting: str,
+    audience: Optional[str] = None,
 ) -> bool:
     """
     True si greeting_modem_active.wav correspond aux settings courants.
 
     @param config Configuration.
-    @param settings Settings effectifs.
+    @param settings Settings effectifs (eventuellement resolus pour l'audience).
     @param greeting Texte accueil.
+    @param audience Slot known/unknown/commercial.
     @returns Etat fraicheur du cache actif.
     """
-    wav = greeting_modem_active_wav_path(config)
-    meta = greeting_modem_active_meta_path(config)
+    wav = greeting_modem_active_wav_path(config, audience)
+    meta = greeting_modem_active_meta_path(config, audience)
     if not wav.is_file() or wav.stat().st_size < 2000 or not meta.is_file():
         return False
     try:
@@ -122,6 +140,7 @@ def _write_greeting_modem_active_meta(
     config: Config,
     settings: IncomingCallSettingsData,
     greeting: str,
+    audience: Optional[str] = None,
 ) -> str:
     """
     Persiste la signature du WAV accueil modem actif.
@@ -129,14 +148,16 @@ def _write_greeting_modem_active_meta(
     @param config Configuration.
     @param settings Settings utilises pour la generation.
     @param greeting Texte accueil.
+    @param audience Slot known/unknown/commercial.
     @returns Horodatage ISO UTC ecrit dans le meta.
     """
     regenerated_at = datetime.now(timezone.utc).isoformat()
-    greeting_modem_active_meta_path(config).write_text(
+    greeting_modem_active_meta_path(config, audience).write_text(
         json.dumps(
             {
                 "signature": greeting_settings_signature(settings, greeting, config),
                 "text": greeting,
+                "audience": (audience or "unknown"),
                 "regenerated_at": regenerated_at,
             },
             ensure_ascii=False,
@@ -144,6 +165,38 @@ def _write_greeting_modem_active_meta(
         encoding="utf-8",
     )
     return regenerated_at
+
+
+def _prepare_audience_settings(
+    config: Config,
+    *,
+    audio_override: Optional[dict[str, Any]] = None,
+    audience: Optional[str] = None,
+) -> tuple[IncomingCallSettingsData, str, str]:
+    """
+    Charge les settings, applique un override UI et resout l'audience.
+
+    @param config Configuration.
+    @param audio_override Patch audio formulaire.
+    @param audience Slot known/unknown/commercial.
+    @returns (settings resolus, cle audience, texte greeting).
+    """
+    from backend.core.greeting_audiences import (
+        ensure_audience_slots,
+        greeting_text_for_audience,
+        normalize_audience,
+        resolve_audio_for_audience,
+    )
+
+    settings = load_incoming_call_settings(config)
+    if audio_override:
+        settings = _merge_audio_settings(settings, audio_override)
+    apply_incoming_call_settings(config, settings)
+    ensure_audience_slots(settings.audio)
+    key = normalize_audience(audience)
+    resolved = resolve_audio_for_audience(settings, key)
+    greeting = greeting_text_for_audience(config, resolved, key)
+    return resolved, key, greeting
 
 
 def _wav_duration_sec(path: Path) -> Optional[float]:

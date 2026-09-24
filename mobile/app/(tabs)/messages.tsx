@@ -5,15 +5,12 @@ import {
   FlatList,
   StyleSheet,
   RefreshControl,
-  Pressable,
-  ActivityIndicator,
-  Alert,
 } from "react-native";
 import { useLocalSearchParams } from "expo-router";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
 import type { VoicemailRow } from "../../src/db/schema";
 import { getAppDb } from "../../src/db/getAppDb";
 import { OfflineBanner } from "../../src/components/OfflineBanner";
+import { VoicemailListItem } from "../../src/components/VoicemailListItem";
 import { getStoredCredentials } from "../../src/services/credentials";
 import { isApiUnauthorized } from "../../src/services/api";
 import { resolveConnectivityState } from "../../src/services/connectivity";
@@ -21,13 +18,16 @@ import { log } from "../../src/services/log";
 import { setVoicemailPlayHandler } from "../../src/services/realtime";
 import { syncFromServer } from "../../src/services/sync";
 import { downloadVoicemailAudio, markVoicemailRead } from "../../src/services/voicemails";
+import { stopCallPlayback } from "../../src/services/callPlayer";
 import {
+  ensureVoicemailPlaying,
+  seekVoicemailPlayback,
+  skipVoicemailPlayback,
   stopVoicemailPlayback,
   subscribeVoicemailPlayer,
   toggleVoicemailPlayback,
   type VoicemailPlayerState,
 } from "../../src/services/voicemailPlayer";
-import { formatDuration, voicemailCallerLabel } from "../../src/utils/format";
 import { colors } from "../../src/theme/colors";
 
 const EMPTY_PLAYER: VoicemailPlayerState = {
@@ -39,7 +39,8 @@ const EMPTY_PLAYER: VoicemailPlayerState = {
 };
 
 /**
- * Liste messages vocaux avec sync, lecteur audio et transcription.
+ * Liste messages vocaux : bande sonore interactive par ligne,
+ * une seule piste a la fois (coupe appels + autre message).
  */
 export default function MessagesScreen() {
   const params = useLocalSearchParams<{ play?: string }>();
@@ -48,6 +49,7 @@ export default function MessagesScreen() {
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [pullRefreshing, setPullRefreshing] = useState(false);
   const [player, setPlayer] = useState<VoicemailPlayerState>(EMPTY_PLAYER);
+  const [playErrorById, setPlayErrorById] = useState<Record<number, string>>({});
   const lastSyncRef = useRef<string | null>(null);
   const uriCacheRef = useRef<Map<number, string>>(new Map());
 
@@ -65,41 +67,94 @@ export default function MessagesScreen() {
     setLastSync(at);
   }, []);
 
-  const playVoicemail = useCallback(async (item: VoicemailRow) => {
-    try {
-      let uri = uriCacheRef.current.get(item.id);
-      if (!uri) {
-        const { baseUrl, token } = await getStoredCredentials();
-        if (!baseUrl || !token) {
-          throw new Error("Pas de credentials");
-        }
-        uri = await downloadVoicemailAudio({ baseUrl, token }, item.id);
-        uriCacheRef.current.set(item.id, uri);
-      }
-      await toggleVoicemailPlayback(item.id, uri);
+  const resolveUri = useCallback(async (item: VoicemailRow): Promise<string> => {
+    let uri = uriCacheRef.current.get(item.id);
+    if (uri) return uri;
+    const { baseUrl, token } = await getStoredCredentials();
+    if (!baseUrl || !token) {
+      throw new Error("Pas de credentials");
+    }
+    uri = await downloadVoicemailAudio({ baseUrl, token }, item.id);
+    uriCacheRef.current.set(item.id, uri);
+    return uri;
+  }, []);
 
-      if (!item.is_read) {
-        const { baseUrl, token } = await getStoredCredentials();
-        if (baseUrl && token) {
-          try {
-            await markVoicemailRead({ baseUrl, token }, item.id);
-            const db = await getAppDb();
-            await db.runAsync("UPDATE voicemails SET is_read = 1 WHERE id = ?", [item.id]);
-            setRows((prev) => prev.map((r) => (r.id === item.id ? { ...r, is_read: 1 } : r)));
-          } catch (err) {
-            log.warn("messages", "mark read failed", err);
-          }
-        }
-      }
+  const markReadIfNeeded = useCallback(async (item: VoicemailRow) => {
+    if (item.is_read) return;
+    const { baseUrl, token } = await getStoredCredentials();
+    if (!baseUrl || !token) return;
+    try {
+      await markVoicemailRead({ baseUrl, token }, item.id);
+      const db = await getAppDb();
+      await db.runAsync("UPDATE voicemails SET is_read = 1 WHERE id = ?", [item.id]);
+      setRows((prev) => prev.map((r) => (r.id === item.id ? { ...r, is_read: 1 } : r)));
     } catch (err) {
-      log.error("messages", "play failed", err);
-      stopVoicemailPlayback();
-      Alert.alert(
-        "Lecture impossible",
-        "Le message vocal n'a pas pu etre lu. Verifie ta connexion et reessaie.",
-      );
+      log.warn("messages", "mark read failed", err);
     }
   }, []);
+
+  const playVoicemail = useCallback(
+    async (item: VoicemailRow) => {
+      try {
+        setPlayErrorById((prev) => {
+          const next = { ...prev };
+          delete next[item.id];
+          return next;
+        });
+        // Coupe toute bande appel eventuelle + autre message (singleton).
+        stopCallPlayback();
+        const uri = await resolveUri(item);
+        await toggleVoicemailPlayback(item.id, uri);
+        await markReadIfNeeded(item);
+      } catch (err) {
+        log.error("messages", "play failed", err);
+        stopVoicemailPlayback();
+        setPlayErrorById((prev) => ({
+          ...prev,
+          [item.id]: "Lecture impossible. Verifie la connexion et reessaie.",
+        }));
+      }
+    },
+    [resolveUri, markReadIfNeeded],
+  );
+
+  const seekRatio = useCallback(
+    async (item: VoicemailRow, ratio: number) => {
+      if (!Number.isFinite(ratio)) return;
+      try {
+        stopCallPlayback();
+        const uri = await resolveUri(item);
+        const dur = Math.max(
+          player.activeId === item.id && Number.isFinite(player.duration) ? player.duration : 0,
+          Number(item.duration) || 0,
+          1,
+        );
+        const target = Math.min(1, Math.max(0, ratio)) * dur;
+        if (!Number.isFinite(target)) return;
+        await ensureVoicemailPlaying(item.id, uri);
+        seekVoicemailPlayback(target);
+        await markReadIfNeeded(item);
+      } catch (err) {
+        log.warn("messages", "seek failed", err);
+      }
+    },
+    [resolveUri, markReadIfNeeded, player.activeId, player.duration],
+  );
+
+  const skip = useCallback(
+    async (item: VoicemailRow, delta: number) => {
+      try {
+        stopCallPlayback();
+        const uri = await resolveUri(item);
+        await ensureVoicemailPlaying(item.id, uri);
+        skipVoicemailPlayback(delta);
+        await markReadIfNeeded(item);
+      } catch (err) {
+        log.warn("messages", "skip failed", err);
+      }
+    },
+    [resolveUri, markReadIfNeeded],
+  );
 
   const refresh = useCallback(
     async (reason: string) => {
@@ -202,66 +257,16 @@ export default function MessagesScreen() {
         ListEmptyComponent={
           <Text style={styles.empty}>Aucun message vocal. Tire pour synchroniser.</Text>
         }
-        renderItem={({ item }) => {
-          const caller = voicemailCallerLabel(item.caller_name, item.caller_number);
-          const isActive = player.activeId === item.id;
-          const isLoading = player.loadingId === item.id;
-          const isPlaying = isActive && player.playing;
-          const progressDuration = isActive
-            ? Math.max(player.duration, item.duration, 1)
-            : Math.max(item.duration, 1);
-          const progress = isActive ? Math.min(1, player.currentTime / progressDuration) : 0;
-          const elapsed = isActive ? player.currentTime : 0;
-
-          return (
-            <View style={styles.row}>
-              <Pressable
-                style={styles.playBtn}
-                onPress={() => void playVoicemail(item)}
-                accessibilityLabel={isPlaying ? "Pause" : "Ecouter"}
-              >
-                {isLoading ? (
-                  <ActivityIndicator color={colors.primary} size="small" />
-                ) : (
-                  <MaterialCommunityIcons
-                    name={isPlaying ? "pause-circle" : "play-circle"}
-                    size={44}
-                    color={colors.primary}
-                  />
-                )}
-              </Pressable>
-              <View style={styles.body}>
-                <Text style={styles.phone}>
-                  {caller.title}
-                  {!item.is_read ? " · nouveau" : ""}
-                </Text>
-                {caller.subtitle ? <Text style={styles.subPhone}>{caller.subtitle}</Text> : null}
-                {item.transcription ? (
-                  <Text style={styles.transcription} numberOfLines={3}>
-                    {item.transcription}
-                  </Text>
-                ) : item.recorded_at && Date.now() - Date.parse(item.recorded_at) < 2 * 60 * 60 * 1000 ? (
-                  <Text style={styles.transcriptionPending}>Transcription en cours...</Text>
-                ) : null}
-                {isActive ? (
-                  <View style={styles.player}>
-                    <View style={styles.progressTrack}>
-                      <View style={[styles.progressFill, { width: `${progress * 100}%` }]} />
-                    </View>
-                    <Text style={styles.progressTime}>
-                      {formatDuration(Math.round(elapsed)) || "0:00"} /{" "}
-                      {formatDuration(Math.round(progressDuration)) || formatDuration(item.duration) || "0:00"}
-                    </Text>
-                  </View>
-                ) : null}
-                <Text style={styles.meta}>
-                  {item.is_read ? "Lu" : "Non lu"} · {item.duration}s
-                  {item.recorded_at ? ` · ${item.recorded_at.slice(0, 16).replace("T", " ")}` : ""}
-                </Text>
-              </View>
-            </View>
-          );
-        }}
+        renderItem={({ item }) => (
+          <VoicemailListItem
+            item={item}
+            player={player}
+            playError={playErrorById[item.id] ?? null}
+            onTogglePlay={() => void playVoicemail(item)}
+            onSeekRatio={(ratio) => void seekRatio(item, ratio)}
+            onSkip={(delta) => void skip(item, delta)}
+          />
+        )}
       />
     </View>
   );
@@ -269,33 +274,5 @@ export default function MessagesScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.slate },
-  row: {
-    flexDirection: "row",
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.slateLight,
-    alignItems: "flex-start",
-    gap: 12,
-  },
-  playBtn: { paddingTop: 2 },
-  body: { flex: 1 },
-  phone: { color: colors.text, fontSize: 16, fontWeight: "600" },
-  subPhone: { color: colors.textMuted, marginTop: 2, fontSize: 13 },
-  transcription: { color: colors.text, marginTop: 6, fontSize: 14, lineHeight: 20 },
-  transcriptionPending: { color: colors.textMuted, marginTop: 6, fontSize: 13, fontStyle: "italic" },
-  player: { marginTop: 10, gap: 4 },
-  progressTrack: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.slateLight,
-    overflow: "hidden",
-  },
-  progressFill: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.primary,
-  },
-  progressTime: { color: colors.textMuted, fontSize: 11 },
-  meta: { color: colors.textMuted, marginTop: 4, fontSize: 12 },
   empty: { color: colors.textMuted, textAlign: "center", marginTop: 48, paddingHorizontal: 24 },
 });

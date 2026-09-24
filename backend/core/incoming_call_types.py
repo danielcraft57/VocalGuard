@@ -21,11 +21,54 @@ IncomingAction = Literal[
 ]
 
 IncomingProfileName = Literal["permitted", "screened", "blocked"]
+GreetingAudienceKey = Literal["known", "unknown", "commercial"]
 IncomingLineMode = Literal["voicemail", "phone"]
 WhitelistMatchMode = Literal["exact", "prefix", "e164_normalize"]
 AudioSource = Literal["tts", "wav"]
-RecordBeepMode = Literal["wav", "dtmf", "none"]
+RecordBeepMode = Literal["wav", "dtmf", "croche", "none"]
+BeepRhythm = Literal["noire", "croche", "double_croche", "triolet"]
 GreetingIntroMode = Literal["none", "jingle", "wav", "track"]
+TtsProvider = Literal["edge", "elevenlabs"]
+
+
+class BeepNoteConfig(BaseModel):
+  """
+  Une note (ou silence) de la partition du bip d'enregistrement.
+
+  @param pitch Nom de note (ex. G5) ou ``rest`` pour un silence.
+  @param rhythm Valeur rythmique relative au tempo BPM.
+  """
+
+  pitch: str = Field(default="G5", min_length=1, max_length=8)
+  rhythm: BeepRhythm = "croche"
+
+
+class GreetingAudienceAudio(BaseModel):
+  """
+  Message d'accueil pour un type d'appelant (connu / inconnu / commercial).
+
+  Surcharge les champs plats de ``IncomingCallAudioConfig`` pour ce slot.
+  """
+
+  greeting_source: AudioSource = "tts"
+  greeting_wav_path: Optional[str] = None
+  greeting_tts_text: Optional[str] = None
+  tts_provider: Optional[TtsProvider] = None
+  elevenlabs_voice_id: Optional[str] = None
+  edge_tts_rate: Optional[str] = None
+  edge_tts_voice: Optional[str] = None
+  edge_tts_pitch: Optional[str] = None
+  tts_voice_gain_db: Optional[float] = Field(default=None, ge=-18.0, le=9.0)
+  greeting_intro_mode: Optional[GreetingIntroMode] = None
+  greeting_intro_variant: Optional[str] = None
+  greeting_intro_wav_path: Optional[str] = None
+  greeting_intro_sec: Optional[float] = Field(default=None, ge=0.0, le=20.0)
+  greeting_intro_crossfade_ms: Optional[int] = Field(default=None, ge=100, le=2000)
+  greeting_intro_voice_gain_db: Optional[float] = Field(default=None, ge=0.0, le=12.0)
+  greeting_intro_voice_bed_db: Optional[float] = Field(default=None, ge=-40.0, le=0.0)
+  greeting_intro_bed_variant: Optional[str] = None
+  greeting_intro_track_duck_db: Optional[float] = Field(default=None, ge=0.0, le=28.0)
+  greeting_intro_music_offset_sec: Optional[float] = Field(default=None, ge=0.0, le=120.0)
 
 
 class IncomingProfileConfig(BaseModel):
@@ -73,9 +116,33 @@ class IncomingCallAudioConfig(BaseModel):
   blocked_tts_text: Optional[str] = None
   record_beep: RecordBeepMode = "wav"
   record_beep_wav_path: Optional[str] = "resources/voice/system/beep.wav"
+  record_beep_bpm: int = Field(
+      default=100,
+      ge=40,
+      le=220,
+      description="Tempo de la partition bip (mode croche).",
+  )
+  record_beep_gap_ms: int = Field(
+      default=45,
+      ge=0,
+      le=400,
+      description="Silence entre deux notes du bip (ms).",
+  )
+  record_beep_notes: List[BeepNoteConfig] = Field(
+      default_factory=lambda: [
+          BeepNoteConfig(pitch="G5", rhythm="croche"),
+          BeepNoteConfig(pitch="E5", rhythm="croche"),
+      ],
+      description="Partition bip (mode croche) : notes + rythmes.",
+  )
   edge_tts_rate: str = "-4%"
   edge_tts_voice: str = "fr-FR-DeniseNeural"
   edge_tts_pitch: str = "+3Hz"
+  tts_provider: TtsProvider = "edge"
+  elevenlabs_voice_id: Optional[str] = Field(
+      default="JBFqnCBsd6RMkjVDRZzb",
+      description="Voice id ElevenLabs si tts_provider=elevenlabs.",
+  )
   tts_voice_gain_db: float = Field(
       default=-6.0,
       ge=-18.0,
@@ -116,6 +183,10 @@ class IncomingCallAudioConfig(BaseModel):
       "Bonjour. Vous êtes bien chez Daniel Craft, de Loïc Daniel. "
       "Merci de laisser votre message après le bip."
   )
+  audiences: Dict[str, GreetingAudienceAudio] = Field(
+      default_factory=dict,
+      description="Accueils distincts: known, unknown, commercial.",
+  )
 
 
 class IncomingVoicemailConfig(BaseModel):
@@ -130,6 +201,13 @@ class IncomingVoicemailConfig(BaseModel):
   dtmf_timeout_sec: float = Field(default=8.0, ge=2.0, le=30.0)
   max_record_sec: int = Field(default=120, ge=10, le=600)
   silence_end_sec: float = Field(default=4.0, ge=1.0, le=30.0)
+  # Apres silence / fin d'enregistrement : message de fin puis ATH0.
+  goodbye_enabled: bool = True
+  goodbye_text: str = Field(
+      default="Merci de votre appel.",
+      max_length=500,
+      description="Phrase jouee apres silence avant raccrochage.",
+  )
 
 
 class IncomingNumberPatternRule(BaseModel):
@@ -156,7 +234,7 @@ class IncomingCallSettingsData(BaseModel):
   """
 
   cid_wait_sec: float = Field(default=2.5, ge=0.0, le=30.0)
-  instant_seize_cid_grace_sec: float = Field(default=0.35, ge=0.0, le=5.0)
+  instant_seize_cid_grace_sec: float = Field(default=5.5, ge=0.0, le=12.0)
   ring_cycle_sec: float = Field(default=6.0, ge=3.0, le=15.0)
   ring_quiet_abort_sec: float = Field(default=6.0, ge=2.0, le=20.0)
   max_incoming_wait_sec: float = Field(default=45.0, ge=10.0, le=120.0)

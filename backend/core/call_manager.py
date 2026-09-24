@@ -21,6 +21,8 @@ from backend.core.phone_cid import classify_cid_outcome, normalize_cid_value
 from backend.core.incoming_line_schedule import apply_schedule_to_auto_answer
 from backend.core.incoming_call_policy import IncomingCallPolicy
 from backend.core.incoming_call_audio import (
+    audio_float,
+    audio_int,
     blocked_message_text,
     ensure_default_voice_assets,
     greeting_intro_path,
@@ -61,7 +63,7 @@ DEFAULT_VOICEMAIL_GREETING = (
     "Bonjour, vous êtes bien chez DanielCraft, de Loïc Daniel, "
     "merci de laisser un message."
 )
-VOICEMAIL_GOODBYE = "Merci, votre message a bien été enregistré. Au revoir."
+VOICEMAIL_GOODBYE = "Merci de votre appel."
 from backend.services.call_service import CallService
 from backend.services.block_service import BlockService
 from backend.services.appointment_service import AppointmentService
@@ -423,6 +425,9 @@ class CallManager:
         """
         Raccroche le modem en arriere-plan (ATH obligatoire apres VLS=1).
 
+        Apres un appel foireux (bips operateur / VRX vide), declenche un reset
+        USB materiel pour repartir propre (sinon le modem reste en etat pourri).
+
         @param reason Motif log.
         @returns None
         """
@@ -431,12 +436,35 @@ class CallManager:
             m._voice_abort = True
             m._playback_interrupted = True
             hangup_ok = False
+            vrx_reason = str(getattr(m, "last_vrx_stop_reason", None) or "")
+            already_on_hook = not bool(
+                getattr(m, "_voice_line_ready", False)
+                or getattr(m, "_incoming_line_seized", False)
+                or getattr(m, "_incoming_seize_ok", False)
+            )
             try:
-                self._log_call("release_modem_rapide", raison=reason)
-                # ATH d'abord : FCLASS=0 seul laisse la ligne OQP apres seize voix.
-                hangup_ok = bool(
-                    await m.run_modem_sync(m._force_hangup_sync, timeout=4.0)
+                self._log_call(
+                    "release_modem_rapide",
+                    raison=reason,
+                    deja_raccroche=int(already_on_hook),
                 )
+                if already_on_hook:
+                    # ATH0 deja fait (ex. apres merci) : cleanup soft seulement.
+                    hangup_ok = True
+                    try:
+                        await m.run_modem_sync(
+                            m._fast_cleanup_after_remote_hangup_sync,
+                            timeout=3.0,
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "[APPEL] soft cleanup apres hangup ({}): {}", reason, exc
+                        )
+                else:
+                    # ATH d'abord : FCLASS=0 seul laisse la ligne OQP apres seize voix.
+                    hangup_ok = bool(
+                        await m.run_modem_sync(m._force_hangup_sync, timeout=4.0)
+                    )
             except asyncio.TimeoutError:
                 logger.warning("[APPEL] force hangup timeout ({})", reason)
             except Exception as exc:
@@ -472,8 +500,71 @@ class CallManager:
                         logger.warning("[MODEM] reconnect echoue apres release ({})", reason)
                 except Exception as exc:
                     logger.warning("[MODEM] reconnect exception release ({}): {}", reason, exc)
+
+            # Soft reinit CID / data mode meme si ATH OK (evite RING perdus).
+            if hangup_ok:
+                try:
+                    await m.run_modem_sync(
+                        m._fast_cleanup_after_remote_hangup_sync,
+                        timeout=3.0,
+                    )
+                except Exception:
+                    pass
+
+            # Reset USB seulement si hangup foireux ou VRX vraiment pourri.
+            # silence apres message + ATH OK = fin repondeur normale (#163), pas de reset.
+            heard = bool(getattr(m, "last_vrx_heard_speech", False))
+            need_usb = (not hangup_ok) or vrx_reason in (
+                "disconnect_tones_empty",
+                "io_error",
+                "vrx_error",
+                "port_closed",
+            ) or (
+                (not hangup_ok)
+                and vrx_reason == "silence"
+                and not heard
+            )
+            if need_usb:
+                logger.warning(
+                    "[MODEM] reset USB apres release (reason={}, vrx={})",
+                    reason,
+                    vrx_reason or "hangup_fail",
+                )
+                await self._trigger_modem_usb_reset()
+
             if hasattr(m, "log_voice_session"):
                 m.log_voice_session(f"release_modem_fin ({reason}) hangup_ok={int(hangup_ok)}")
+
+    async def _trigger_modem_usb_reset(self) -> None:
+        """
+        Lance le reset USB materiel du modem (script root via sudoers / sudo -n).
+
+        @returns None
+        """
+        import shutil
+
+        script = Path("/opt/vocalguard/scripts/modem_usb_reset.sh")
+        if not script.is_file():
+            base = Path(self.config.base_path) if self.config.base_path else Path.cwd()
+            alt = base / "scripts" / "modem_usb_reset.sh"
+            if alt.is_file():
+                script = alt
+        if not script.is_file():
+            logger.warning("[MODEM] modem_usb_reset.sh introuvable — pas de reset USB")
+            return
+        sudo = shutil.which("sudo") or "/usr/bin/sudo"
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sudo,
+                "-n",
+                str(script),
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(proc.wait(), timeout=2.0)
+            self._log_call("modem_usb_reset_lance", rc=int(proc.returncode or 0))
+        except Exception as exc:
+            logger.warning("[MODEM] echec lancement usb reset: {}", exc)
 
     async def release_active_call(
         self,
@@ -662,16 +753,51 @@ class CallManager:
             "activée" if self._voice_available else "désactivée",
         )
 
+    def _current_greeting_audience(self) -> str:
+        """
+        Audience d'accueil pour l'appel en cours (defaut unknown).
+
+        @returns known | unknown | commercial.
+        """
+        from backend.core.greeting_audiences import audience_from_profile
+
+        decision = getattr(self, "_current_incoming_decision", None)
+        profile = getattr(decision, "profile", None) if decision is not None else None
+        if profile:
+            return audience_from_profile(profile)
+        return "unknown"
+
     def _greeting_text(self) -> str:
+        """
+        Texte d'accueil selon l'audience de l'appel courant.
+
+        @returns Texte TTS normalise.
+        """
+        from backend.core.greeting_audiences import greeting_text_for_audience
+
         if hasattr(self, "incoming_policy"):
-            return greeting_text(self.config, self.incoming_policy.settings)
+            return greeting_text_for_audience(
+                self.config,
+                self.incoming_policy.settings,
+                self._current_greeting_audience(),  # type: ignore[arg-type]
+            )
         greeting = (self.config.voicemail_greeting or "").strip()
         return greeting or DEFAULT_VOICEMAIL_GREETING
 
     def _audio_settings(self):
-        """Bloc audio incoming_call (ou defauts)."""
+        """
+        Bloc audio effectif pour l'audience de l'appel courant.
+
+        @returns IncomingCallAudioConfig resolu.
+        """
+        from backend.core.greeting_audiences import resolve_audio_for_audience
+
         if hasattr(self, "incoming_policy"):
-            return self.incoming_policy.settings.audio
+            resolved = resolve_audio_for_audience(
+                self.incoming_policy.settings,
+                self._current_greeting_audience(),  # type: ignore[arg-type]
+            )
+            return resolved.audio
         return load_incoming_call_settings(self.config).audio
 
     def _voicemail_settings(self):
@@ -992,10 +1118,57 @@ class CallManager:
         timeout = float(vm.dtmf_timeout_sec or 8.0)
         return await self.modem.wait_for_dtmf_digit(digit, timeout)
 
+    def _voicemail_goodbye_text(self) -> str:
+        """
+        Texte du message de fin (apres silence), configurable UI.
+
+        @returns Phrase a jouer avant ATH0.
+        """
+        vm = self._voicemail_settings()
+        text = (getattr(vm, "goodbye_text", None) or "").strip()
+        return text or VOICEMAIL_GOODBYE
+
+    def _voicemail_goodbye_enabled(self) -> bool:
+        """
+        True si le message de fin doit etre joue apres silence.
+
+        @returns Actif (defaut True).
+        """
+        vm = self._voicemail_settings()
+        return bool(getattr(vm, "goodbye_enabled", True))
+
+    def schedule_voicemail_goodbye_refresh(self) -> None:
+        """
+        Regenere en arriere-plan le WAV « merci » (meme voix TTS que l'accueil).
+
+        Appele apres un patch settings (texte goodbye ou audio Edge).
+
+        @returns None
+        """
+        if not self._voicemail_goodbye_enabled():
+            return
+
+        async def _run() -> None:
+            try:
+                text = self._voicemail_goodbye_text()
+                path = await self._ivr_cache.ensure(text, "voicemail_goodbye")
+                if path:
+                    logger.info("Cache goodbye rafraichi: {} ({})", path.name, text[:60])
+            except Exception:
+                logger.exception("Echec refresh cache goodbye")
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        loop.create_task(_run(), name="vg_refresh_goodbye")
+
     def _ivr_basename_for_text(self, text: str) -> Optional[str]:
         normalized = text.strip()
         if normalized == self._greeting_text().strip():
             return "voicemail_greeting"
+        if normalized == self._voicemail_goodbye_text().strip():
+            return "voicemail_goodbye"
         if normalized == VOICEMAIL_GOODBYE:
             return "voicemail_goodbye"
         return None
@@ -1005,7 +1178,8 @@ class CallManager:
         settings = self._incoming_settings()
         refresh_modem_voice_assets(self.config, settings)
         greeting = await self._ivr_cache.ensure(self._greeting_text(), "voicemail_greeting")
-        goodbye = await self._ivr_cache.ensure(VOICEMAIL_GOODBYE, "voicemail_goodbye")
+        goodbye_text = self._voicemail_goodbye_text()
+        goodbye = await self._ivr_cache.ensure(goodbye_text, "voicemail_goodbye")
         if self._is_conversation_mode():
             salutation = await self._ivr_cache.ensure(
                 self._conversation_salutation_text(), "kb_salutation"
@@ -1029,57 +1203,90 @@ class CallManager:
     async def regenerate_greeting_cache(
         self,
         audio_override: Optional[dict[str, Any]] = None,
+        audience: Optional[str] = None,
     ) -> dict[str, Any]:
         """
         Force la regeneration complete du cache accueil (voix + mix) pour le modem.
 
-        Utilise la meme logique que l'apercu UI (TTS + mix intro selon le mode).
-
         @param audio_override Patch audio formulaire (meme si non sauvegarde).
+        @param audience Slot known/unknown/commercial.
         @returns Metadonnees du fichier actif (nom, duree, voix TTS).
         """
         from backend.services.greeting_audio_service import (
             _build_modem_greeting_wav_sync,
             _merge_audio_settings,
+            _prepare_audience_settings,
+            _synthesize_voice_modem_wav,
             _write_greeting_modem_active_meta,
             greeting_modem_active_wav_path,
             try_remote_greeting_mix,
         )
+        from backend.voice.synthesis import VoiceSynthesis
 
         self.reload_incoming_policy()
-        settings = _merge_audio_settings(
-            load_incoming_call_settings(self.config),
-            audio_override,
-        )
-        apply_incoming_call_settings(self.config, settings)
-        if hasattr(self, "incoming_policy"):
-            self.incoming_policy.settings = settings
-
-        greeting = greeting_text(self.config, settings)
-        ivr_dir = self._ensure_ivr_wav_dir()
-        for pattern in (
-            "voicemail_greeting.*",
-            "greeting_track_*.wav",
-            "greeting_seq_*.wav",
-            "greeting_modem_active.*",
-        ):
-            for path in ivr_dir.glob(pattern):
-                try:
-                    path.unlink(missing_ok=True)
-                except OSError as exc:
-                    logger.warning("Suppression cache {}: {}", path.name, exc)
-
-        active_path = greeting_modem_active_wav_path(self.config)
-        remote = await try_remote_greeting_mix(
+        settings, key, greeting = _prepare_audience_settings(
             self.config,
-            settings,
-            greeting,
-            out_path=active_path,
-            output="modem",
+            audio_override=audio_override,
+            audience=audience,
         )
+        if hasattr(self, "incoming_policy"):
+            full = load_incoming_call_settings(self.config)
+            if audio_override:
+                full = _merge_audio_settings(full, audio_override)
+            self.incoming_policy.settings = full
+
+        ivr_dir = self._ensure_ivr_wav_dir()
+        voice_basename = (
+            "voicemail_greeting" if key == "unknown" else f"voicemail_greeting_{key}"
+        )
+        if key == "unknown":
+            patterns = (
+                f"{voice_basename}.*",
+                "greeting_modem_active.wav",
+                "greeting_modem_active.meta.json",
+            )
+        else:
+            patterns = (
+                f"{voice_basename}.*",
+                f"greeting_modem_active_{key}.*",
+            )
+        for pattern in patterns:
+            for path_item in ivr_dir.glob(pattern):
+                try:
+                    path_item.unlink(missing_ok=True)
+                except OSError as exc:
+                    logger.warning("Suppression cache {}: {}", path_item.name, exc)
+
+        active_path = greeting_modem_active_wav_path(self.config, key)
+        provider = str(
+            getattr(settings.audio, "tts_provider", None) or "edge"
+        ).strip().lower()
+        # node15 /greeting-mix = Edge uniquement — meme regle que l'apercu.
+        remote = None
+        if provider != "elevenlabs":
+            remote = await try_remote_greeting_mix(
+                self.config,
+                settings,
+                greeting,
+                out_path=active_path,
+                output="modem",
+            )
         if remote is None:
-            voice_wav = await self._ivr_cache.ensure(greeting, "voicemail_greeting")
-            if not voice_wav or not voice_wav.is_file():
+            voice_wav_path = ivr_dir / f"{voice_basename}.wav"
+            if provider == "elevenlabs":
+                synthesis = VoiceSynthesis(self.config)
+                await synthesis.initialize()
+                voice_wav = await _synthesize_voice_modem_wav(
+                    self.config,
+                    synthesis,
+                    greeting,
+                    audience=key,
+                    audio=settings.audio,
+                    out_path=voice_wav_path,
+                )
+            else:
+                voice_wav = await self._ivr_cache.ensure(greeting, voice_basename)
+            if not voice_wav or not Path(voice_wav).is_file():
                 raise RuntimeError("Generation TTS accueil echouee")
 
             loop = asyncio.get_running_loop()
@@ -1088,19 +1295,21 @@ class CallManager:
                 lambda: _build_modem_greeting_wav_sync(
                     self.config,
                     settings,
-                    voice_wav,
+                    Path(voice_wav),
                     out_modem=active_path,
                 ),
             )
-        else:
-            # Garde aussi un cache voix seule pour les replays sans intro.
-            await self._ivr_cache.ensure(greeting, "voicemail_greeting")
+        elif provider != "elevenlabs":
+            await self._ivr_cache.ensure(greeting, voice_basename)
 
         if not active_path.is_file() or active_path.stat().st_size < 2000:
             raise RuntimeError("Mix accueil modem vide ou absent")
 
-        regenerated_at = _write_greeting_modem_active_meta(self.config, settings, greeting)
-        await self._ivr_cache.ensure(VOICEMAIL_GOODBYE, "voicemail_goodbye")
+        regenerated_at = _write_greeting_modem_active_meta(
+            self.config, settings, greeting, key
+        )
+        if provider != "elevenlabs":
+            await self._ivr_cache.ensure(self._voicemail_goodbye_text(), "voicemail_goodbye")
         beep_path = ivr_dir / "voicemail_beep.wav"
         write_beep_wav_8k(beep_path, profile=getattr(self.modem, "voice_profile", None))
         self._refresh_early_greeting_wav()
@@ -1114,17 +1323,29 @@ class CallManager:
         except (OSError, wave.Error):
             duration = None
 
+        if provider == "elevenlabs":
+            voice_label = str(
+                getattr(settings.audio, "elevenlabs_voice_id", None)
+                or getattr(self.config, "elevenlabs_voice_id", None)
+                or ""
+            )
+        else:
+            voice_label = getattr(self.config, "edge_tts_voice", "") or ""
+
         logger.info(
-            "Cache accueil modem regenere: {} ({} octets, intro={})",
+            "Cache accueil modem regenere: {} audience={} provider={} ({} octets, intro={})",
             active_path.name,
+            key,
+            provider,
             active_path.stat().st_size,
             getattr(settings.audio, "greeting_intro_mode", "none"),
         )
         return {
+            "audience": key,
             "track_wav": active_path.name,
-            "voice_wav": "voicemail_greeting.wav",
+            "voice_wav": f"{voice_basename}.wav",
             "duration_sec": duration,
-            "voice": getattr(self.config, "edge_tts_voice", "") or "",
+            "voice": voice_label,
             "pitch": getattr(self.config, "edge_tts_pitch", "") or "",
             "rate": getattr(self.config, "edge_tts_rate", "") or "",
             "text": greeting,
@@ -1150,13 +1371,13 @@ class CallManager:
         if not voice_wav or not voice_wav.is_file():
             logger.warning("Warmup track: voix accueil indisponible")
             return
-        intro_ms = int(float(getattr(audio, "greeting_intro_sec", 2.0) or 2.0) * 1000)
-        crossfade_ms = int(float(getattr(audio, "greeting_intro_crossfade_ms", 450) or 450))
+        intro_ms = int(round(audio_float(getattr(audio, "greeting_intro_sec", None), 2.0) * 1000))
+        crossfade_ms = audio_int(getattr(audio, "greeting_intro_crossfade_ms", None), 450)
         music_offset_ms = int(
             float(getattr(audio, "greeting_intro_music_offset_sec", 0.0) or 0.0) * 1000
         )
         track_duck_db = float(getattr(audio, "greeting_intro_track_duck_db", 0.0) or 0.0)
-        voice_gain = float(getattr(audio, "greeting_intro_voice_gain_db", 0.0) or 0.0)
+        voice_gain = audio_float(getattr(audio, "greeting_intro_voice_gain_db", None), 0.0)
         combined = self._track_greeting_cache_path(intro, audio, greeting)
         if not self._track_greeting_cache_stale(combined, intro, voice_wav):
             logger.info("Warmup track deja present: {}", combined.name)
@@ -1217,10 +1438,13 @@ class CallManager:
         m.preferred_vsm = getattr(self.config, "modem_voice_vsm", None)
         try:
             m.instant_seize_cid_grace_sec = float(
-                getattr(self.config, "instant_seize_cid_grace_sec", 0.35) or 0.35
+                getattr(self.config, "instant_seize_cid_grace_sec", 5.5) or 5.5
             )
         except (TypeError, ValueError):
-            m.instant_seize_cid_grace_sec = 0.35
+            m.instant_seize_cid_grace_sec = 5.5
+        # Force pays FR pour CID ETSI si non configure.
+        if not getattr(m, "modem_country_gci", None):
+            m.modem_country_gci = "3D"
         self._refresh_instant_ring_seize()
 
     def _refresh_instant_ring_seize(self) -> None:
@@ -1259,19 +1483,25 @@ class CallManager:
             self.modem.ultra_fast_seize = True
         else:
             try:
-                self.modem.instant_seize_cid_grace_sec = float(
-                    getattr(self.config, "instant_seize_cid_grace_sec", 0.35) or 0.35
+                settings = load_incoming_call_settings(self.config)
+                grace = float(
+                    getattr(settings, "instant_seize_cid_grace_sec", None)
+                    or getattr(self.config, "instant_seize_cid_grace_sec", 5.5)
+                    or 5.5
                 )
-            except (TypeError, ValueError):
-                self.modem.instant_seize_cid_grace_sec = 0.35
+            except (TypeError, ValueError, Exception):
+                grace = 5.5
+            # Plancher FR : sous ~4 s on coupe souvent avant NMBR= ETSI.
+            self.modem.instant_seize_cid_grace_sec = max(4.0, grace)
             self.modem.pre_ring_seize_on_cid_meta = False
             self.modem.ultra_fast_seize = False
         logger.info(
-            "instant_ring_seize={} (auto_answer={}, min_answer_rings={}, whitelist_ring_only={})",
+            "instant_ring_seize={} (auto_answer={}, min_answer_rings={}, whitelist_ring_only={}, cid_grace={:.2f}s)",
             self.modem.instant_ring_seize,
             auto,
             min_answer_rings,
             whitelist_ring_only,
+            float(self.modem.instant_seize_cid_grace_sec or 0.0),
         )
         self._refresh_early_greeting_wav()
 
@@ -1285,8 +1515,16 @@ class CallManager:
         """
         WAV d'accueil pre-genere pour lecture immediate au seize (sync, sans TTS).
 
+        Prefere le cache de l'audience connue (decision courante), sinon unknown.
+
         @returns Chemin cache actif modem, track ou voicemail_greeting.
         """
+        from backend.core.greeting_audiences import (
+            audience_from_profile,
+            ensure_audience_slots,
+            greeting_text_for_audience,
+            resolve_audio_for_audience,
+        )
         from backend.services.greeting_audio_service import (
             greeting_modem_active_wav_path,
             is_greeting_modem_active_fresh,
@@ -1298,18 +1536,27 @@ class CallManager:
             conv = self._conversation_greeting_wav()
             if conv is not None:
                 return conv
-        greeting = greeting_text(self.config, settings)
-        active = greeting_modem_active_wav_path(self.config)
+
+        decision = getattr(self, "_current_incoming_decision", None)
+        profile = getattr(decision, "profile", None) if decision is not None else None
+        audience = audience_from_profile(profile) if profile else "unknown"
+
+        ensure_audience_slots(settings.audio)
+        greeting = greeting_text_for_audience(self.config, settings, audience)
+        resolved = resolve_audio_for_audience(settings, audience)
+        active = greeting_modem_active_wav_path(self.config, audience)
         if active.is_file() and active.stat().st_size >= 4000:
-            if is_greeting_modem_active_fresh(self.config, settings, greeting):
+            if is_greeting_modem_active_fresh(self.config, resolved, greeting, audience):
                 return active
             logger.warning(
-                "Cache accueil modem perime — lecture du mix existant ({})",
+                "Cache accueil modem perime ({}) — rebuild au prochain accueil",
                 active.name,
             )
-            return active
+            # Ne plus servir un mix obsolete : les sliders intro / volumes
+            # seraient ignorees jusqu'a une regen manuelle.
+            return None
 
-        audio = settings.audio
+        audio = resolved.audio
         intro_mode = str(getattr(audio, "greeting_intro_mode", "none") or "none")
         if intro_mode == "track":
             intro = greeting_intro_path(self.config, audio)
@@ -1318,7 +1565,8 @@ class CallManager:
                 if combined.is_file() and combined.stat().st_size >= 2000:
                     return combined
             return None
-        cached = self._ivr_cache.get_if_fresh(greeting, "voicemail_greeting")
+        voice_key = "voicemail_greeting" if audience == "unknown" else f"voicemail_greeting_{audience}"
+        cached = self._ivr_cache.get_if_fresh(greeting, voice_key)
         if cached and cached.is_file():
             return cached
         return None
@@ -1848,8 +2096,19 @@ class CallManager:
                 and rings <= 0
                 and (cut_max or not need_cid_before_action)
             )
-            if immediate_answer:
+            if immediate_answer and cut_max:
+                # rings=-1 : priorite coupe-sonnerie, pas d'attente CID.
                 timeout_sec = 0.0
+            elif immediate_answer:
+                # rings=0 : laisse passer NMBR= ETSI pendant la grace seize modem.
+                try:
+                    grace = float(
+                        getattr(self.config, "instant_seize_cid_grace_sec", 5.5) or 5.5
+                    )
+                except (TypeError, ValueError):
+                    grace = 5.5
+                # Aligne sur grace modem (ETSI FR ~4-6 s apres 1er RING).
+                timeout_sec = max(float(cid_wait), max(4.0, grace) + 0.5)
             elif rings > 0:
                 timeout_sec = max(cid_wait, float(rings) * 6.0)
             else:
@@ -1871,11 +2130,22 @@ class CallManager:
                     await asyncio.wait_for(self._cname_event.wait(), timeout=0.6)
                 except asyncio.TimeoutError:
                     pass
-            elif immediate_answer:
-                logger.info("Repondeur: decrochage immediat (rings=0, pas d'attente CID)")
+            elif immediate_answer and cut_max:
+                logger.info("Repondeur: decrochage immediat (rings=-1, pas d'attente CID)")
 
             caller_id = self._pending_cid or caller_id
             caller_name = self._pending_cname or caller_name
+            # Secours : NMBR= vu par le modem mais callback CID rate (ex. race seize).
+            if not caller_id:
+                raw = getattr(self.modem, "last_cid_raw", None)
+                stamped = getattr(self.modem, "last_cid_at", None)
+                if raw and stamped is not None:
+                    try:
+                        age = time.monotonic() - float(stamped)
+                    except (TypeError, ValueError):
+                        age = 999.0
+                    if age <= max(8.0, float(timeout_sec) + 2.0):
+                        caller_id = normalize_cid_value(raw)
             cause = classify_cid_outcome(
                 caller_id=caller_id,
                 source="ring",
@@ -2038,9 +2308,9 @@ class CallManager:
                     pass
     
     async def _handle_blocked_call(self, skip_answer: bool = False):
-        """Traite un appel bloqué"""
+        """Traite un appel bloqué (accueil commercial si cache present)."""
         logger.info("Traitement d'un appel bloqué")
-        
+
         try:
             if not skip_answer:
                 ok, _cid, _cname = await self.modem.answer_call()
@@ -2051,15 +2321,31 @@ class CallManager:
                 if hasattr(self, "incoming_policy")
                 else load_incoming_call_settings(self.config)
             )
-            audio = settings.audio
-            await self._play_configured_message(
-                source=audio.blocked_source,
-                wav_path=audio.blocked_wav_path,
-                tts_text=blocked_message_text(settings),
-                fallback_text="Desole, cet appel a ete bloque.",
-                already_in_voice_mode=self._use_modem_voice_serial() and skip_answer,
+            from backend.core.greeting_audiences import ensure_audience_slots
+            from backend.services.greeting_audio_service import (
+                greeting_modem_active_wav_path,
             )
-        
+
+            ensure_audience_slots(settings.audio)
+            commercial_wav = greeting_modem_active_wav_path(self.config, "commercial")
+            if commercial_wav.is_file() and commercial_wav.stat().st_size >= 2000:
+                await self._play_configured_message(
+                    source="wav",
+                    wav_path=str(commercial_wav),
+                    tts_text=None,
+                    fallback_text="Desole, cet appel a ete bloque.",
+                    already_in_voice_mode=self._use_modem_voice_serial() and skip_answer,
+                )
+            else:
+                audio = settings.audio
+                await self._play_configured_message(
+                    source=audio.blocked_source,
+                    wav_path=audio.blocked_wav_path,
+                    tts_text=blocked_message_text(settings),
+                    fallback_text="Desole, cet appel a ete bloque.",
+                    already_in_voice_mode=self._use_modem_voice_serial() and skip_answer,
+                )
+
         except Exception as e:
             logger.exception(f"Erreur lors du traitement d'un appel bloqué: {e}")
         finally:
@@ -2118,15 +2404,18 @@ class CallManager:
                 return
 
             # Accueil VTX fini : demarre l'enregistrement ligne tout de suite (seize).
-            # L'accueil early n'est pas capturable en VRX → on le recolle depuis le WAV.
+            # Mode simple : on recolle l'accueil early (non capturable en VRX) pour l'historique.
+            # Mode conversation : PAS de seed — sinon l'accueil est dans le WAV et le SRT
+            # (offset plafonne a 8s) est totalement decale par rapport a la parole.
             if self._use_modem_voice_serial():
-                if played:
+                if played and not conversation_mode:
                     self._seed_recorder_with_early_greeting(recorder)
                 await recorder.start(already_in_voice_mode=True)
                 self._log_call(
                     "record_start_seize",
                     session=int(bool(recorder._session)),
-                    seed_accueil=int(bool(played)),
+                    seed_accueil=int(bool(played and not conversation_mode)),
+                    conversation=int(conversation_mode),
                 )
 
             if played:
@@ -2233,7 +2522,7 @@ class CallManager:
                         )
                 else:
                     self._log_call("repondeur_simple")
-                    # Bip deja dans greeting_modem_active (500 ms apres le message).
+                    # Bip deja dans greeting_modem_active (configure via record_beep).
                     await self._handle_voicemail_simple(
                         recorder=recorder,
                         skip_beep=bool(played),
@@ -2242,7 +2531,7 @@ class CallManager:
                 await self._record_message(recorder=recorder)
 
         except Exception as e:
-            logger.exception("Erreur lors du traitement d'un appel autorisé: %s", e)
+            logger.exception("Erreur lors du traitement d'un appel autorisé: {}", e)
             await self._play_on_line(
                 "Désolé, une erreur s'est produite. Au revoir.",
                 already_in_voice_mode=True,
@@ -2387,20 +2676,64 @@ class CallManager:
                             active_call_id,
                         )
 
-            if self.modem.caller_line_finished():
-                logger.info("Appelant a raccroche — fin immediate sans message de fin")
-            elif getattr(self, "_skip_incoming_recording_save", False):
-                self._log_call("repondeur_fin_sans_au_revoir", raison="pas_de_message")
+            if self.modem.caller_line_finished() and self.modem.last_vrx_stop_reason not in (
+                "silence",
+                "timeout",
+                None,
+                "",
+            ):
+                # Raccrochage distant (bips / DLE) : pas de merci sur ligne morte.
+                logger.info(
+                    "Appelant a raccroche ({}) — fin sans message de fin",
+                    self.modem.last_vrx_stop_reason,
+                )
             elif not self._call_still_active(active_call_id):
                 self._log_call("repondeur_fin_sans_au_revoir", raison="appel_deja_libere")
             else:
+                # Apres silence (ou fin d'enregistrement) : merci configurable puis ATH0.
+                await self._play_voicemail_goodbye_then_hangup(recorder=rec)
+        except Exception as e:
+            logger.exception("Erreur mode répondeur simple: %s", e)
+
+    async def _play_voicemail_goodbye_then_hangup(
+        self,
+        recorder: Optional[_IncomingLineRecorder] = None,
+    ) -> None:
+        """
+        Joue le message de fin (UI) puis raccroche avec ATH0.
+
+        @param recorder Enregistreur parallele a mettre en pause pendant le play.
+        @returns None
+        """
+        rec = recorder or self._incoming_recorder
+        if self._voicemail_goodbye_enabled():
+            text = self._voicemail_goodbye_text()
+            self._log_call("repondeur_au_revoir", texte=text[:80])
+            logger.info("Message de fin repondeur: {}", text[:120])
+            # Petite pause apres le silence pour que le « merci » ne colle pas.
+            await asyncio.sleep(0.35)
+            try:
                 await self._play_on_line(
-                    VOICEMAIL_GOODBYE,
+                    text,
                     already_in_voice_mode=self._use_modem_voice_serial(),
                     recorder=rec,
                 )
-        except Exception as e:
-            logger.exception("Erreur mode répondeur simple: %s", e)
+            except Exception:
+                logger.exception("Echec lecture message de fin — on raccroche quand meme")
+        else:
+            self._log_call("repondeur_fin_sans_au_revoir", raison="goodbye_desactive")
+
+        # Raccrochage explicite ATH0 (demande produit) avant le release async.
+        try:
+            self._log_call("repondeur_ath0")
+            ok = await self.modem.hangup()
+            self._log_call("repondeur_ath0_fin", ok=int(bool(ok)))
+        except Exception:
+            logger.exception("ATH0 apres message de fin echoue")
+            try:
+                await self.modem.run_modem_sync(self.modem._force_hangup_sync, timeout=4.0)
+            except Exception:
+                pass
 
     async def _handle_voicemail_conversation(
         self,
@@ -2789,23 +3122,33 @@ class CallManager:
                                 except (asyncio.CancelledError, Exception):
                                     pass
                             else:
-                                # Ne pas attendre 8 s un live : STT final suit
-                                # juste apres (latence appel #51).
+                                # Attendre le live en cours : 1.2s etait trop court
+                                # (appel #55 : offline OK, live annule → final timeout).
                                 try:
                                     result = await asyncio.wait_for(
-                                        stt_task, timeout=1.2
+                                        stt_task, timeout=4.5
                                     )
                                     live_text = (
                                         (result.get("text") or "").strip()
                                         if isinstance(result, dict)
                                         else live_text
                                     )
+                                    if live_text:
+                                        logger.info(
+                                            "STT live drain tour {} : {} car.",
+                                            turn_idx,
+                                            len(live_text),
+                                        )
                                 except asyncio.TimeoutError:
                                     stt_task.cancel()
                                     try:
                                         await stt_task
                                     except (asyncio.CancelledError, Exception):
                                         pass
+                                    logger.warning(
+                                        "STT live drain tour {} timeout",
+                                        turn_idx,
+                                    )
                                 except Exception:
                                     logger.warning(
                                         "STT live drain tour {} ignore", turn_idx
@@ -2833,6 +3176,14 @@ class CallManager:
                         w for w in final_text.replace(",", " ").split() if w
                     ]
                     need_final = len(live_words) < 4 or len(final_text) < 24
+                    # Sans aucun texte live : le final timeout juste ajoute ~5 s
+                    # de silence avant incompris (appels #54/#55). Mieux repondre vite.
+                    if heard_speech and turn_pcm and client is not None and not final_text:
+                        logger.warning(
+                            "STT tour {} : live vide — skip final, reponse rapide",
+                            turn_idx,
+                        )
+                        need_final = False
                     if (
                         heard_speech
                         and turn_pcm
@@ -2874,29 +3225,48 @@ class CallManager:
                             len(final_text),
                         )
                     if heard_speech and not final_text and turn_pcm:
-                        # Repli rapide (pas de jingle long : appel #53 ~35 s muets).
-                        try:
-                            if client is not None:
-                                snap = self._prepare_conversation_stt_pcm(
-                                    bytes(turn_pcm), max_sec=4.0
-                                )
-                                result = await asyncio.wait_for(
-                                    client.transcribe(snap, mode="live"),
-                                    timeout=4.0,
-                                )
-                                final_text = (
-                                    (result.get("text") or "").strip()
-                                    if isinstance(result, dict)
-                                    else ""
-                                )
-                                logger.info(
-                                    "STT repli live tour {} : {} car.",
+                        # Repli unique si le final n'a pas encore ete tente
+                        # (sinon on empile 5s + 4s de silence, appel #54).
+                        already_tried_final = bool(
+                            heard_speech
+                            and turn_pcm
+                            and client is not None
+                            and need_final
+                        )
+                        if already_tried_final:
+                            logger.warning(
+                                "STT tour {} vide apres final — skip repli, incompris rapide",
+                                turn_idx,
+                            )
+                        else:
+                            try:
+                                if client is not None:
+                                    snap = self._prepare_conversation_stt_pcm(
+                                        bytes(turn_pcm), max_sec=4.0
+                                    )
+                                    result = await asyncio.wait_for(
+                                        client.transcribe(snap, mode="live"),
+                                        timeout=4.0,
+                                    )
+                                    final_text = (
+                                        (result.get("text") or "").strip()
+                                        if isinstance(result, dict)
+                                        else ""
+                                    )
+                                    logger.info(
+                                        "STT repli live tour {} : {} car.",
+                                        turn_idx,
+                                        len(final_text),
+                                    )
+                            except asyncio.TimeoutError:
+                                logger.warning(
+                                    "STT repli tour {} timeout",
                                     turn_idx,
-                                    len(final_text),
                                 )
-                        except Exception:
-                            logger.exception("STT repli tour {}", turn_idx)
-                            final_text = ""
+                                final_text = ""
+                            except Exception:
+                                logger.exception("STT repli tour {}", turn_idx)
+                                final_text = ""
                     if heard_speech and final_text:
                         # Predict final sur le texte complet (pas le live tronque).
                         scores_map = {}
@@ -3185,8 +3555,7 @@ class CallManager:
                 self._call_still_active(active_call_id)
                 and not self.modem.caller_line_finished()
             ):
-                # Goodbye deja joue si intent fin ; sinon court au revoir
-                pass
+                await self._play_voicemail_goodbye_then_hangup(recorder=rec)
         except Exception as e:
             logger.exception("Erreur mode repondeur conversation: {}", e)
 
@@ -3309,7 +3678,10 @@ class CallManager:
         recorder: Optional[_IncomingLineRecorder] = None,
     ) -> bool:
         """
-        Joue le WAV cache kb_* s'il correspond au texte, sinon regenerate / TTS.
+        Joue le WAV cache kb_* s'il existe deja, sinon regenerate / TTS.
+
+        Pendant l'appel on privilegie la lecture immediate d'un fichier present
+        (meme si le hash texte n'est plus a jour) pour eviter ~10 s de silence.
 
         @param wav_basename Nom sans extension sous ivr_wav/.
         @param response_text Texte cible (variante anti-repetition).
@@ -3326,16 +3698,23 @@ class CallManager:
             return False
         base = Path(self.config.base_path) if self.config.base_path else Path.cwd()
         wav_path = base / "ivr_wav" / f"{wav_basename}.wav"
-        # Si le WAV existe mais ne matche pas le texte choisi → rebuild via cache
-        try:
-            if wav_path.is_file() and self._ivr_cache.is_fresh(wav_basename, response_text):
-                return await self._play_wav_file_on_line(
-                    wav_path,
-                    already_in_voice_mode=self._use_modem_voice_serial(),
-                    recorder=recorder,
+        # Pendant l'appel : jouer le WAV deja la sans attendre un regen TTS
+        # (appel #54 : ~9 s de silence car hash stale → ensure → node15).
+        if wav_path.is_file() and wav_path.stat().st_size > 1024:
+            try:
+                fresh = self._ivr_cache.is_fresh(wav_basename, response_text)
+            except Exception:
+                fresh = True
+            if not fresh:
+                logger.info(
+                    "WAV intent {} present mais pas a jour — lecture immediate (regen plus tard)",
+                    wav_basename,
                 )
-        except Exception:
-            logger.debug("Check fraicheur WAV intent ignore")
+            return await self._play_wav_file_on_line(
+                wav_path,
+                already_in_voice_mode=self._use_modem_voice_serial(),
+                recorder=recorder,
+            )
 
         try:
             path = await self._ivr_cache.ensure(response_text, wav_basename)
@@ -3417,22 +3796,24 @@ class CallManager:
 
     def _ensure_talk_cue_wav(self) -> Path:
         """
-        Croche legere a deux notes (signal « a vous de parler »).
+        Croche legere depuis la partition configuree (signal « a vous de parler »).
 
-        Regen si absent, trop court, ou format incompatible avec le profil modem
-        (ex. fichier 11 kHz alors que le daemon tourne en 8 kHz u8).
+        Regenere systematiquement pour coller a la partition UI (BPM / notes).
 
         @returns Chemin ivr_wav/talk_cue.wav.
         """
+        from backend.core.incoming_call_audio import notes_from_audio
+
         path = self._ensure_ivr_wav_dir() / "talk_cue.wav"
         profile = getattr(self.modem, "voice_profile", None)
-        need = (
-            (not path.is_file())
-            or path.stat().st_size < 800
-            or not wav_matches_modem_profile(path, profile=profile)
+        audio = self._audio_settings()
+        write_talk_cue_wav_8k(
+            path,
+            profile=profile,
+            notes=notes_from_audio(audio),
+            bpm=float(getattr(audio, "record_beep_bpm", 100) or 100),
+            gap_ms=int(getattr(audio, "record_beep_gap_ms", 45) or 45),
         )
-        if need:
-            write_talk_cue_wav_8k(path, profile=profile)
         return path
 
     def _append_talk_cue_to_wav(self, wav_path: Path, *, gap_ms: int = 220) -> None:
@@ -3724,13 +4105,13 @@ class CallManager:
         @param greeting Texte accueil.
         @returns Fichier WAV cache sous ivr_wav/.
         """
-        intro_ms = int(float(getattr(audio, "greeting_intro_sec", 2.0) or 2.0) * 1000)
-        crossfade_ms = int(float(getattr(audio, "greeting_intro_crossfade_ms", 450) or 450))
+        intro_ms = int(round(audio_float(getattr(audio, "greeting_intro_sec", None), 2.0) * 1000))
+        crossfade_ms = audio_int(getattr(audio, "greeting_intro_crossfade_ms", None), 450)
         music_offset_ms = int(
             float(getattr(audio, "greeting_intro_music_offset_sec", 0.0) or 0.0) * 1000
         )
         track_duck_db = float(getattr(audio, "greeting_intro_track_duck_db", 0.0) or 0.0)
-        voice_gain = float(getattr(audio, "greeting_intro_voice_gain_db", 0.0) or 0.0)
+        voice_gain = audio_float(getattr(audio, "greeting_intro_voice_gain_db", None), 0.0)
         voice_key = self._track_greeting_voice_key(audio)
         intro_key = str(intro.resolve())
         return self._ensure_ivr_wav_dir() / (
@@ -3778,13 +4159,13 @@ class CallManager:
         if not self._track_greeting_cache_stale(combined, intro, voice_wav):
             logger.info("Accueil track cache: {}", combined.name)
             return combined
-        intro_ms = int(float(getattr(audio, "greeting_intro_sec", 2.0) or 2.0) * 1000)
-        crossfade_ms = int(float(getattr(audio, "greeting_intro_crossfade_ms", 450) or 450))
+        intro_ms = int(round(audio_float(getattr(audio, "greeting_intro_sec", None), 2.0) * 1000))
+        crossfade_ms = audio_int(getattr(audio, "greeting_intro_crossfade_ms", None), 450)
         music_offset_ms = int(
             float(getattr(audio, "greeting_intro_music_offset_sec", 0.0) or 0.0) * 1000
         )
         track_duck_db = float(getattr(audio, "greeting_intro_track_duck_db", 0.0) or 0.0)
-        voice_gain = float(getattr(audio, "greeting_intro_voice_gain_db", 0.0) or 0.0)
+        voice_gain = audio_float(getattr(audio, "greeting_intro_voice_gain_db", None), 0.0)
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             None,
@@ -3839,11 +4220,11 @@ class CallManager:
         greeting_wav = await self._resolve_greeting_modem_wav(greeting, audio)
         intro_mode = str(getattr(audio, "greeting_intro_mode", "none") or "none")
         if intro and intro.is_file() and greeting_wav and greeting_wav.is_file():
-            intro_ms = int(float(getattr(audio, "greeting_intro_sec", 3.2) or 3.2) * 1000)
-            crossfade_ms = int(float(getattr(audio, "greeting_intro_crossfade_ms", 520) or 520))
+            intro_ms = int(round(audio_float(getattr(audio, "greeting_intro_sec", None), 3.2) * 1000))
+            crossfade_ms = audio_int(getattr(audio, "greeting_intro_crossfade_ms", None), 520)
             intro_variant = str(getattr(audio, "greeting_intro_variant", "tesla") or "tesla")
             bed_db = resolve_intro_voice_bed_gain_db(audio, intro_variant)
-            voice_gain = float(getattr(audio, "greeting_intro_voice_gain_db", 0.0) or 0.0)
+            voice_gain = audio_float(getattr(audio, "greeting_intro_voice_gain_db", None), 0.0)
             from backend.voice.musicscreen_jingles import is_musicscreen_jingle
 
             bed_variant = getattr(audio, "greeting_intro_bed_variant", None)
@@ -4200,7 +4581,11 @@ class CallManager:
                     temp_wav.unlink()
                 except OSError:
                     pass
-            if rec:
+            # Ne pas rouvrir VRX apres raccrochage distant : ca efface
+            # last_vrx_stop_reason et jouait le goodbye sur ligne morte (#130).
+            if rec and not (
+                self.modem.caller_line_finished() or self.modem.remote_hangup_detected()
+            ):
                 await rec.resume(already_in_voice_mode=True)
 
     async def _record_message(self, recorder: Optional[_IncomingLineRecorder] = None):

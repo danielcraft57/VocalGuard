@@ -6,20 +6,20 @@ import { getStoredCredentials } from "../../src/services/credentials";
 import { isApiUnauthorized } from "../../src/services/api";
 import { OfflineBanner } from "../../src/components/OfflineBanner";
 import { StatsBanner } from "../../src/components/StatsBanner";
-import { CallStatusBadge } from "../../src/components/CallStatusBadge";
+import { CallListItem } from "../../src/components/CallListItem";
+import { CallDetailModal } from "../../src/components/CallDetailModal";
 import { getAppDb } from "../../src/db/getAppDb";
 import type { CallRow } from "../../src/db/schema";
 import { resolveConnectivityState } from "../../src/services/connectivity";
 import { log } from "../../src/services/log";
 import { fetchMobileStats, MobileStats } from "../../src/services/stats";
 import { syncFromServer } from "../../src/services/sync";
-import { formatCallTime, formatDuration } from "../../src/utils/format";
 import { navigateToDialer } from "../../src/utils/nav";
 import { colors } from "../../src/theme/colors";
 import { icons } from "../../src/theme/icons";
 
 /**
- * Liste des appels avec stats dashboard, badges statut et sync offline.
+ * Liste des appels avec stats, OSINT FR, direction et detail karaoke au clic.
  */
 export default function CallsScreen() {
   const router = useRouter();
@@ -29,6 +29,7 @@ export default function CallsScreen() {
   const [connState, setConnState] = useState<"online" | "offline" | "syncing">("offline");
   const [lastSync, setLastSync] = useState<string | null>(null);
   const [pullRefreshing, setPullRefreshing] = useState(false);
+  const [selectedCall, setSelectedCall] = useState<CallRow | null>(null);
   const lastSyncRef = useRef<string | null>(null);
   const refreshInFlight = useRef(false);
   const refreshSeq = useRef(0);
@@ -112,42 +113,6 @@ export default function CallsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- init once
   }, []);
 
-  const renderCall = ({ item }: { item: CallRow }) => {
-    const title = item.caller_name?.trim() || item.phone_number || "Inconnu";
-    const subtitle = item.caller_name ? item.phone_number : null;
-    const duration = formatDuration(item.duration);
-
-    return (
-      <Pressable
-        style={styles.row}
-        onPress={() => {
-          if (item.phone_number) navigateToDialer(router, item.phone_number);
-        }}
-      >
-        <View style={styles.iconWrap}>
-          <MaterialCommunityIcons name={icons.tabCalls} size={22} color={colors.primary} />
-        </View>
-        <View style={styles.body}>
-          <View style={styles.titleRow}>
-            <Text style={styles.title} numberOfLines={1}>
-              {title}
-            </Text>
-            <Text style={styles.time}>{formatCallTime(item.call_time)}</Text>
-          </View>
-          {subtitle ? (
-            <Text style={styles.subtitle} numberOfLines={1}>
-              {subtitle}
-            </Text>
-          ) : null}
-          <View style={styles.metaRow}>
-            <CallStatusBadge status={item.status} />
-            {duration ? <Text style={styles.duration}>{duration}</Text> : null}
-          </View>
-        </View>
-      </Pressable>
-    );
-  };
-
   return (
     <View style={styles.container}>
       <OfflineBanner state={connState} lastSyncLabel={lastSync ? `sync ${lastSync}` : undefined} />
@@ -176,7 +141,16 @@ export default function CallsScreen() {
             </Pressable>
           </View>
         }
-        renderItem={renderCall}
+        renderItem={({ item }) => (
+          <CallListItem item={item} onPress={(row) => setSelectedCall(row)} />
+        )}
+      />
+      <CallDetailModal
+        call={selectedCall}
+        visible={selectedCall != null}
+        onClose={() => setSelectedCall(null)}
+        onRecall={(phone) => navigateToDialer(router, phone)}
+        onOsintUpdated={() => void loadLocal()}
       />
     </View>
   );
@@ -184,29 +158,6 @@ export default function CallsScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.slate },
-  row: {
-    flexDirection: "row",
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.slateLight,
-    gap: 12,
-  },
-  iconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: colors.slateLight,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  body: { flex: 1, minWidth: 0 },
-  titleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  title: { color: colors.text, fontSize: 16, fontWeight: "600", flex: 1 },
-  time: { color: colors.textMuted, fontSize: 12 },
-  subtitle: { color: colors.textMuted, fontSize: 13, marginTop: 2 },
-  metaRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 6 },
-  duration: { color: colors.textMuted, fontSize: 12 },
   emptyWrap: { alignItems: "center", paddingHorizontal: 32, paddingTop: 48, gap: 8 },
   emptyTitle: { color: colors.text, fontSize: 17, fontWeight: "600", marginTop: 8 },
   emptyHint: { color: colors.textMuted, textAlign: "center", lineHeight: 20 },

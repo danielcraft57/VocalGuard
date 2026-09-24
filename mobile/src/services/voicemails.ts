@@ -1,8 +1,8 @@
 /**
  * API messages vocaux (Bearer public mobile).
  */
-import { File, Paths } from "expo-file-system";
 import { apiGet, ApiConfig, buildApiUrl } from "./api";
+import { downloadAuthAudio } from "./downloadAudio";
 
 /**
  * URL stream audio WAV authentifie.
@@ -19,26 +19,10 @@ export function voicemailAudioUrl(config: ApiConfig, id: number): string {
  *
  * @param config API mobile.
  * @param id Identifiant message.
- * @returns URI locale (file://) pour expo-audio.
+ * @returns URI locale (file://) ou blob: (web).
  */
 export async function downloadVoicemailAudio(config: ApiConfig, id: number): Promise<string> {
-  const url = voicemailAudioUrl(config, id);
-  const response = await fetch(url, {
-    headers: { Authorization: `Bearer ${config.token}` },
-  });
-  if (!response.ok) {
-    throw new Error(`Telechargement audio echoue (${response.status})`);
-  }
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  const file = new File(Paths.cache, `vm_${id}.wav`);
-  const writer = file.writableStream().getWriter();
-  await writer.write(bytes);
-  await writer.close();
-  const raw = (file as unknown as { uri: string }).uri;
-  if (!raw) {
-    throw new Error("Chemin audio local invalide");
-  }
-  return raw.startsWith("file://") ? raw : `file://${raw}`;
+  return downloadAuthAudio(config, voicemailAudioUrl(config, id), `vm_${id}.wav`);
 }
 
 /**
