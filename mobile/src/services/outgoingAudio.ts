@@ -4,16 +4,8 @@
 
 export type OutgoingState = "idle" | "dialing" | "connected" | "offline" | "error";
 
-/**
- * Construit l URL WSS audio sortant.
- *
- * @param telephonyBase Base daemon (ex. wss://node12.lan/ws/outgoing-call).
- * @param callId Identifiant appel.
- */
-export function buildOutgoingAudioWsUrl(telephonyBase: string, callId: number): string {
-  const base = telephonyBase.replace(/\/$/, "");
-  return `${base}/${callId}/audio`;
-}
+/** @see outgoingCall.buildOutgoingAudioWsUrl */
+export { buildOutgoingAudioWsUrl } from "./outgoingCall";
 
 /**
  * Etat dialer selon connectivite LAN.

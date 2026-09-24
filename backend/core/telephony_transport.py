@@ -475,6 +475,26 @@ class DualTransport:
         return snap
 
 
+def outgoing_transport_ready(call_manager: Any) -> bool:
+    """
+    True si un backend peut composer (modem et/ou VoIP stub).
+
+    @param call_manager CallManager (modem + transport).
+    @returns Pret pour start outgoing.
+    """
+    backend = getattr(call_manager, "telephony_backend", None)
+    transport = getattr(call_manager, "transport", None)
+    modem_ok = bool(
+        getattr(getattr(call_manager, "modem", None), "is_initialized", False)
+    )
+    voip_ok = bool(transport and getattr(transport, "is_initialized", False))
+    if backend == TelephonyBackend.VOIP:
+        return voip_ok
+    if backend == TelephonyBackend.DUAL:
+        return modem_ok or voip_ok
+    return modem_ok
+
+
 def parse_telephony_backend(value: Optional[str]) -> TelephonyBackend:
     """
     Parse la valeur config / env.

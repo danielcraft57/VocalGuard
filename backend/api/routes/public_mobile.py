@@ -36,7 +36,9 @@ from backend.api.routes.calls import (
     OutgoingCallActionResponse,
     OutgoingCallStartRequest,
     _profile_to_osint_response,
+    _proxy_outgoing_to_telephony,
     _safe_recording_path,
+    _should_proxy_outgoing_to_daemon,
 )
 from backend.api.routes.voicemails import _resolve_voicemail_audio
 from backend.core.config import Config
@@ -60,6 +62,38 @@ router = APIRouter(prefix="/public", tags=["public-mobile"])
 
 # Fenetre de re-sync messages vocaux (transcription STT arrive souvent apres le 1er delta).
 _VM_DELTA_LOOKBACK_HOURS = 72
+
+
+def _outgoing_transport_ready(call_manager) -> bool:
+    """Delegue a telephony_transport.outgoing_transport_ready."""
+    from backend.core.telephony_transport import outgoing_transport_ready
+
+    return outgoing_transport_ready(call_manager)
+
+
+def _telephony_public_ws_base(config: Config) -> Optional[str]:
+    """
+    Base WS audio publiee au mobile (sans chemin /ws/outgoing-call).
+
+    @param config Config app.
+    @returns Ex. ws://node14.lan:8090 ou None.
+    """
+    explicit = (getattr(config, "telephony_public_ws_base", None) or "").strip()
+    if not explicit:
+        import os
+
+        explicit = (os.environ.get("TELEPHONY_PUBLIC_WS_BASE") or "").strip()
+    if explicit:
+        u = explicit.rstrip("/")
+        if u.startswith("http://"):
+            u = "ws://" + u[len("http://") :]
+        elif u.startswith("https://"):
+            u = "wss://" + u[len("https://") :]
+        return u
+    daemon = (getattr(config, "telephony_daemon_url", None) or "").strip().rstrip("/")
+    if daemon:
+        return daemon.replace("https://", "wss://").replace("http://", "ws://")
+    return None
 
 
 def _mobile_voicemail_audio_path(source: Path) -> Path:
@@ -530,23 +564,39 @@ async def public_mobile_ping(
     request: Request,
     db: Session = Depends(get_db),
     token: ApiPublicToken = Depends(_require_public_token),
+    config: Config = Depends(get_config),
 ) -> dict:
     """
-    Test connexion securise pour l app mobile (API + permissions + modem).
+    Test connexion securise pour l app mobile (API + permissions + transport).
 
-    @returns Etat des composants critiques.
+    @returns Etat des composants critiques + base WS telephonie.
     """
+    _ = db
     call_manager = getattr(request.app.state, "call_manager", None)
     modem_ok = False
+    transport_ok = False
+    backend = str(getattr(config, "telephony_backend", "modem") or "modem")
     if call_manager is not None:
         modem = getattr(call_manager, "modem", None)
         modem_ok = bool(modem and getattr(modem, "is_initialized", False))
+        transport = getattr(call_manager, "transport", None)
+        transport_ok = bool(transport and getattr(transport, "is_initialized", False))
+        backend = str(
+            getattr(getattr(call_manager, "telephony_backend", None), "value", None)
+            or backend
+        )
 
     return {
         "ok": True,
         "api_ok": True,
         "ws_ok": bool(getattr(token, "can_subscribe_realtime", False)),
         "modem_ok": modem_ok,
+        "transport_ok": transport_ok or modem_ok,
+        "telephony_backend": backend,
+        "telephony_ws_base": _telephony_public_ws_base(config),
+        "outgoing_ready": _outgoing_transport_ready(call_manager)
+        if call_manager is not None
+        else False,
         "permissions": {
             "can_read_calls": bool(token.can_read_calls),
             "can_read_voicemails": bool(getattr(token, "can_read_voicemails", False)),
@@ -562,19 +612,34 @@ async def public_outgoing_start(
     payload: OutgoingCallStartRequest,
     request: Request,
     token: ApiPublicToken = Depends(_require_public_token),
+    config: Config = Depends(get_config),
 ) -> OutgoingCallActionResponse:
     """
     Demarre un appel sortant via token API mobile (LAN).
+
+    Proxifie vers le daemon telephonie si USE_TELEPHONY_DAEMON (comme le dialer web),
+    pour que le chemin modem / VoIP tourne la ou le transport est actif.
 
     @param payload Numero a appeler.
     @returns Identifiant session sortante.
     """
     _require_token_permission(token, "can_write_calls", "Ce token ne peut pas initier d appels sortants.")
+    if _should_proxy_outgoing_to_daemon(config, request):
+        return await _proxy_outgoing_to_telephony(
+            request,
+            config,
+            "/api/v1/calls/outgoing/start",
+            {"phone_number": payload.phone_number},
+        )
+
     call_manager = getattr(request.app.state, "call_manager", None)
     if call_manager is None:
         raise HTTPException(status_code=503, detail="Call manager indisponible.")
-    if not call_manager.modem.is_initialized:
-        raise HTTPException(status_code=503, detail="Modem non initialise.")
+    if not _outgoing_transport_ready(call_manager):
+        raise HTTPException(
+            status_code=503,
+            detail="Transport telephonie non pret (modem / VoIP stub).",
+        )
 
     phone = payload.phone_number.strip()
     if not phone:
@@ -598,11 +663,21 @@ async def public_outgoing_dtmf(
     payload: DtmfRequest,
     request: Request,
     token: ApiPublicToken = Depends(_require_public_token),
+    config: Config = Depends(get_config),
 ) -> OutgoingCallActionResponse:
     """Envoie une touche DTMF pendant un appel sortant mobile."""
     _require_token_permission(token, "can_write_calls", "Ce token ne peut pas controler les appels sortants.")
+    if _should_proxy_outgoing_to_daemon(config, request):
+        return await _proxy_outgoing_to_telephony(
+            request,
+            config,
+            f"/api/v1/calls/outgoing/{call_id}/dtmf",
+            {"digit": payload.digit},
+        )
+
     from backend.core.outgoing_session_registry import outgoing_sessions
     from backend.api.routes.calls import _publish_log
+    from backend.core.telephony_transport import TelephonyBackend
 
     call_manager = getattr(request.app.state, "call_manager", None)
     if call_manager is None:
@@ -611,7 +686,14 @@ async def public_outgoing_dtmf(
     if session is None:
         raise HTTPException(status_code=404, detail="Session d appel sortant introuvable.")
     digit = payload.digit.strip()
-    ok = await call_manager.modem.send_dtmf(digit)
+    backend = getattr(call_manager, "telephony_backend", None)
+    ok = False
+    if backend in (TelephonyBackend.VOIP, TelephonyBackend.DUAL):
+        transport = getattr(call_manager, "transport", None)
+        if transport is not None:
+            ok = bool(await transport.send_dtmf(digit))
+    if not ok:
+        ok = bool(await call_manager.modem.send_dtmf(digit))
     if not ok:
         raise HTTPException(status_code=400, detail="Echec envoi DTMF.")
     await _publish_log(call_id, session.phone_number, f"DTMF mobile: {digit}")
@@ -623,16 +705,33 @@ async def public_outgoing_hangup(
     call_id: int,
     request: Request,
     token: ApiPublicToken = Depends(_require_public_token),
+    config: Config = Depends(get_config),
 ) -> OutgoingCallActionResponse:
     """Raccroche un appel sortant mobile."""
     _require_token_permission(token, "can_write_calls", "Ce token ne peut pas controler les appels sortants.")
+    if _should_proxy_outgoing_to_daemon(config, request):
+        return await _proxy_outgoing_to_telephony(
+            request,
+            config,
+            f"/api/v1/calls/outgoing/{call_id}/hangup",
+            {},
+        )
+
     from backend.core.outgoing_session_registry import outgoing_sessions
+    from backend.api.routes.calls import _publish_log
+    import asyncio
 
     call_manager = getattr(request.app.state, "call_manager", None)
-    if call_manager is None:
-        raise HTTPException(status_code=503, detail="Call manager indisponible.")
     session = outgoing_sessions.get(call_id)
     if session is None:
-        raise HTTPException(status_code=404, detail="Session d appel sortant introuvable.")
-    session.cancel_requested = True
+        return OutgoingCallActionResponse(
+            ok=True, call_id=call_id, message="Session deja terminee"
+        )
+    asyncio.create_task(
+        _publish_log(call_id, session.phone_number, "Raccrochage demande depuis mobile")
+    )
+    session.stop_event.set()
+    if call_manager is not None and getattr(call_manager, "modem", None) is not None:
+        call_manager.modem._voice_abort = True
     return OutgoingCallActionResponse(ok=True, call_id=call_id, message="Raccrochage demande")
+

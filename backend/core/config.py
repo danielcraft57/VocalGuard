@@ -132,7 +132,8 @@ class Config(BaseSettings):
     sip_uri: Optional[str] = Field(default=None)
     sip_user: Optional[str] = Field(default=None)
     sip_password: Optional[str] = Field(default=None)
-    sip_realm: Optional[str] = Field(default=None)
+    # Base WS audio exposee au mobile (ex. ws://node14.lan:8090). Sinon derive de telephony_daemon_url.
+    telephony_public_ws_base: Optional[str] = Field(default=None)
     
     # Blocage (inspire de callattendant: NOMOROBO USA, SHOULDIANSWER hors USA, ou vide pour desactiver)
     block_enabled: bool = Field(default=True)
@@ -348,6 +349,10 @@ class Config(BaseSettings):
             self.sip_password = os.environ.get("SIP_PASSWORD", "").strip() or None
         if os.environ.get("SIP_REALM"):
             self.sip_realm = os.environ.get("SIP_REALM", "").strip() or None
+        if os.environ.get("TELEPHONY_PUBLIC_WS_BASE"):
+            self.telephony_public_ws_base = (
+                os.environ.get("TELEPHONY_PUBLIC_WS_BASE", "").strip() or None
+            )
 
     def load_from_yaml(self, path: Path):
         """

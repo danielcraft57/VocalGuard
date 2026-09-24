@@ -13,10 +13,14 @@ audio analogique optionnelle (`outgoing_use_vtr`), distincte de `telephony_backe
 ## Architecture
 
 ```
-Dialer browser (PCM s16le 16 kHz)
+App mobile / dialer browser
+        |
+        |  REST Bearer /api/v1/public/calls/outgoing/*
+        v
+API (FastAPI)  --proxy-->  daemon :8090  (si USE_TELEPHONY_DAEMON)
         |
         v
-OutgoingCallSession + WS /ws/outgoing-call/{id}/audio
+OutgoingCallSession + WS /ws/outgoing-call/{id}/audio  (PCM s16le 16 kHz)
         |
         v
 CallManager.transport  <--- factory selon telephony_backend
@@ -25,6 +29,10 @@ CallManager.transport  <--- factory selon telephony_backend
         +-- VoipTransport   -> stub echo (pas de registre SIP)
         +-- DualTransport   -> entrant modem + sortant voip
 ```
+
+Mobile (`mobile/app/(tabs)/dialer.tsx`) : start -> WS audio -> hangup/DTMF.
+Ping `GET /public/mobile/ping` expose `telephony_backend`, `telephony_ws_base`,
+`outgoing_ready`. Config optionnelle : `telephony_public_ws_base`.
 
 Fichiers :
 
@@ -53,7 +61,8 @@ Prod node14 : laisser `telephony_backend: modem`.
 2. Status : `GET http://127.0.0.1:8090/api/v1/voip/status`
 3. Entrant simule :
    `POST /api/v1/voip/simulate-incoming` body `{"phone_number":"0612345678"}`
-4. Sortant : dialer UI habituel — log `Full-duplex VoIP stub` ; micro echoe sur la ligne.
+4. Sortant : dialer web ou app mobile (appairage) — log `Full-duplex VoIP stub` ;
+   micro echoe sur la ligne (full duplex natif Expo web ; natif = downlink WAV).
 
 ## Brancher un vrai compte SIP (plus tard)
 

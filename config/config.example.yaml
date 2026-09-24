@@ -77,6 +77,8 @@ sip_uri: null
 sip_user: null
 sip_password: null
 sip_realm: null
+# WS audio mobile / dialer (sinon derive de TELEPHONY_DAEMON_URL)
+telephony_public_ws_base: null
 
 # Blocage (inspire de callattendant: NOMOROBO USA, SHOULDIANSWER hors USA, ou vide)
 block_enabled: true

@@ -1282,8 +1282,13 @@ async def start_outgoing_call(
     call_manager = getattr(request.app.state, "call_manager", None)
     if call_manager is None:
         raise HTTPException(status_code=503, detail="Call manager indisponible")
-    if not call_manager.modem.is_initialized:
-        raise HTTPException(status_code=503, detail="Modem non initialise")
+    from backend.core.telephony_transport import outgoing_transport_ready
+
+    if not outgoing_transport_ready(call_manager):
+        raise HTTPException(
+            status_code=503,
+            detail="Transport telephonie non pret (modem / VoIP stub)",
+        )
 
     phone = payload.phone_number.strip()
     if not phone:
