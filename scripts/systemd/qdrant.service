@@ -1,0 +1,17 @@
+[Unit]
+Description=Qdrant vector DB (VocalGuard intents)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/opt/qdrant
+ExecStart=/opt/qdrant/bin/qdrant --config-path /opt/qdrant/config/config.yaml
+Restart=on-failure
+RestartSec=3
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,18 @@
+# Configuration Qdrant (VocalGuard intents) - node15
+# Storage local, HTTP LAN, gRPC local.
+
+log_level: INFO
+
+storage:
+  storage_path: /var/lib/qdrant/storage
+
+service:
+  host: 0.0.0.0
+  http_port: 6333
+  grpc_port: 6334
+  enable_cors: true
+
+cluster:
+  enabled: false
+
+telemetry_disabled: true

@@ -21,6 +21,8 @@ export type ChatMsg = {
   responseIndex?: number;
   personaReason?: string | null;
   moodTone?: string | null;
+  /** Moteur predict : qdrant | pgvector | python | node15 */
+  engine?: string | null;
 };
 
 export type ChatSession = {

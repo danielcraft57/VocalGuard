@@ -93,6 +93,15 @@ Objectif : listes et dashboard plus rapides que l'ancien SQLite.
 
 Smoke rapide : `scripts/postgres/smoke_perf.sh`
 
+## Intents / embeddings
+
+Tables `intents`, `intent_patterns`, `intent_responses`, `intent_embeddings`
+(+ colonne `embedding` pgvector, migration Alembic `004`).
+
+La recherche ANN hot path en prod LAN passe par **Qdrant sur node15**
+(`QDRANT_URL`), avec Postgres comme source de verite et fallback pgvector.
+Voir [QDRANT_INTENTS.md](QDRANT_INTENTS.md).
+
 ## Scripts
 
 Voir `scripts/postgres/README.md` :

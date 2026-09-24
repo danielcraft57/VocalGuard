@@ -8,7 +8,7 @@ import {
 } from "../../services/kbApi";
 
 /**
- * Affiche si le mode conversation (STT + intents KB) est pret.
+ * Affiche si le mode conversation (STT + intents KB + Qdrant) est pret.
  */
 export function VgConversationModeStatus() {
   const [status, setStatus] = useState<KbConversationStatus | null>(null);
@@ -49,13 +49,19 @@ export function VgConversationModeStatus() {
   }
   if (!status) return null;
 
-  const ready = Boolean((status as { ready?: boolean }).ready);
+  const ready = Boolean(status.ready);
+  const qdrantLine = status.qdrant_ok
+    ? `Qdrant OK (${status.qdrant_points ?? 0} points).`
+    : status.qdrant_configured
+      ? `Qdrant KO${status.qdrant_detail ? ` - ${status.qdrant_detail}` : ""}.`
+      : "Qdrant non configure (fallback local).";
+
   return (
     <Alert severity={ready ? "success" : "info"} sx={{ mt: 1 }}>
       <Typography variant="body2">
         {ready
-          ? "Mode conversation pret (STT + intents)."
-          : "Mode conversation : verifie STT / intents KB avant usage."}
+          ? `Mode conversation pret (STT + intents). ${qdrantLine}`
+          : `Mode conversation : verifie STT / intents KB avant usage. ${qdrantLine}`}
       </Typography>
     </Alert>
   );

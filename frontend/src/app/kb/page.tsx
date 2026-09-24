@@ -38,6 +38,7 @@ import CheckIcon from "@mui/icons-material/Check";
 import CloseIcon from "@mui/icons-material/Close";
 import { AppLayout } from "../../components/AppLayout";
 import { KbIntentBars } from "../../components/kb/KbIntentBars";
+import { KbVectorEngineChip } from "../../components/kb/KbVectorEngineChip";
 import { VgPageHeader } from "../../components/mui/VgPageHeader";
 import { VgSettingsSection } from "../../components/mui/VgSettingsSection";
 import {
@@ -335,7 +336,8 @@ export default function KnowledgeBasePage(): React.ReactElement {
         preds: r.top_predictions?.slice(0, 5) || [],
         responseIndex: typeof r.response_index === "number" ? r.response_index : 0,
         personaReason: r.persona_reason || null,
-        moodTone: r.mood?.tone || null
+        moodTone: r.mood?.tone || null,
+        engine: r.source || null
       };
       working = {
         ...working,
@@ -566,9 +568,10 @@ export default function KnowledgeBasePage(): React.ReactElement {
     <AppLayout title="Base de connaissances" hidePageHeader>
       <VgPageHeader
         title="Base de connaissances"
-        subtitle="Tchatche en modale, historique, intents par groupes. Edite les reponses dans les bulles."
+        subtitle="Intents, Qdrant (node15), tchatche en modale, historique et groupes."
         action={
-          <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 1 }}>
+          <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 1, alignItems: "center" }}>
+            <KbVectorEngineChip />
             <Button
               component={Link}
               href="/settings/incoming-audio"

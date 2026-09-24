@@ -118,6 +118,16 @@ app = FastAPI(title="VocalGuard STT", version="1.2.0", lifespan=_lifespan)
 @app.get("/health")
 async def health() -> dict:
     """Etat du service et du modele."""
+    qdrant_url = (os.environ.get("QDRANT_URL") or "").strip()
+    qdrant_ok = False
+    if qdrant_url:
+        try:
+            import httpx
+
+            r = httpx.get(f"{qdrant_url.rstrip('/')}/", timeout=1.0)
+            qdrant_ok = r.status_code == 200
+        except Exception:
+            qdrant_ok = False
     return {
         "status": "ok" if stt_engine.model_loaded() else "loading",
         "engine": stt_engine.engine_name(),
@@ -125,6 +135,8 @@ async def health() -> dict:
         "model": stt_engine.model_display(),
         "model_path": stt_engine.model_display(),
         "features": ["transcribe", "intent-predict", "tts", "greeting-mix"],
+        "qdrant_url": qdrant_url or None,
+        "qdrant_ok": qdrant_ok,
     }
 
 

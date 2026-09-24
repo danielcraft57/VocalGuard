@@ -12,6 +12,8 @@
 | [AUDIO_SETUP_RPI.md](AUDIO_SETUP_RPI.md) / [TROUBLESHOOTING_AUDIO.md](TROUBLESHOOTING_AUDIO.md) | Audio modem / ALSA |
 | [MODEM_USR5637.md](MODEM_USR5637.md) | Modem USR5637 (Amazon B0013FDLM0) : specs, capacites, commandes AT |
 | [CI_CD.md](CI_CD.md) | CI, deploiement |
+| [VOICE_NODE15.md](VOICE_NODE15.md) | Voix / STT-TTS node15, mode conversation KB |
+| [QDRANT_INTENTS.md](QDRANT_INTENTS.md) | Qdrant intents sur node15 (install sans Docker, migration, sync) |
 
 ## Architecture (plusieurs versions — la plus récente en premier)
 

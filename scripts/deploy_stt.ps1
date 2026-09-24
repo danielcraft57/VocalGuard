@@ -111,7 +111,7 @@ set -e
 cd $RemoteRoot
 if [ ! -d venv ]; then python3 -m venv venv; fi
 ./venv/bin/pip install -q --upgrade pip
-./venv/bin/pip install -q 'fastapi>=0.115' 'uvicorn[standard]>=0.30' 'pydantic>=2.10' 'python-multipart>=0.0.9' soundfile loguru httpx pydub audioop-lts numpy edge-tts
+./venv/bin/pip install -q 'fastapi>=0.115' 'uvicorn[standard]>=0.30' 'pydantic>=2.10' 'python-multipart>=0.0.9' soundfile loguru httpx pydub audioop-lts numpy edge-tts 'sqlalchemy>=2.0' 'psycopg2-binary>=2.9' 'qdrant-client>=1.8'
 "@
 
 $existingTokenRaw = ssh $Remote "grep -E '^STT_INTERNAL_TOKEN=' $RemoteRoot/.env.stt 2>/dev/null || true"
@@ -123,6 +123,12 @@ if ($InternalToken) {
 } else {
     $token = -join ((48..57) + (65..90) + (97..122) | Get-Random -Count 32 | ForEach-Object { [char]$_ })
 }
+
+# Conserve DATABASE_URL / QDRANT_URL si deja configures (intents vectoriels)
+$existingDbRaw = ssh $Remote "grep -E '^DATABASE_URL=' $RemoteRoot/.env.stt 2>/dev/null || true"
+$existingQdrantRaw = ssh $Remote "grep -E '^QDRANT_URL=' $RemoteRoot/.env.stt 2>/dev/null || true"
+$existingDb = if ($null -ne $existingDbRaw) { "$existingDbRaw".Trim() } else { "" }
+$existingQdrant = if ($null -ne $existingQdrantRaw) { "$existingQdrantRaw".Trim() } else { "QDRANT_URL=http://127.0.0.1:6333" }
 
 $serverUrl = "http://127.0.0.1:$WhisperServerPort"
 $envContent = @"
@@ -140,6 +146,8 @@ STT_WHISPER_CPP_BIN=/opt/vocalguard-stt/whisper.cpp/build/bin/whisper-cli
 STT_WHISPER_CPP_MODEL=/opt/vocalguard-stt/whisper-models/$ModelName
 STT_VOSK_MODEL_PATH=vosk-models/$VoskModelDir
 STT_INTERNAL_TOKEN=$token
+$existingQdrant
+$existingDb
 "@
 $envTmp = Join-Path $env:TEMP "vocalguard-stt.env"
 Set-Content -Path $envTmp -Value $envContent -NoNewline

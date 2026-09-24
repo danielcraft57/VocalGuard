@@ -135,6 +135,12 @@ export type KbConversationStatus = {
   intents_enabled: number;
   voices_ready: number;
   voices_complete: boolean;
+  qdrant_configured?: boolean;
+  qdrant_ok?: boolean;
+  qdrant_url?: string | null;
+  qdrant_points?: number;
+  qdrant_detail?: string | null;
+  vector_engine?: string | null;
 };
 
 /**

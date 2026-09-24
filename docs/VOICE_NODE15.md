@@ -1,11 +1,18 @@
-# Voice conversation / KB (node15 + intents Postgres)
+# Voice conversation / KB (node15 + intents Postgres / Qdrant)
 
 ## Architecture
 
 - **node14** : telephonie, VAD tour (`TurnVad`), belief intents, play WAV modem sous `ivr_wav/kb_*.wav`.
 - **node15** : `POST /v1/transcribe?mode=live|final`, `POST /v1/intent-predict`, `POST /v1/tts`, `POST /v1/greeting-mix` (TTS + mix intro).
-- **Postgres** : tables `intents`, `intent_patterns`, `intent_responses`, `intent_embeddings` (+ colonne `embedding` pgvector), `call_leads`.
+- **Qdrant** (node15, sans Docker) : collection `intents` (vecteurs 384, Cosine) pour la recherche ANN. Service systemd `qdrant`, HTTP `:6333`.
+- **Postgres** (node14) : tables `intents`, `intent_patterns`, `intent_responses`, `intent_embeddings` (+ colonne `embedding` pgvector en fallback), `call_leads`.
 - Seed one-shot : `data/intents/kb_seed/conversation_v1.json` (plus de JSON runtime).
+
+Predict : Qdrant si `QDRANT_URL` est defini, sinon pgvector, sinon cosine Python.
+Migration : `python scripts/migrate_intents_to_qdrant.py` (voir `scripts/install_qdrant_node15.sh`).
+
+Detail complet (install, env, sync CRUD, benches, journal cutover) :
+[QDRANT_INTENTS.md](QDRANT_INTENTS.md).
 
 ## Activer le mode conversation
 
@@ -20,6 +27,7 @@ Aussi :
 ```text
 STT_SERVICE_URL=http://node15.lan:8100
 TTS_SERVICE_URL=http://node15.lan:8100
+QDRANT_URL=http://node15.lan:6333
 ```
 
 `TTS_SERVICE_URL` pilote la synthese distante (accueil incoming-audio, mix, prefetch KB).

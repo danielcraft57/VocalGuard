@@ -200,6 +200,11 @@ async def conversation_status(request: Request) -> Dict[str, Any]:
     # STT obligatoire ; voix prechargees recommandees (sinon TTS a la volee).
     ready = stt_ok and intents_enabled > 0
     voices_complete = intents_enabled > 0 and voices_ready >= intents_enabled
+
+    from backend.voice.qdrant_intents import fetch_qdrant_status
+
+    qdrant = fetch_qdrant_status()
+
     return {
         "ready": ready,
         "stt_configured": stt_configured,
@@ -208,6 +213,16 @@ async def conversation_status(request: Request) -> Dict[str, Any]:
         "intents_enabled": intents_enabled,
         "voices_ready": voices_ready,
         "voices_complete": voices_complete,
+        "qdrant_configured": bool(qdrant.get("configured")),
+        "qdrant_ok": bool(qdrant.get("ok")),
+        "qdrant_url": qdrant.get("url"),
+        "qdrant_points": int(qdrant.get("points_count") or 0),
+        "qdrant_detail": qdrant.get("detail"),
+        "vector_engine": (
+            "qdrant"
+            if qdrant.get("ok")
+            else ("pgvector" if qdrant.get("configured") else "local")
+        ),
     }
 
 
@@ -343,9 +358,6 @@ async def kb_chat(body: ChatBody, request: Request) -> Dict[str, Any]:
     @param body Message + historiques replies / tags / textes user.
     @returns reply, tag, score, mood, persona_reason, top_predictions.
     """
-    config = getattr(request.app.state, "config", None)
-    stt_url = getattr(config, "stt_service_url", None) if config else None
-    token = getattr(config, "stt_internal_token", None) if config else None
     preds: List[Dict[str, Any]] = []
     source = "local"
 
@@ -356,20 +368,14 @@ async def kb_chat(body: ChatBody, request: Request) -> Dict[str, Any]:
 
     predict_text = predict_text_for_intent(body.text, body.recent_tags)
 
-    if stt_url:
-        client = Node15VoiceClient(stt_url, token=token, timeout_sec=30.0)
-        try:
-            preds = await client.intent_predict(predict_text, top_k=body.top_k)
-            source = "node15"
-        except Exception as exc:
-            logger.warning("Chat predict node15 KO, fallback local: {}", exc)
-
+    # Tchat UI : predict local (Qdrant/pgvector/python). node15 STT reste pour le telephone.
     db = _db()
     try:
         intent_repo.ensure_seeded(db, _base_path(request))
-        if not preds:
-            preds = intent_repo.predict_intent_scores(db, predict_text, top_k=body.top_k)
-            source = "local"
+        preds, engine = intent_repo.predict_intent_scores_detailed(
+            db, predict_text, top_k=body.top_k
+        )
+        source = engine
 
         raw_preds = list(preds)
         preds = apply_recent_tag_penalty(preds, body.recent_tags)
@@ -452,28 +458,34 @@ async def kb_chat(body: ChatBody, request: Request) -> Dict[str, Any]:
 @router.post("/intent-predict")
 async def intent_predict(body: IntentPredictBody, request: Request) -> Dict[str, Any]:
     """
-    Predict intents : proxy node15 si dispo, sinon Postgres local.
+    Predict intents (local Qdrant/pgvector/python ; node15 optionnel).
     """
     config = getattr(request.app.state, "config", None)
     stt_url = getattr(config, "stt_service_url", None) if config else None
     token = getattr(config, "stt_internal_token", None) if config else None
 
-    if stt_url:
-        client = Node15VoiceClient(stt_url, token=token, timeout_sec=30.0)
-        try:
-            preds = await client.intent_predict(body.text, top_k=body.top_k)
-            return {"top_predictions": preds, "source": "node15"}
-        except Exception as exc:
-            logger.warning("Predict node15 KO, fallback local: {}", exc)
-
     db = _db()
     try:
         intent_repo.ensure_seeded(db, _base_path(request))
-        preds = intent_repo.predict_intent_scores(db, body.text, top_k=body.top_k)
-        return {"top_predictions": preds, "source": "local"}
+        preds, engine = intent_repo.predict_intent_scores_detailed(
+            db, body.text, top_k=body.top_k
+        )
     finally:
         db.close()
 
+    if stt_url:
+        client = Node15VoiceClient(stt_url, token=token, timeout_sec=0.8)
+        try:
+            remote = await asyncio.wait_for(
+                client.intent_predict(body.text, top_k=body.top_k),
+                timeout=0.8,
+            )
+            if remote:
+                return {"top_predictions": remote, "source": "node15"}
+        except Exception as exc:
+            logger.debug("Predict node15 ignore ({})", exc)
+
+    return {"top_predictions": preds, "source": engine}
 
 @router.post("/voices/regenerate")
 async def regenerate_voices(body: PrefetchBody, request: Request) -> Dict[str, Any]:
