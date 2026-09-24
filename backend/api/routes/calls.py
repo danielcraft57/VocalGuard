@@ -195,6 +195,17 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
         return
     call_service = call_manager.call_service
     modem = call_manager.modem
+    from backend.core.telephony_transport import TelephonyBackend, parse_telephony_backend
+
+    telephony_backend = parse_telephony_backend(
+        getattr(call_manager.config, "telephony_backend", "modem")
+    )
+    use_voip_out = telephony_backend in (
+        TelephonyBackend.VOIP,
+        TelephonyBackend.DUAL,
+    )
+    transport = getattr(call_manager, "transport", None)
+    voip_session_active = False
     arecord_proc: Optional[asyncio.subprocess.Process] = None
     alsa_reader_task: Optional[asyncio.Task] = None
     finalize_completion = True
@@ -370,9 +381,23 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
             )
             alsa_reader_task = asyncio.create_task(_alsa_capture_loop())
 
-        dial_ok, raw = await modem.dial_number(session.phone_number)
-        preview = (raw or "").replace("\r\n", " ")[:420]
-        await _publish_log(session.call_id, session.phone_number, f"Reponse modem: {preview!r}")
+        dial_ok, raw = False, ""
+        if use_voip_out and transport is not None:
+            dial_ok, raw = await transport.dial(session.phone_number)
+            preview = (raw or "").replace("\r\n", " ")[:420]
+            await _publish_log(
+                session.call_id,
+                session.phone_number,
+                f"Reponse voip: {preview!r}",
+            )
+        else:
+            dial_ok, raw = await modem.dial_number(session.phone_number)
+            preview = (raw or "").replace("\r\n", " ")[:420]
+            await _publish_log(
+                session.call_id,
+                session.phone_number,
+                f"Reponse modem: {preview!r}",
+            )
         if not dial_ok:
             await _publish_log(session.call_id, session.phone_number, "Echec composition (pas OK/CONNECT)", "error")
             await call_service.miss_call(session.call_id)
@@ -391,7 +416,82 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
         vosk_stream_ok = call_manager.voice_recognition.outgoing_stream_start(stream_key)
         stt_allowed["ok"] = True
 
-        if arecord_proc is not None:
+        if use_voip_out and transport is not None:
+            await _publish_log(
+                session.call_id,
+                session.phone_number,
+                "Full-duplex VoIP stub (loopback PCM 16 kHz)",
+            )
+            voip_session_active = True
+            MIC_SLICE_BYTES = 3200
+            MAX_MIC_BACKLOG = 48000
+            mic_acc = bytearray()
+            line_bytes = 0
+            mic_bytes = 0
+            last_bytes_log = time.monotonic()
+            stt_task: Optional[asyncio.Task] = None
+
+            async def _stt_drain_copy_voip(pcm: bytes) -> None:
+                buf = bytearray(pcm)
+                try:
+                    await _feed_stt_stream(buf)
+                except Exception as stt_exc:
+                    logger.warning("STT stream sortant voip: {}", stt_exc)
+
+            async def _drain_mic_queue_voip() -> None:
+                try:
+                    while True:
+                        mic_acc.extend(session.mic_modem_queue.get_nowait())
+                except asyncio.QueueEmpty:
+                    pass
+                if len(mic_acc) > MAX_MIC_BACKLOG:
+                    del mic_acc[:-MAX_MIC_BACKLOG]
+
+            while not session.stop_event.is_set():
+                await _drain_mic_queue_voip()
+                uplink = b""
+                if mic_acc:
+                    take = min(len(mic_acc), MIC_SLICE_BYTES)
+                    uplink = bytes(mic_acc[:take])
+                    del mic_acc[:take]
+                if uplink:
+                    ok_w = await transport.write_pcm(uplink)
+                    if ok_w:
+                        mic_bytes += len(uplink)
+                        # Piste enregistrement : uplink deja s16le 16k — on stocke
+                        # aussi cote "modem track" via conversion noop si profil s16.
+                        _append_mic_uplink(
+                            pcm_s16le_16k_to_modem(uplink, voice_profile) or uplink
+                        )
+                chunk = await transport.read_pcm(2048)
+                if chunk:
+                    line_bytes += len(chunk)
+                    # Echo stub deja en 16 kHz s16le
+                    await session_broadcast_pcm(session, chunk)
+                    stt_buffer.extend(chunk)
+                    if len(stt_buffer) >= STT_FEED_BYTES and (
+                        stt_task is None or stt_task.done()
+                    ):
+                        to_feed = bytes(stt_buffer)
+                        stt_buffer.clear()
+                        stt_task = asyncio.create_task(_stt_drain_copy_voip(to_feed))
+                now_m = time.monotonic()
+                if now_m - last_bytes_log >= 5.0:
+                    last_bytes_log = now_m
+                    await _publish_log(
+                        session.call_id,
+                        session.phone_number,
+                        f"VoIP ligne={line_bytes} o, micro={mic_bytes} o",
+                    )
+                await asyncio.sleep(0.01)
+
+            await _publish_log(
+                session.call_id,
+                session.phone_number,
+                f"Fin session VoIP: ligne={line_bytes} o, micro={mic_bytes} o, "
+                f"reason={end_reason}",
+            )
+        elif arecord_proc is not None:
             while not session.stop_event.is_set():
                 await asyncio.sleep(0.05)
         elif modem.supports_voice_serial:
@@ -835,7 +935,10 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
         modem._outgoing_owns_serial = False
         await session_stop_mic_aplay(session)
         try:
-            await modem.hangup()
+            if voip_session_active and transport is not None:
+                await transport.hangup()
+            else:
+                await modem.hangup()
         except Exception:
             pass
         outgoing_sessions.pop(session.call_id, None)

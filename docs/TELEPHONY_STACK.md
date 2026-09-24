@@ -81,7 +81,19 @@ Voir `config/config.example.yaml`. Exemples :
 - `modem_pcw_off_for_cid` : `AT+PCW=0` au boot pour aider le CID.
 - `max_call_duration` : plafond duree appel (applique cote CallManager).
 - `mic_vad_rms` / `mic_vad_hangover_ms` : VAD micro sortant.
-- `outgoing_use_vtr` : reserve full-duplex ; si true sans support, fallback talkspurt VTX.
+- `outgoing_use_vtr` : essai AT+VTR modem (pas VoIP) ; defaut false.
+- `telephony_backend` : `modem` (prod) \| `voip` (stub loopback) \| `dual` — voir [TELEPHONY_VOIP.md](TELEPHONY_VOIP.md).
+
+## Backends modem vs voip
+
+| Backend | Entrant | Sortant | Full-duplex |
+|---------|---------|---------|-------------|
+| `modem` | RING/CID USB | ATD + VRX/VTX | Non (demi-duplex) |
+| `voip` | `POST /voip/simulate-incoming` (stub) | dial loopback | Oui (PCM echo) |
+| `dual` | modem | voip stub | Sortant oui |
+
+Sans compte SIP, le stub sert a valider le pipeline UI / events / WS audio.
+Un vrai stack SIP se brancheront derriere `VoipTransport` plus tard.
 
 ## Variables d'environnement (resume)
 
@@ -93,6 +105,8 @@ Voir `config/config.example.yaml`. Exemples :
 | `TELEPHONY_INTERNAL_TOKEN` | API + daemon | Meme secret pour l'en-tete `X-VocalGuard-Internal` sur `/internal/telephony-events`. |
 | `TELEPHONY_BIND_HOST` / `TELEPHONY_BIND_PORT` | Daemon | Ecoute (defaut unit : `0.0.0.0:8090` sur le LAN). |
 | `TELEPHONY_RELAY_WARN_INTERVAL_SEC` | Daemon (optionnel) | Limite la frequence des logs d'echec du relais HTTP (defaut 30 s). |
+| `TELEPHONY_BACKEND` | Daemon | `modem` \| `voip` \| `dual` (voir TELEPHONY_VOIP.md). |
+| `SIP_URI` / `SIP_USER` / `SIP_PASSWORD` / `SIP_REALM` | Daemon (futur) | Placeholders compte SIP. |
 
 ## Developpement : PC Windows + modem sur le Pi
 

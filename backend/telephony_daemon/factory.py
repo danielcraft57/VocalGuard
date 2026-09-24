@@ -39,8 +39,10 @@ def create_telephony_app(config: Config) -> FastAPI:
         app.state.call_manager_task = task
         app.state.call_manager_db = db
         logger.info(
-            "Telephony daemon pret (modem={}, relay vers {})",
-            call_manager.modem.is_initialized,
+            "Telephony daemon pret (backend={}, modem={}, relay vers {})",
+            getattr(config, "telephony_backend", "modem"),
+            call_manager.modem.is_initialized
+            or getattr(call_manager.transport, "is_initialized", False),
             config.telephony_public_api_url,
         )
         try:
@@ -89,24 +91,43 @@ def create_telephony_app(config: Config) -> FastAPI:
     app.include_router(outgoing_audio.router, tags=["outgoing-audio"])
     app.include_router(settings_routes.router, prefix="/api/v1", tags=["settings"])
 
+    from backend.api.routes import voip as voip_routes
+
+    app.include_router(voip_routes.router, prefix="/api/v1", tags=["voip"])
+
     @app.get("/health")
     async def health() -> JSONResponse:
         """
-        Sante daemon : 200 si modem OK, 503 sinon (monitoring / smoke).
+        Sante daemon : 200 si transport pret (modem ou voip stub), 503 sinon.
 
-        @returns Payload JSON (modem, firmware, relay, mode ligne).
+        @returns Payload JSON (modem, voip, firmware, relay, mode ligne).
         """
         cm = getattr(app.state, "call_manager", None)
+        backend = str(getattr(config, "telephony_backend", "modem") or "modem").lower()
         modem_ok = bool(cm and cm.modem.is_initialized)
+        transport_ok = bool(
+            cm and getattr(getattr(cm, "transport", None), "is_initialized", False)
+        )
+        if backend == "voip":
+            ready = transport_ok
+        elif backend == "dual":
+            ready = modem_ok or transport_ok
+        else:
+            ready = modem_ok
         payload: dict[str, Any] = {
-            "status": "ok" if modem_ok else "degraded",
+            "status": "ok" if ready else "degraded",
             "role": "telephony",
+            "telephony_backend": backend,
             "modem_initialized": modem_ok,
             "incoming_line_mode": resolve_incoming_line_mode(config) if config else "voicemail",
             "incoming_auto_answer": bool(getattr(config, "incoming_auto_answer", True)),
         }
         if cm:
-            payload.update(cm.modem.health_snapshot())
+            transport = getattr(cm, "transport", None)
+            if transport is not None and hasattr(transport, "health_snapshot"):
+                payload.update(transport.health_snapshot())
+            else:
+                payload.update(cm.modem.health_snapshot())
             payload["in_call"] = bool(cm.current_call_id)
             payload["current_call_id"] = cm.current_call_id
             if hasattr(cm, "incoming_policy"):
@@ -114,6 +135,6 @@ def create_telephony_app(config: Config) -> FastAPI:
         relay = getattr(app.state, "event_relay", None) or get_wired_relay()
         if relay is not None:
             payload.update(relay.health_fields())
-        return JSONResponse(payload, status_code=200 if modem_ok else 503)
+        return JSONResponse(payload, status_code=200 if ready else 503)
 
     return app

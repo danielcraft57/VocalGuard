@@ -253,6 +253,21 @@ class CallManager:
         self.config = config
         self.db = db
         self.modem = ModemHandler(config.modem_port, config.modem_baudrate)
+        from backend.core.telephony_transport import (
+            TelephonyBackend,
+            create_telephony_transport,
+            parse_telephony_backend,
+        )
+
+        self.telephony_backend = parse_telephony_backend(
+            getattr(config, "telephony_backend", "modem")
+        )
+        if self.telephony_backend == TelephonyBackend.VOIP:
+            self.transport = create_telephony_transport(TelephonyBackend.VOIP)
+        else:
+            self.transport = create_telephony_transport(
+                self.telephony_backend, modem=self.modem
+            )
         self.voice_recognition = VoiceRecognition(config)
         self.voice_synthesis = VoiceSynthesis(config)
         self.ivr_engine = IvrPatternsEngine(config)
@@ -298,6 +313,21 @@ class CallManager:
         
         # Enregistrer les handlers d'événements
         self._setup_event_handlers()
+
+    def get_voip_transport(self):
+        """
+        Retourne le VoipTransport si backend voip ou dual.
+
+        @returns VoipTransport ou None.
+        """
+        from backend.core.telephony_transport import DualTransport, VoipTransport
+
+        t = getattr(self, "transport", None)
+        if isinstance(t, VoipTransport):
+            return t
+        if isinstance(t, DualTransport):
+            return t.voip
+        return None
 
     def _log_call(self, phase: str, **fields: Any) -> None:
         """
@@ -569,7 +599,12 @@ class CallManager:
         # Modem : sur l API principale avec USE_TELEPHONY_DAEMON=1 le modem est sur le daemon (ex. node14).
         # Ne pas ouvrir MODEM_PORT ici (evite /dev/ttyACM0 sur Windows et traces inutiles).
         modem_initialized = False
-        if self.config.use_telephony_daemon:
+        from backend.core.telephony_transport import TelephonyBackend, DualTransport, VoipTransport
+
+        if self.telephony_backend == TelephonyBackend.VOIP:
+            await self.transport.start()
+            logger.info("Transport VoIP stub initialise (pas de modem)")
+        elif self.config.use_telephony_daemon:
             logger.info(
                 "USE_TELEPHONY_DAEMON=1 : modem gere par le service telephony — pas de port serie sur ce processus."
             )
@@ -582,6 +617,11 @@ class CallManager:
             else:
                 self.modem.on_incoming_call = self.handle_incoming_call
                 logger.info("Modem initialisé")
+            if isinstance(self.transport, DualTransport):
+                await self.transport.start()
+                logger.info("Transport dual : modem + VoIP stub")
+            elif modem_initialized:
+                await self.transport.start()
 
         # Initialiser la reconnaissance vocale (optionnel : si absent, pas de transcription IVR)
         try:

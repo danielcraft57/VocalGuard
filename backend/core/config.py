@@ -116,11 +116,18 @@ class Config(BaseSettings):
     modem_country_gci: Optional[str] = Field(default="3D")
     modem_distinctive_ring: bool = Field(default=False)
     modem_pcw_off_for_cid: bool = Field(default=True)
-    # Sortant : full-duplex AT+VTR (fallback talkspurt VRX/VTX si False / echec).
-    outgoing_use_vtr: bool = Field(default=True)
+    # Sortant modem : essai AT+VTR (pas VoIP). Defaut false — full-duplex = telephony_backend voip.
+    outgoing_use_vtr: bool = Field(default=False)
     # VAD micro sortant (RMS s16le).
     mic_vad_rms: int = Field(default=500)
     mic_vad_hangover_ms: int = Field(default=500)
+    # Transport telephonie : modem (prod) | voip (stub loopback) | dual (entrant modem + sortant voip).
+    telephony_backend: str = Field(default="modem")
+    # Placeholders SIP (vides tant qu'il n'y a pas de compte ; secrets via .env plus tard).
+    sip_uri: Optional[str] = Field(default=None)
+    sip_user: Optional[str] = Field(default=None)
+    sip_password: Optional[str] = Field(default=None)
+    sip_realm: Optional[str] = Field(default=None)
     
     # Blocage (inspire de callattendant: NOMOROBO USA, SHOULDIANSWER hors USA, ou vide pour desactiver)
     block_enabled: bool = Field(default=True)
@@ -318,6 +325,16 @@ class Config(BaseSettings):
                 "yes",
                 "on",
             )
+        if os.environ.get("TELEPHONY_BACKEND"):
+            self.telephony_backend = os.environ.get("TELEPHONY_BACKEND", "").strip().lower() or "modem"
+        if os.environ.get("SIP_URI"):
+            self.sip_uri = os.environ.get("SIP_URI", "").strip() or None
+        if os.environ.get("SIP_USER"):
+            self.sip_user = os.environ.get("SIP_USER", "").strip() or None
+        if os.environ.get("SIP_PASSWORD"):
+            self.sip_password = os.environ.get("SIP_PASSWORD", "").strip() or None
+        if os.environ.get("SIP_REALM"):
+            self.sip_realm = os.environ.get("SIP_REALM", "").strip() or None
 
     def load_from_yaml(self, path: Path):
         """

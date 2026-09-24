@@ -65,9 +65,18 @@ modem_distinctive_ring: false
 # Gains V.253 (null = ne pas envoyer) ; calibrer sur node14
 modem_voice_vgr: null
 modem_voice_vgt: null
-outgoing_use_vtr: true  # full-duplex AT+VTR ; fallback talkspurt si CONNECT echoue
+# AT+VTR modem = pas du VoIP (demi-duplex reste le cas courant). Full-duplex = telephony_backend.
+outgoing_use_vtr: false
 mic_vad_rms: 500
 mic_vad_hangover_ms: 500
+
+# Transport : modem (prod PSTN) | voip (stub loopback sans compte SIP) | dual
+telephony_backend: modem
+# Placeholders SIP (futur compte) — secrets de preference dans .env
+sip_uri: null
+sip_user: null
+sip_password: null
+sip_realm: null
 
 # Blocage (inspire de callattendant: NOMOROBO USA, SHOULDIANSWER hors USA, ou vide)
 block_enabled: true

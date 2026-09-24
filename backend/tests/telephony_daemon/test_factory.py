@@ -20,6 +20,8 @@ def test_create_telephony_app_exposes_health_and_calls_routes() -> None:
     openapi_paths = list(app.openapi().get("paths", {}))
     assert "/health" in openapi_paths, openapi_paths
     assert any("outgoing/start" in p for p in openapi_paths), openapi_paths
+    assert any("voip/status" in p for p in openapi_paths), openapi_paths
+    assert any("voip/simulate-incoming" in p for p in openapi_paths), openapi_paths
 
     ws_paths = [getattr(r, "path", "") or "" for r in outgoing_audio.router.routes]
     assert any("outgoing-call" in p and "audio" in p for p in ws_paths), ws_paths

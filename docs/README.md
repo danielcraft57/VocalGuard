@@ -6,6 +6,7 @@
 |----------|---------|
 | [INSTALLATION.md](INSTALLATION.md) | Prérequis, paquets système, Python |
 | [TELEPHONY_STACK.md](TELEPHONY_STACK.md) | Cablage ligne / filtre ADSL / telephone, modes repondeur-telephone, health CID, API vs daemon, deploy, smoke |
+| [TELEPHONY_VOIP.md](TELEPHONY_VOIP.md) | Fondations VoIP (transport stub loopback, config telephony_backend, simulate-incoming) |
 | [DEPLOYMENT_PROD.md](DEPLOYMENT_PROD.md) | systemd, deploiement Pi |
 | [OSINT.md](OSINT.md) / [APPELS_OSINT_UI.md](APPELS_OSINT_UI.md) | Enrichissement numeros, UI liste appels |
 | [AGENDA_API.md](AGENDA_API.md) | Endpoints agenda |
