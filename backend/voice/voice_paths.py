@@ -26,6 +26,7 @@ LAB_BEDS_DIR = LAB_DIR / "beds"
 
 # Chemins canoniques (relatifs a la racine projet).
 BEEP_WAV = SYSTEM_DIR / "beep.wav"
+TALK_CUE_WAV = SYSTEM_DIR / "talk_cue.wav"
 BLOCKED_WAV = SYSTEM_DIR / "blocked_short.wav"
 INTRO_DEFAULT_WAV = INTROS_DIR / "default.wav"
 WHISPERING_ICELAND_MP3 = MUSIC_DIR / "whispering_iceland.mp3"
@@ -138,6 +139,21 @@ def resolve_beep_wav(config_base: Optional[Path], configured: Optional[str] = No
         legacy_candidates=(LEGACY_BEEP_WAV,),
     )
 
+
+
+def resolve_talk_cue_wav(config_base: Optional[Path], configured: Optional[str] = None) -> Optional[Path]:
+    """
+    Resout la croche vocale utilisee comme signal d'enregistrement.
+
+    @param config_base Racine projet.
+    @param configured Chemin override config.
+    @returns Path ou None.
+    """
+    return resolve_voice_asset(
+        config_base,
+        configured or str(TALK_CUE_WAV),
+        legacy_candidates=(),
+    )
 
 def resolve_blocked_wav(config_base: Optional[Path], configured: Optional[str] = None) -> Optional[Path]:
     """

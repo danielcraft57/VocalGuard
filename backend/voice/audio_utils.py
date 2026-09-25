@@ -283,31 +283,132 @@ def trim_intro_for_voice_handoff(intro: "AudioSegment", *, tail_padding_ms: int 
     return intro
 
 
-def write_talk_cue_wav_8k(
+_BEEP_NOTE_FREQ_HZ: dict[str, float] = {
+    "C4": 261.63,
+    "C#4": 277.18,
+    "D4": 293.66,
+    "D#4": 311.13,
+    "E4": 329.63,
+    "F4": 349.23,
+    "F#4": 369.99,
+    "G4": 392.00,
+    "G#4": 415.30,
+    "A4": 440.00,
+    "A#4": 466.16,
+    "B4": 493.88,
+    "C5": 523.25,
+    "C#5": 554.37,
+    "D5": 587.33,
+    "D#5": 622.25,
+    "E5": 659.25,
+    "F5": 698.46,
+    "F#5": 739.99,
+    "G5": 783.99,
+    "G#5": 830.61,
+    "A5": 880.00,
+    "A#5": 932.33,
+    "B5": 987.77,
+    "C6": 1046.50,
+}
+
+
+def beep_note_freq_hz(pitch: str) -> Optional[float]:
+    """
+    Convertit un nom de note en frequence, ou None pour un silence.
+
+    @param pitch Ex. G5, E5, rest, —.
+    @returns Frequence Hz ou None (silence).
+    """
+    raw = str(pitch or "").strip()
+    if not raw:
+        return None
+    upper = raw.upper().replace(" ", "")
+    if upper in {"REST", "SILENCE", "SOUPIR", "R", "-", "—"}:
+        return None
+    flat_aliases = {
+        "DB4": "C#4",
+        "EB4": "D#4",
+        "GB4": "F#4",
+        "AB4": "G#4",
+        "BB4": "A#4",
+        "DB5": "C#5",
+        "EB5": "D#5",
+        "GB5": "F#5",
+        "AB5": "G#5",
+        "BB5": "A#5",
+    }
+    # Eb5 / eb5 → EB5 puis alias
+    key = upper.replace("♭", "B")
+    key = flat_aliases.get(key, key)
+    if key in _BEEP_NOTE_FREQ_HZ:
+        return _BEEP_NOTE_FREQ_HZ[key]
+    # Recherche insensible a la casse sur les # (G#5)
+    for name, hz in _BEEP_NOTE_FREQ_HZ.items():
+        if name.upper() == key:
+            return hz
+    return None
+
+
+def rhythm_duration_sec(rhythm: str, bpm: float) -> float:
+    """
+    Duree d'une valeur rythmique selon le tempo (solfege classique).
+
+    Reference : 1 noire = 1 temps = 60/bpm secondes.
+    - croche = 1/2 temps (2 croches = 1 noire)
+    - double_croche = 1/4 temps (4 doubles = 1 noire)
+    - triolet = 1/3 temps (3 triolets de croches = 1 noire)
+
+    @param rhythm noire | croche | double_croche | triolet.
+    @param bpm Tempo (battements noire / minute).
+    @returns Duree en secondes.
+    """
+    beat = 60.0 / max(40.0, float(bpm))
+    key = str(rhythm or "croche").strip().lower().replace("-", "_").replace(" ", "_")
+    if key in {"noire", "quarter", "1"}:
+        return beat
+    if key in {"double_croche", "doublecroche", "seizieme", "sixteenth", "16"}:
+        return beat / 4.0
+    if key in {"triolet", "triplet", "triolet_croche"}:
+        return beat / 3.0
+    if key in {"croche", "eighth", "8"}:
+        return beat / 2.0
+    return beat / 2.0  # croche par defaut
+
+
+def write_beep_pattern_wav_8k(
     out_path: Path,
     *,
+    notes: Optional[list[tuple[str, str]]] = None,
+    bpm: float = 100.0,
+    gap_ms: int = 45,
     profile: Optional[ModemVoiceProfile] = None,
 ) -> None:
     """
-    Genere une croche douce a deux notes (signal « a vous de parler »).
+    Genere un bip melodique a partir d'une partition (notes + rythmes).
 
-    Deux notes distinctes, volume moyen, enveloppe douce (pas un bip agressif).
+    Chaque valeur rythmique occupe sa vraie duree de grille (noire / croche /
+    double croche / triolet). Le son est articule (~70% tone + ~30% silence
+    dans la case) pour que croche et double croche se distinguent clairement.
 
-    @param out_path Fichier WAV de sortie.
+    @param out_path Fichier WAV de sortie (format modem).
+    @param notes Liste (pitch, rhythm) ; pitch ``rest`` = silence.
+    @param bpm Tempo (noire = 60/bpm secondes).
+    @param gap_ms Silence supplementaire entre notes (ms), plafonne a 25% de la note.
     @param profile Profil modem (8 kHz u8 ou 11 kHz s16).
     """
     voice = profile or USR_VOICE_PROFILE
     rate = int(voice.sample_rate)
-    # Sol5 puis Mi5 : intervalle clair, timbre telephone.
-    notes = ((784.0, 0.12), (659.0, 0.12))
-    gap_sec = 0.045
-    amp_u8 = 52  # volume moyen (bip repondeur = 90)
+    pattern = notes or [("G5", "croche"), ("E5", "croche")]
+    gap_sec = max(0.0, float(gap_ms) / 1000.0)
+    amp_u8 = 52
     amp_s16 = 14000
-    fade_sec = 0.018
+    fade_sec = 0.012
+    # Portion sonore dans la case rythmique (le reste = silence d'articulation).
+    tone_ratio = 0.72
 
     def _synth(freq: float, dur: float) -> bytes:
         n = max(1, int(rate * dur))
-        fade = max(1, int(rate * fade_sec))
+        fade = max(1, int(rate * min(fade_sec, dur / 3.0)))
         if voice.sample_width <= 1:
             out = bytearray(n)
             for i in range(n):
@@ -316,7 +417,6 @@ def write_talk_cue_wav_8k(
                     env = i / fade
                 elif i > n - fade:
                     env = (n - i) / fade
-                # Legere attenuation en fin de note.
                 env *= 0.85 + 0.15 * (1.0 - i / n)
                 val = math.sin(2.0 * math.pi * freq * (i / rate)) * env
                 out[i] = max(0, min(255, 128 + int(amp_u8 * val)))
@@ -334,15 +434,30 @@ def write_talk_cue_wav_8k(
             out[i * 2 : i * 2 + 2] = sample.to_bytes(2, "little", signed=True)
         return bytes(out)
 
+    def _silence(dur: float) -> bytes:
+        n = max(1, int(rate * dur))
+        if voice.sample_width <= 1:
+            return bytes([128] * n)
+        return b"\x00\x00" * n
+
     parts = bytearray()
-    for idx, (freq, dur) in enumerate(notes):
-        if idx > 0:
-            gap_n = max(1, int(rate * gap_sec))
-            if voice.sample_width <= 1:
-                parts.extend(bytes([128] * gap_n))
-            else:
-                parts.extend(b"\x00\x00" * gap_n)
-        parts.extend(_synth(freq, dur))
+    for idx, (pitch, rhythm) in enumerate(pattern):
+        slot = max(0.04, rhythm_duration_sec(rhythm, bpm))
+        if idx > 0 and gap_sec > 0:
+            # Gap plafonne pour ne pas noyer les doubles croches.
+            parts.extend(_silence(min(gap_sec, slot * 0.25)))
+
+        freq = beep_note_freq_hz(pitch)
+        if freq is None:
+            # Silence / soupir : occupe toute la case rythmique.
+            parts.extend(_silence(slot))
+            continue
+
+        tone_dur = max(0.025, slot * tone_ratio)
+        rest_dur = max(0.0, slot - tone_dur)
+        parts.extend(_synth(float(freq), tone_dur))
+        if rest_dur > 0.001:
+            parts.extend(_silence(rest_dur))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with wave.open(str(out_path), "wb") as wf:
@@ -351,6 +466,33 @@ def write_talk_cue_wav_8k(
         wf.setframerate(rate)
         wf.writeframes(bytes(parts))
 
+
+def write_talk_cue_wav_8k(
+    out_path: Path,
+    *,
+    profile: Optional[ModemVoiceProfile] = None,
+    notes: Optional[list[tuple[str, str]]] = None,
+    bpm: float = 100.0,
+    gap_ms: int = 45,
+) -> None:
+    """
+    Genere une croche douce (signal « a vous de parler ») depuis une partition.
+
+    Par defaut : Sol5 puis Mi5 en croches.
+
+    @param out_path Fichier WAV de sortie.
+    @param profile Profil modem (8 kHz u8 ou 11 kHz s16).
+    @param notes Partition optionnelle (pitch, rhythm).
+    @param bpm Tempo.
+    @param gap_ms Silence entre notes.
+    """
+    write_beep_pattern_wav_8k(
+        out_path,
+        notes=notes,
+        bpm=bpm,
+        gap_ms=gap_ms,
+        profile=profile,
+    )
 
 def write_beep_wav_8k(
     out_path: Path,

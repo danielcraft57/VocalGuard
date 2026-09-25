@@ -15,6 +15,8 @@ from loguru import logger
 from backend.api.dependencies import get_config
 from backend.core.config import Config
 from backend.api.models import (
+    BeepPreviewRequest,
+    ElevenLabsVoicePreviewRequest,
     GreetingAudioStatusResponse,
     GreetingPreviewRequest,
     IncomingCallConfigPatch,
@@ -25,6 +27,12 @@ from backend.api.models import (
 )
 from backend.voice.musicscreen_jingles import list_musicscreen_jingles, musicscreen_jingle_path
 from backend.voice.audio_presets import list_audio_presets
+from backend.voice.elevenlabs_client import (
+    list_elevenlabs_voices,
+    resolve_elevenlabs_api_key,
+    resolve_elevenlabs_model_id,
+    synthesize_elevenlabs_mp3,
+)
 from backend.core.incoming_call_settings import (
     apply_incoming_call_settings,
     load_incoming_call_settings,
@@ -313,12 +321,69 @@ async def get_incoming_call_audio_presets() -> dict[str, list[dict[str, Any]]]:
     return list_audio_presets()
 
 
+@router.get("/settings/incoming-call/elevenlabs/voices")
+async def get_elevenlabs_voices(config: Config = Depends(get_config)) -> dict[str, Any]:
+    """
+    Liste les voix ElevenLabs pour le selecteur UI.
+
+    Si la clef n'a pas ``voices_read``, retourne le catalogue curate VocalGuard.
+    """
+    return list_elevenlabs_voices(config)
+
+
+@router.post("/settings/incoming-call/elevenlabs/preview")
+async def post_elevenlabs_voice_preview(
+    body: ElevenLabsVoicePreviewRequest,
+    config: Config = Depends(get_config),
+):
+    """
+    Genere un apercu MP3 court d'une voix ElevenLabs (quota gratuit).
+
+    @param body Voice id + texte optionnel.
+    @returns Fichier audio/mpeg.
+    """
+    import tempfile
+
+    api_key = resolve_elevenlabs_api_key(config)
+    if not api_key:
+        raise HTTPException(status_code=400, detail="ELEVENLABS_API_KEY manquante dans .env")
+
+    text = (body.text or "").strip() or (
+        "Bonjour, ceci est un apercu de voix VocalGuard."
+    )
+    # Tres court pour le free tier.
+    if len(text) > 160:
+        text = text[:160].rstrip() + "…"
+
+    tmp_dir = Path(tempfile.mkdtemp(prefix="vg_el_preview_"))
+    out = tmp_dir / "elevenlabs_preview.mp3"
+    try:
+        synthesize_elevenlabs_mp3(
+            api_key=api_key,
+            text=text,
+            voice_id=body.voice_id.strip(),
+            model_id=resolve_elevenlabs_model_id(config),
+            out_path=out,
+        )
+    except Exception as exc:
+        logger.warning("Apercu ElevenLabs echoue: {}", exc)
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    return FileResponse(
+        out,
+        media_type="audio/mpeg",
+        filename="elevenlabs_preview.mp3",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get(
     "/settings/incoming-call/greeting/status",
     response_model=GreetingAudioStatusResponse,
 )
 async def get_greeting_audio_status(
     request: Request,
+    audience: str = "unknown",
     config: Config = Depends(get_config),
 ) -> GreetingAudioStatusResponse:
     """
@@ -329,11 +394,11 @@ async def get_greeting_audio_status(
             request,
             config,
             "GET",
-            "/api/v1/settings/incoming-call/greeting/status",
+            f"/api/v1/settings/incoming-call/greeting/status?audience={audience}",
         )
         return GreetingAudioStatusResponse(**data)
     cm = _local_call_manager(request)
-    data = await get_greeting_cache_status(config, cm)
+    data = await get_greeting_cache_status(config, cm, audience=audience)
     return GreetingAudioStatusResponse(**data)
 
 
@@ -381,6 +446,7 @@ async def post_greeting_audio_preview(
             config,
             audio_override=body.audio,
             preview_mode=body.preview_mode,
+            audience=body.audience,
         )
     except Exception as exc:
         logger.exception("Apercu accueil echoue: {}", exc)
@@ -390,6 +456,60 @@ async def post_greeting_audio_preview(
         preview_path,
         media_type=media_type,
         filename=filename,
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/settings/incoming-call/beep/preview")
+async def post_beep_pattern_preview(
+    body: BeepPreviewRequest,
+    config: Config = Depends(get_config),
+) -> FileResponse:
+    """
+    Genere un apercu ecoute de la partition bip (notes / rythmes / tempo).
+
+    Tourne en local (pas besoin du daemon modem).
+    """
+    import tempfile
+
+    from backend.core.incoming_call_audio import notes_from_audio
+    from backend.core.incoming_call_types import IncomingCallAudioConfig
+    from backend.voice.audio_utils import (
+        export_listen_preview_wav,
+        write_beep_pattern_wav_8k,
+    )
+    from backend.voice.modem_profile import resolve_profile_from_config
+
+    settings = load_incoming_call_settings(config)
+    base_audio = settings.audio.model_dump()
+    if body.audio:
+        base_audio.update(body.audio)
+    try:
+        audio = IncomingCallAudioConfig.model_validate(base_audio)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Audio bip invalide: {exc}") from exc
+
+    profile = resolve_profile_from_config(config)
+    tmp_dir = Path(tempfile.mkdtemp(prefix="vg_beep_preview_"))
+    modem_wav = tmp_dir / "beep_pattern_modem.wav"
+    listen_wav = tmp_dir / "beep_pattern_listen.wav"
+    try:
+        write_beep_pattern_wav_8k(
+            modem_wav,
+            notes=notes_from_audio(audio),
+            bpm=float(audio.record_beep_bpm or 100),
+            gap_ms=int(audio.record_beep_gap_ms or 45),
+            profile=profile,
+        )
+        export_listen_preview_wav(modem_wav, listen_wav, sample_rate=44100)
+    except Exception as exc:
+        logger.exception("Apercu bip echoue: {}", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return FileResponse(
+        listen_wav,
+        media_type="audio/wav",
+        filename="beep_preview.wav",
         headers={"Cache-Control": "no-store"},
     )
 
@@ -425,6 +545,7 @@ async def post_greeting_audio_regenerate(
             config,
             cm,
             audio_override=body.audio,
+            audience=body.audience,
         )
     except Exception as exc:
         logger.exception("Regeneration accueil echouee: {}", exc)

@@ -70,16 +70,35 @@ export type IncomingAudioPresetsCatalog = {
 };
 
 export type GreetingPreviewMode = "full" | "voice" | "intro";
+export type GreetingAudience = "known" | "unknown" | "commercial";
 
 export type GreetingAudioStatus = {
+  audience?: GreetingAudience | string;
   track_wav?: string | null;
   voice_wav?: string | null;
   duration_sec?: number | null;
-  voice: string;
-  pitch: string;
-  rate: string;
-  text: string;
+  voice?: string;
+  pitch?: string;
+  rate?: string;
+  text?: string;
   regenerated_at?: string | null;
+};
+
+export type ElevenLabsVoiceOption = {
+  voice_id: string;
+  name: string;
+  labels?: string;
+  recommended_fr?: boolean;
+  source?: string;
+};
+
+export type ElevenLabsVoicesResponse = {
+  configured: boolean;
+  source: string;
+  voices: ElevenLabsVoiceOption[];
+  warning?: string;
+  default_voice_id?: string;
+  model_id?: string;
 };
 
 export type SettingsSnapshot = {
@@ -208,15 +227,88 @@ export async function fetchIncomingAudioPresets(
   };
 }
 
+
 /**
- * Etat du cache accueil sur le modem.
+ * Liste les voix ElevenLabs (API ou catalogue curate).
  */
-export async function fetchGreetingAudioStatus(
+export async function fetchElevenLabsVoices(
   signal?: AbortSignal
-): Promise<GreetingAudioStatus> {
-  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/greeting/status`, {
+): Promise<ElevenLabsVoicesResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/elevenlabs/voices`, {
     signal
   });
+  if (!res.ok) {
+    throw new Error(`Erreur voix ElevenLabs: ${res.status}`);
+  }
+  return (await res.json()) as ElevenLabsVoicesResponse;
+}
+
+/**
+ * Apercu MP3 court d'une voix ElevenLabs.
+ *
+ * @param voiceId Identifiant voix.
+ * @param text Texte optionnel (court).
+ */
+export async function previewElevenLabsVoice(
+  voiceId: string,
+  text?: string
+): Promise<Blob> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/elevenlabs/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ voice_id: voiceId, text: text || null })
+  });
+  if (!res.ok) {
+    let detail = `Erreur apercu ElevenLabs: ${res.status}`;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  return await res.blob();
+}
+
+/**
+ * Apercu WAV de la partition bip (mode croche).
+ */
+export async function previewBeepPattern(
+  audio?: Record<string, unknown>
+): Promise<Blob> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/beep/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(audio ? { audio } : {})
+  });
+  if (!res.ok) {
+    let detail = `Erreur apercu bip: ${res.status}`;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  return await res.blob();
+}
+
+/**
+ * Etat du cache accueil modem pour une audience.
+ *
+ * @param audience known | unknown | commercial.
+ */
+export async function fetchGreetingAudioStatus(
+  audience: GreetingAudience | string = "unknown",
+  signal?: AbortSignal
+): Promise<GreetingAudioStatus> {
+  const qs = new URLSearchParams({ audience: String(audience || "unknown") });
+  const res = await fetch(
+    `${getApiBaseUrl()}/settings/incoming-call/greeting/status?${qs.toString()}`,
+    { signal }
+  );
   if (!res.ok) {
     throw new Error(`Erreur statut accueil: ${res.status}`);
   }
@@ -228,12 +320,17 @@ export async function fetchGreetingAudioStatus(
  */
 export async function previewGreetingAudio(
   audio?: Record<string, unknown>,
-  previewMode: GreetingPreviewMode = "full"
+  previewMode: GreetingPreviewMode = "full",
+  audience: GreetingAudience | string = "unknown"
 ): Promise<Blob> {
   const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/greeting/preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(audio ? { audio, preview_mode: previewMode } : { preview_mode: previewMode })
+    body: JSON.stringify({
+      audio: audio || undefined,
+      preview_mode: previewMode,
+      audience
+    })
   });
   if (!res.ok) {
     let detail = `Erreur apercu accueil: ${res.status}`;
@@ -253,12 +350,16 @@ export async function previewGreetingAudio(
  * Regenere le cache WAV accueil sur le modem (parametres audio fournis ou sauvegardes).
  */
 export async function regenerateGreetingAudio(
-  audio?: Record<string, unknown>
+  audio?: Record<string, unknown>,
+  audience: GreetingAudience | string = "unknown"
 ): Promise<GreetingAudioStatus> {
   const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/greeting/regenerate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(audio ? { audio } : {})
+    body: JSON.stringify({
+      audio: audio || undefined,
+      audience
+    })
   });
   if (!res.ok) {
     let detail = `Erreur regeneration accueil: ${res.status}`;
