@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   Alert,
   Box,
-  CircularProgress,
   FormControlLabel,
   Slider,
   Stack,
@@ -20,6 +19,8 @@ import { VgPageHeader } from "../../../components/mui/VgPageHeader";
 import { VgSaveBar } from "../../../components/mui/VgSaveBar";
 import { VgSettingsSection } from "../../../components/mui/VgSettingsSection";
 import { VgConversationModeStatus } from "../../../components/mui/VgConversationModeStatus";
+import { VgSoftSyncBar } from "../../../components/mui/VgSoftSyncBar";
+import { VgFormSkeleton } from "../../../components/mui/VgListSkeleton";
 import { useIncomingCallConfig } from "../../../hooks/useIncomingCallConfig";
 import {
   setIncomingLineMode,
@@ -33,6 +34,7 @@ export default function IncomingLineSettingsPage() {
   const {
     config,
     loading,
+    syncing,
     saving,
     dirty,
     error,
@@ -72,11 +74,15 @@ export default function IncomingLineSettingsPage() {
         }
       />
 
-      {loading || !config ? (
-        <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-          <CircularProgress />
+      {syncing && config ? (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+          <VgSoftSyncBar />
         </Box>
-      ) : (
+      ) : null}
+
+      {loading && !config ? (
+        <VgFormSkeleton />
+      ) : config ? (
         <>
           <VgSettingsSection
             title="Mode de prise d'appel"
@@ -223,7 +229,7 @@ export default function IncomingLineSettingsPage() {
             onDismissSuccess={() => setSuccess(null)}
           />
         </>
-      )}
+      ) : null}
     </AppLayout>
   );
 }

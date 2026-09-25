@@ -75,16 +75,35 @@ export function getOutgoingAudioWsBaseUrl(): string {
  * Helper minimal pour effectuer une requete GET et parser du JSON.
  *
  * @param path Chemin relatif a l'API (ex: /calls).
+ * @param signal AbortSignal optionnel (annule au changement de page).
  * @returns Donnees parsees typées.
  */
-export async function getJson<T>(path: string): Promise<T> {
+export async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
   const baseUrl = getApiBaseUrl();
-  const res = await fetch(`${baseUrl}${path}`, { cache: "no-store" });
+  const res = await fetch(`${baseUrl}${path}`, { cache: "no-store", signal });
 
   if (!res.ok) {
     throw new Error(`Erreur API GET ${path}: ${res.status}`);
   }
 
   return (await res.json()) as T;
+}
+
+/**
+ * True si l'erreur vient d'un abort (navigation / unmount).
+ *
+ * @param err Erreur catch.
+ */
+export function isAbortError(err: unknown): boolean {
+  if (!err) return false;
+  if (typeof DOMException !== "undefined" && err instanceof DOMException) {
+    return err.name === "AbortError";
+  }
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "name" in err &&
+    (err as { name?: string }).name === "AbortError"
+  );
 }
 

@@ -112,10 +112,11 @@ export type TelephonyStatus = {
 /**
  * Lit le snapshot settings (mode ligne entrante inclus).
  *
+ * @param signal AbortSignal optionnel.
  * @returns Configuration metier.
  */
-export async function fetchSettings(): Promise<SettingsSnapshot> {
-  const res = await fetch(`${getApiBaseUrl()}/settings`);
+export async function fetchSettings(signal?: AbortSignal): Promise<SettingsSnapshot> {
+  const res = await fetch(`${getApiBaseUrl()}/settings`, { signal });
   if (!res.ok) {
     throw new Error(`Erreur API settings: ${res.status}`);
   }
@@ -124,9 +125,13 @@ export async function fetchSettings(): Promise<SettingsSnapshot> {
 
 /**
  * Lit la configuration complete des appels entrants.
+ *
+ * @param signal AbortSignal optionnel.
  */
-export async function fetchIncomingCallConfig(): Promise<IncomingCallConfig> {
-  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call`);
+export async function fetchIncomingCallConfig(
+  signal?: AbortSignal
+): Promise<IncomingCallConfig> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call`, { signal });
   if (!res.ok) {
     throw new Error(`Erreur API incoming-call: ${res.status}`);
   }
@@ -163,8 +168,12 @@ export async function patchIncomingCallConfig(
 /**
  * Liste les jingles MusicScreen disponibles pour l'intro.
  */
-export async function fetchGreetingJingles(): Promise<GreetingJingleOption[]> {
-  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/jingles`);
+export async function fetchGreetingJingles(
+  signal?: AbortSignal
+): Promise<GreetingJingleOption[]> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/jingles`, {
+    signal
+  });
   if (!res.ok) {
     throw new Error(`Erreur liste jingles: ${res.status}`);
   }
@@ -182,8 +191,12 @@ export function getJingleListenUrl(jingleId: string): string {
 /**
  * Catalogue des prereglages audio (voix, intro, outro).
  */
-export async function fetchIncomingAudioPresets(): Promise<IncomingAudioPresetsCatalog> {
-  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/audio-presets`);
+export async function fetchIncomingAudioPresets(
+  signal?: AbortSignal
+): Promise<IncomingAudioPresetsCatalog> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/audio-presets`, {
+    signal
+  });
   if (!res.ok) {
     throw new Error(`Erreur prereglages audio: ${res.status}`);
   }
@@ -198,8 +211,12 @@ export async function fetchIncomingAudioPresets(): Promise<IncomingAudioPresetsC
 /**
  * Etat du cache accueil sur le modem.
  */
-export async function fetchGreetingAudioStatus(): Promise<GreetingAudioStatus> {
-  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/greeting/status`);
+export async function fetchGreetingAudioStatus(
+  signal?: AbortSignal
+): Promise<GreetingAudioStatus> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/greeting/status`, {
+    signal
+  });
   if (!res.ok) {
     throw new Error(`Erreur statut accueil: ${res.status}`);
   }
@@ -259,10 +276,13 @@ export async function regenerateGreetingAudio(
 /**
  * Etat modem / daemon (pastille topbar).
  *
+ * @param signal AbortSignal optionnel.
  * @returns Snapshot telephonie.
  */
-export async function fetchTelephonyStatus(): Promise<TelephonyStatus> {
-  const res = await fetch(`${getApiBaseUrl()}/telephony/status`);
+export async function fetchTelephonyStatus(
+  signal?: AbortSignal
+): Promise<TelephonyStatus> {
+  const res = await fetch(`${getApiBaseUrl()}/telephony/status`, { signal });
   if (!res.ok) {
     throw new Error(`Erreur API telephony status: ${res.status}`);
   }

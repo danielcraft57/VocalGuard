@@ -7,42 +7,84 @@ import {
   type IncomingCallConfig,
   type IncomingCallConfigPatch
 } from "../services/settingsApi";
+import {
+  isAbortError,
+  isUiCacheFresh,
+  loadUiCache,
+  saveUiCache,
+  UI_CACHE_KEYS
+} from "../services/uiPersist";
 
 const AUTOSAVE_DELAY_MS = 650;
 
 /**
  * Hook pour charger et sauvegarder la config appels entrants (auto-save debounce).
+ * Cache session partage entre sous-pages settings + abort au unmount.
  */
 export function useIncomingCallConfig() {
-  const [config, setConfig] = useState<IncomingCallConfig | null>(null);
+  const cached = loadUiCache<IncomingCallConfig>(UI_CACHE_KEYS.incomingCallConfig);
+  const [config, setConfig] = useState<IncomingCallConfig | null>(() => cached);
   const [draft, setDraft] = useState<IncomingCallConfigPatch>({});
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !cached);
+  const [syncing, setSyncing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const draftRef = useRef(draft);
   const savingRef = useRef(false);
   const pendingAfterSaveRef = useRef(false);
+  const abortRef = useRef<AbortController | null>(null);
 
   draftRef.current = draft;
 
-  const reload = useCallback(async () => {
-    setLoading(true);
+  const reload = useCallback(async (opts?: { soft?: boolean; force?: boolean }) => {
+    const current = loadUiCache<IncomingCallConfig>(UI_CACHE_KEYS.incomingCallConfig);
+    const already = Boolean(current);
+    const soft = Boolean(opts?.soft) && already;
+    if (
+      !opts?.force &&
+      already &&
+      isUiCacheFresh(UI_CACHE_KEYS.incomingCallConfig)
+    ) {
+      setConfig(current);
+      setLoading(false);
+      return;
+    }
+
+    if (soft) setSyncing(true);
+    else if (!already) setLoading(true);
     setError(null);
+
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
     try {
-      const data = await fetchIncomingCallConfig();
+      const data = await fetchIncomingCallConfig(ac.signal);
+      if (ac.signal.aborted) return;
       setConfig(data);
+      saveUiCache(UI_CACHE_KEYS.incomingCallConfig, data);
       setDraft({});
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Chargement impossible");
+      if (isAbortError(e) || ac.signal.aborted) return;
+      if (!already) {
+        setError(e instanceof Error ? e.message : "Chargement impossible");
+      }
     } finally {
-      setLoading(false);
+      if (!ac.signal.aborted) {
+        setLoading(false);
+        setSyncing(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    void reload({ soft: Boolean(cached) });
+    return () => {
+      abortRef.current?.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount
+  }, []);
 
   const patchField = useCallback(<K extends keyof IncomingCallConfigPatch>(
     key: K,
@@ -71,6 +113,7 @@ export function useIncomingCallConfig() {
     try {
       const updated = await patchIncomingCallConfig(payload);
       setConfig(updated);
+      saveUiCache(UI_CACHE_KEYS.incomingCallConfig, updated);
       setDraft((prev) => {
         const next: IncomingCallConfigPatch = { ...prev };
         for (const key of Object.keys(payload) as (keyof IncomingCallConfigPatch)[]) {
@@ -108,6 +151,7 @@ export function useIncomingCallConfig() {
   return {
     config: effective,
     loading,
+    syncing,
     saving,
     dirty,
     error,

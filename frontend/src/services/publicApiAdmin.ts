@@ -58,19 +58,25 @@ function buildHeaders(): HeadersInit {
   return headers;
 }
 
-export async function fetchPublicApiDocs(): Promise<PublicApiDocsPayload> {
-  const res = await fetch(`${getApiBaseUrl()}/tokens/docs`, { cache: "no-store" });
+export async function fetchPublicApiDocs(
+  signal?: AbortSignal
+): Promise<PublicApiDocsPayload> {
+  const res = await fetch(`${getApiBaseUrl()}/tokens/docs`, {
+    cache: "no-store",
+    signal
+  });
   if (!res.ok) {
     throw new Error(`Impossible de charger la doc API (${res.status}).`);
   }
   return (await res.json()) as PublicApiDocsPayload;
 }
 
-export async function listPublicTokens(): Promise<PublicApiToken[]> {
+export async function listPublicTokens(signal?: AbortSignal): Promise<PublicApiToken[]> {
   const res = await fetch(`${getApiBaseUrl()}/tokens`, {
     method: "GET",
     cache: "no-store",
     headers: buildHeaders(),
+    signal
   });
   if (!res.ok) {
     throw new Error(`Impossible de lister les tokens (${res.status}).`);

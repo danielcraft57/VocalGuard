@@ -22,20 +22,27 @@ export interface Voicemail {
  * Liste les messages vocaux recents.
  *
  * @param opts Filtres optionnels.
+ * @param signal AbortSignal optionnel.
  * @returns Messages tries du plus recent au plus ancien.
  */
-export async function fetchVoicemails(opts?: {
-  skip?: number;
-  limit?: number;
-  is_read?: boolean;
-}): Promise<Voicemail[]> {
+export async function fetchVoicemails(
+  opts?: {
+    skip?: number;
+    limit?: number;
+    is_read?: boolean;
+  },
+  signal?: AbortSignal
+): Promise<Voicemail[]> {
   const base = getApiBaseUrl();
   const params = new URLSearchParams();
   if (opts?.skip != null) params.set("skip", String(opts.skip));
   if (opts?.limit != null) params.set("limit", String(opts.limit));
   if (opts?.is_read != null) params.set("is_read", String(opts.is_read));
   const qs = params.toString();
-  const res = await fetch(`${base}/voicemails${qs ? `?${qs}` : ""}`, { cache: "no-store" });
+  const res = await fetch(`${base}/voicemails${qs ? `?${qs}` : ""}`, {
+    cache: "no-store",
+    signal
+  });
   if (!res.ok) {
     throw new Error(`Erreur API messages: ${res.status}`);
   }

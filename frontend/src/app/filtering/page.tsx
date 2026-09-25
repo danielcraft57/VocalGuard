@@ -1,12 +1,11 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Alert,
   Box,
   Button,
-  CircularProgress,
   IconButton,
   Stack,
   Tab,
@@ -25,6 +24,8 @@ import { AppLayout } from "../../components/AppLayout";
 import { VgPageHeader } from "../../components/mui/VgPageHeader";
 import { VgProfileChip } from "../../components/mui/VgProfileChip";
 import { VgSettingsSection } from "../../components/mui/VgSettingsSection";
+import { VgSoftSyncBar } from "../../components/mui/VgSoftSyncBar";
+import { VgTableSkeleton } from "../../components/mui/VgListSkeleton";
 import {
   fetchWhitelist,
   fetchBlocklist,
@@ -40,20 +41,35 @@ import {
   deleteBlockRule,
   type BlockRule
 } from "../../services/blockRulesApi";
+import {
+  isAbortError,
+  isUiCacheFresh,
+  loadUiCache,
+  saveUiCache,
+  UI_CACHE_KEYS
+} from "../../services/uiPersist";
 
 type TabKey = "whitelist" | "blocklist" | "rules";
 
 /**
  * Filtrage Material : listes blanche/noire et regles DB (motifs legacy).
+ * Hydrate depuis le cache session puis soft-sync reseau.
  */
 export default function FilteringPage() {
   const [tab, setTab] = useState<TabKey>("whitelist");
-  const [whitelist, setWhitelist] = useState<Caller[]>([]);
-  const [blocklist, setBlocklist] = useState<Caller[]>([]);
-  const [rules, setRules] = useState<BlockRule[]>([]);
-  const [loading, setLoading] = useState(true);
+  const cachedW = loadUiCache<Caller[]>(UI_CACHE_KEYS.whitelist);
+  const cachedB = loadUiCache<Caller[]>(UI_CACHE_KEYS.blocklist);
+  const cachedR = loadUiCache<BlockRule[]>(UI_CACHE_KEYS.blockRules);
+  const [whitelist, setWhitelist] = useState<Caller[]>(() => cachedW ?? []);
+  const [blocklist, setBlocklist] = useState<Caller[]>(() => cachedB ?? []);
+  const [rules, setRules] = useState<BlockRule[]>(() => cachedR ?? []);
+  const hasCache =
+    Array.isArray(cachedW) || Array.isArray(cachedB) || Array.isArray(cachedR);
+  const [loading, setLoading] = useState(() => !hasCache);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<string | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   const [whitelistPhone, setWhitelistPhone] = useState("");
   const [whitelistName, setWhitelistName] = useState("");
@@ -62,24 +78,75 @@ export default function FilteringPage() {
   const [ruleName, setRuleName] = useState("");
   const [rulePattern, setRulePattern] = useState("");
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  /**
+   * Charge whitelist / blocklist / rules avec soft sync et abort.
+   *
+   * @param opts.soft Force le mode soft (garde l'UI, bandeau sync).
+   * @param opts.force Ignore le TTL et refetch.
+   */
+  const load = useCallback(async (opts?: { soft?: boolean; force?: boolean }) => {
+    const w0 = loadUiCache<Caller[]>(UI_CACHE_KEYS.whitelist);
+    const b0 = loadUiCache<Caller[]>(UI_CACHE_KEYS.blocklist);
+    const r0 = loadUiCache<BlockRule[]>(UI_CACHE_KEYS.blockRules);
+    const already =
+      Array.isArray(w0) || Array.isArray(b0) || Array.isArray(r0);
+
+    const allFresh =
+      isUiCacheFresh(UI_CACHE_KEYS.whitelist) &&
+      isUiCacheFresh(UI_CACHE_KEYS.blocklist) &&
+      isUiCacheFresh(UI_CACHE_KEYS.blockRules);
+
+    if (!opts?.force && already && allFresh) {
+      if (Array.isArray(w0)) setWhitelist(w0);
+      if (Array.isArray(b0)) setBlocklist(b0);
+      if (Array.isArray(r0)) setRules(r0);
+      setLoading(false);
+      setSyncing(false);
+      return;
+    }
+
+    const soft = Boolean(opts?.soft) || already;
+    if (soft) setSyncing(true);
+    else setLoading(true);
     setError(null);
+
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
     try {
-      const [w, b, r] = await Promise.all([fetchWhitelist(), fetchBlocklist(), fetchBlockRules()]);
+      const [w, b, r] = await Promise.all([
+        fetchWhitelist(ac.signal),
+        fetchBlocklist(ac.signal),
+        fetchBlockRules(ac.signal)
+      ]);
+      if (ac.signal.aborted) return;
       setWhitelist(w);
       setBlocklist(b);
       setRules(r);
+      saveUiCache(UI_CACHE_KEYS.whitelist, w);
+      saveUiCache(UI_CACHE_KEYS.blocklist, b);
+      saveUiCache(UI_CACHE_KEYS.blockRules, r);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur de chargement");
+      if (isAbortError(e) || ac.signal.aborted) return;
+      if (!already) {
+        setError(e instanceof Error ? e.message : "Erreur de chargement");
+      }
     } finally {
-      setLoading(false);
+      if (!ac.signal.aborted) {
+        setLoading(false);
+        setSyncing(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void load({ soft: hasCache });
+    return () => {
+      abortRef.current?.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount once
+  }, []);
 
   const handleAddWhitelist = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -90,7 +157,7 @@ export default function FilteringPage() {
       await addToWhitelist(phone, whitelistName.trim() || null, null);
       setWhitelistPhone("");
       setWhitelistName("");
-      await load();
+      await load({ soft: true, force: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur");
     } finally {
@@ -107,7 +174,7 @@ export default function FilteringPage() {
       await addToBlocklist(phone, null, blocklistNotes.trim() || null);
       setBlocklistPhone("");
       setBlocklistNotes("");
-      await load();
+      await load({ soft: true, force: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur");
     } finally {
@@ -123,13 +190,15 @@ export default function FilteringPage() {
       await createBlockRule(ruleName.trim(), rulePattern.trim(), "prefix");
       setRuleName("");
       setRulePattern("");
-      await load();
+      await load({ soft: true, force: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur");
     } finally {
       setSubmitting(null);
     }
   };
+
+  const showSkeleton = loading && !hasCache && whitelist.length === 0 && blocklist.length === 0 && rules.length === 0;
 
   return (
     <AppLayout title="Filtrage d'appels" hidePageHeader>
@@ -148,6 +217,12 @@ export default function FilteringPage() {
           </Button>
         }
       />
+
+      {syncing ? (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+          <VgSoftSyncBar label="Synchro filtrage…" />
+        </Box>
+      ) : null}
 
       {error ? (
         <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
@@ -177,10 +252,8 @@ export default function FilteringPage() {
         <Tab value="rules" label="Regles DB (prefixe)" />
       </Tabs>
 
-      {loading ? (
-        <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-          <CircularProgress />
-        </Box>
+      {showSkeleton ? (
+        <VgTableSkeleton rows={6} />
       ) : (
         <>
           {tab === "whitelist" ? (
@@ -199,7 +272,10 @@ export default function FilteringPage() {
                 rows={whitelist}
                 onRemove={(id) => {
                   setSubmitting(`w-${id}`);
-                  removeFromWhitelist(id).then(load).catch((err) => setError(String(err))).finally(() => setSubmitting(null));
+                  removeFromWhitelist(id)
+                    .then(() => load({ soft: true, force: true }))
+                    .catch((err) => setError(String(err)))
+                    .finally(() => setSubmitting(null));
                 }}
                 submitting={submitting}
               />
@@ -219,7 +295,10 @@ export default function FilteringPage() {
                 rows={blocklist}
                 onRemove={(id) => {
                   setSubmitting(`b-${id}`);
-                  removeFromBlocklist(id).then(load).catch((err) => setError(String(err))).finally(() => setSubmitting(null));
+                  removeFromBlocklist(id)
+                    .then(() => load({ soft: true, force: true }))
+                    .catch((err) => setError(String(err)))
+                    .finally(() => setSubmitting(null));
                 }}
                 submitting={submitting}
               />
@@ -260,7 +339,9 @@ export default function FilteringPage() {
                           disabled={Boolean(submitting)}
                           onClick={() => {
                             setSubmitting(`r-${r.id}`);
-                            deleteBlockRule(r.id).then(load).finally(() => setSubmitting(null));
+                            deleteBlockRule(r.id)
+                              .then(() => load({ soft: true, force: true }))
+                              .finally(() => setSubmitting(null));
                           }}
                         >
                           <DeleteIcon fontSize="small" />
@@ -278,6 +359,13 @@ export default function FilteringPage() {
   );
 }
 
+/**
+ * Tableau simple des callers (whitelist / blocklist).
+ *
+ * @param props.rows Lignes a afficher.
+ * @param props.onRemove Callback retrait.
+ * @param props.submitting Cle d'action en cours.
+ */
 function CallerTable({
   rows,
   onRemove,
@@ -309,7 +397,7 @@ function CallerTable({
           rows.map((c) => (
             <TableRow key={c.id}>
               <TableCell>{c.phone_number}</TableCell>
-              <TableCell>{c.name || c.notes || "—"}</TableCell>
+              <TableCell>{c.name || c.notes || "-"}</TableCell>
               <TableCell align="right">
                 <Button size="small" color="inherit" disabled={Boolean(submitting)} onClick={() => onRemove(c.id)}>
                   Retirer

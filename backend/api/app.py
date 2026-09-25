@@ -40,6 +40,7 @@ from backend.api.routes import (
     tokens,
     kb as kb_routes,
 )
+from backend.api.routes import outbound_commercial as outbound_commercial_routes
 from backend.api.routes.realtime import wire_main_process_realtime
 from backend.database import database as db_module
 
@@ -99,6 +100,11 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(auth_ui.router, prefix="/api/v1")
     app.include_router(tokens.router, prefix="/api/v1")
     app.include_router(kb_routes.router, prefix="/api/v1", tags=["kb"])
+    app.include_router(
+        outbound_commercial_routes.router,
+        prefix="/api/v1",
+        tags=["kb-outbound-commercial"],
+    )
     
     # Dossier qui accueille le front (build statique Next.js copié depuis `frontend/out`)
     # Resolve en absolu pour ne pas dépendre du répertoire de travail au lancement.

@@ -7,7 +7,6 @@ import {
   AccordionDetails,
   AccordionSummary,
   Box,
-  CircularProgress,
   FormControl,
   InputLabel,
   MenuItem,
@@ -30,6 +29,8 @@ import { VgJingleListenButton } from "../../../components/mui/VgJingleListenButt
 import { VgPageHeader } from "../../../components/mui/VgPageHeader";
 import { VgSaveBar } from "../../../components/mui/VgSaveBar";
 import { VgSettingsSection } from "../../../components/mui/VgSettingsSection";
+import { VgSoftSyncBar } from "../../../components/mui/VgSoftSyncBar";
+import { VgFormSkeleton } from "../../../components/mui/VgListSkeleton";
 import { useIncomingCallConfig } from "../../../hooks/useIncomingCallConfig";
 import {
   fetchGreetingJingles,
@@ -96,44 +97,45 @@ export default function IncomingAudioSettingsPage() {
   const [outroPresetId, setOutroPresetId] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelled = false;
+    const ac = new AbortController();
     void (async () => {
       try {
-        const rows = await fetchGreetingJingles();
-        if (!cancelled) setJingles(rows);
+        const rows = await fetchGreetingJingles(ac.signal);
+        if (!ac.signal.aborted) setJingles(rows);
       } catch {
-        if (!cancelled) setJingles([]);
+        if (!ac.signal.aborted) setJingles([]);
       } finally {
-        if (!cancelled) setJinglesLoading(false);
+        if (!ac.signal.aborted) setJinglesLoading(false);
       }
     })();
     return () => {
-      cancelled = true;
+      ac.abort();
     };
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    const ac = new AbortController();
     void (async () => {
       try {
-        const catalog = await fetchIncomingAudioPresets();
-        if (!cancelled) setAudioPresets(catalog);
+        const catalog = await fetchIncomingAudioPresets(ac.signal);
+        if (!ac.signal.aborted) setAudioPresets(catalog);
       } catch {
-        if (!cancelled) {
+        if (!ac.signal.aborted) {
           setAudioPresets({ voice: [], intro: [], outro: [] });
         }
       } finally {
-        if (!cancelled) setPresetsLoading(false);
+        if (!ac.signal.aborted) setPresetsLoading(false);
       }
     })();
     return () => {
-      cancelled = true;
+      ac.abort();
     };
   }, []);
 
   const {
     config,
     loading,
+    syncing,
     saving,
     dirty,
     error,
@@ -194,11 +196,15 @@ export default function IncomingAudioSettingsPage() {
         }
       />
 
-      {loading || !config ? (
-        <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-          <CircularProgress />
+      {syncing && config ? (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+          <VgSoftSyncBar />
         </Box>
-      ) : (
+      ) : null}
+
+      {loading && !config ? (
+        <VgFormSkeleton />
+      ) : config ? (
         <Stack spacing={2}>
           <VgSettingsSection
             title="Message d'accueil"
@@ -621,7 +627,7 @@ export default function IncomingAudioSettingsPage() {
             onDismissSuccess={() => setSuccess(null)}
           />
         </Stack>
-      )}
+      ) : null}
     </AppLayout>
   );
 }

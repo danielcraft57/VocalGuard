@@ -1,28 +1,37 @@
 "use client";
 
 import React from "react";
-import { Alert, Card, CardContent, Stack, Typography } from "@mui/material";
+import { Alert, Box, Card, CardContent, Stack, Typography } from "@mui/material";
 import { AppLayout } from "../../components/AppLayout";
+import { VgSoftSyncBar } from "../../components/mui/VgSoftSyncBar";
 import { AgendaEventDialog } from "./components/AgendaEventDialog";
 import { AgendaMonthGrid } from "./components/AgendaMonthGrid";
 import { AgendaTimeGrid } from "./components/AgendaTimeGrid";
 import { AgendaToolbar } from "./components/AgendaToolbar";
 import { useAgendaCalendar } from "./hooks/useAgendaCalendar";
 
+/**
+ * Page Agenda : calendrier RDV avec soft sync cache.
+ */
 export default function AgendaPage() {
   const agenda = useAgendaCalendar();
 
   return (
     <AppLayout title="Agenda" hidePageHeader>
       <Stack spacing={1}>
-        <AgendaToolbar
-          view={agenda.view}
-          onViewChange={agenda.setView}
-          periodLabel={agenda.periodLabel}
-          onToday={agenda.goToday}
-          onPrev={agenda.goPrev}
-          onNext={agenda.goNext}
-        />
+        <Stack direction="row" spacing={1} sx={{ alignItems: "center", justifyContent: "space-between" }}>
+          <Box sx={{ flex: 1 }}>
+            <AgendaToolbar
+              view={agenda.view}
+              onViewChange={agenda.setView}
+              periodLabel={agenda.periodLabel}
+              onToday={agenda.goToday}
+              onPrev={agenda.goPrev}
+              onNext={agenda.goNext}
+            />
+          </Box>
+          {agenda.syncing ? <VgSoftSyncBar label="Synchro agenda…" /> : null}
+        </Stack>
 
         {agenda.error ? <Alert severity="error">{agenda.error}</Alert> : null}
 
@@ -53,7 +62,9 @@ export default function AgendaPage() {
           </CardContent>
         </Card>
 
-        {agenda.loading ? <Typography className="vg-agenda-loading">Chargement des événements...</Typography> : null}
+        {agenda.loading && agenda.events.length === 0 ? (
+          <Typography className="vg-agenda-loading">Chargement des evenements...</Typography>
+        ) : null}
       </Stack>
 
       <AgendaEventDialog

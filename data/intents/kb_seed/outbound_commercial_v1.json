@@ -1,0 +1,405 @@
+{
+  "version": 1,
+  "source": "seed",
+  "description": "KB appel commercial sortant DanielCraft - argumentaire oral, 5 formulations par intent.",
+  "profile": "outbound_commercial",
+  "intents": [
+    {
+      "tag": "out_presentation",
+      "profile": "outbound_commercial",
+      "niveau": 1,
+      "priority": 100,
+      "wav_basename": "out_kb_out_presentation",
+      "patterns": [
+        "allo",
+        "bonjour",
+        "oui allô",
+        "oui bonjour",
+        "hello",
+        "oui c est moi",
+        "je vous ecoute"
+      ],
+      "responses": [
+        "Bonjour, c'est l'assistante de danielcraft.fr. J'appelle pour DanielCraft - on aide les boites locales a etre mieux trouvees en ligne. Vous avez trente secondes ?",
+        "Allo, assistante danielcraft.fr. Je vous contacte pour voir si un site plus clair pourrait vous ramener des demandes. Je fais tres court.",
+        "Bonjour, je suis l'assistante de DanielCraft, sur danielcraft.fr. L'idee c'est simple : plus de visibilite locale, plus de contacts. Ca vous va si je pose deux questions ?",
+        "Oui bonjour - assistante danielcraft.fr. On travaille avec des entreprises du coin sur le site et le referencement local. Je voulais juste verifier si ca peut vous servir.",
+        "Bonjour, DanielCraft au telephone via danielcraft.fr. Je ne vous vends rien de force : je regarde juste si un mini point sur votre presence web a du sens pour vous."
+      ]
+    },
+    {
+      "tag": "out_who_are_you",
+      "profile": "outbound_commercial",
+      "niveau": 1,
+      "priority": 95,
+      "wav_basename": "out_kb_out_who_are_you",
+      "patterns": [
+        "vous etes qui",
+        "qui appelle",
+        "c est pour quoi",
+        "quel est le sujet",
+        "qui est a l appareil",
+        "d ou vous appelez"
+      ],
+      "responses": [
+        "Je suis l'assistante de danielcraft.fr, pour DanielCraft. On aide les entreprises a attirer plus de clients via un site clair et le referencement local.",
+        "Assistante danielcraft.fr - on s'occupe de presence en ligne pour les boites locales. Concretement : mieux vous faire trouver, transformer les visites en demandes.",
+        "C'est l'assistante DanielCraft, sur danielcraft.fr. Pas une usine a spam : on regarde si un site plus propre peut vous ramener des contacts.",
+        "Vous parlez a l'assistante de danielcraft.fr. On travaille surtout site web et visibilite locale, pour des entreprises comme la votre.",
+        "DanielCraft, danielcraft.fr. Moi je gere les appels : l'idee c'est de voir vite si on peut vous aider a etre plus visibles en ligne."
+      ]
+    },
+    {
+      "tag": "out_go_ahead",
+      "profile": "outbound_commercial",
+      "niveau": 1,
+      "priority": 90,
+      "wav_basename": "out_kb_out_go_ahead",
+      "patterns": [
+        "oui je vous ecoute",
+        "allez y",
+        "j ai une minute",
+        "oui dites moi",
+        "ok rapide",
+        "dites"
+      ],
+      "responses": [
+        "Parfait, je reste court. Vous avez deja un site, ou vous comptez surtout sur le bouche a oreille et les reseaux ?",
+        "Top. Premiere question simple : est-ce que des gens vous trouvent facilement en ligne quand ils cherchent votre metier dans le coin ?",
+        "Merci. Je vais droit au but - aujourd'hui, d'ou viennent surtout vos nouveaux clients ?",
+        "Super. Vous etes plutot content de votre presence web, ou vous sentez que ca pourrait mieux convertir ?",
+        "Ok, on y va. Vous recevez des demandes via votre site, ou c'est encore surtout le telephone et le reseau ?"
+      ]
+    },
+    {
+      "tag": "out_busy",
+      "profile": "outbound_commercial",
+      "niveau": 1,
+      "priority": 88,
+      "wav_basename": "out_kb_out_busy",
+      "patterns": [
+        "je suis occupe",
+        "pas le temps",
+        "rapide alors",
+        "je pars en rendez vous",
+        "c est pas le moment",
+        "je suis en client"
+      ],
+      "responses": [
+        "Je comprends. Une seule question alors : gagner plus de contacts en ligne, c'est une priorite cette annee pour vous ?",
+        "Pas de souci, je coupe court. Je vous rappelle au creneau qui vous arrange - vous preferez matin ou fin de journee ?",
+        "Ok, je ne vous retiens pas. Je vous laisse mon sujet en une phrase : mini regard gratuit sur votre presence web, quand vous avez deux minutes.",
+        "Compris. Je note de rappeler plus tard. Quel jour vous irait le mieux ?",
+        "Je respecte ca. Je vous envoie juste le lien danielcraft.fr et on en reparle quand vous etes dispo - ca vous va ?"
+      ]
+    },
+    {
+      "tag": "out_qualify_website",
+      "profile": "outbound_commercial",
+      "niveau": 2,
+      "priority": 80,
+      "wav_basename": "out_kb_out_qualify_website",
+      "patterns": [
+        "j ai un site",
+        "on a un site",
+        "notre site",
+        "site internet",
+        "page facebook",
+        "pas de site",
+        "pas encore de site"
+      ],
+      "responses": [
+        "Ok, et ce site - vous avez l'impression qu'il vous amene vraiment des demandes, ou c'est plus une vitrine ?",
+        "D'accord. Est-ce qu'il est a jour, facile a appeler depuis le mobile, avec vos horaires bien visibles ?",
+        "Compris. Souvent le site existe, mais les gens ne trouvent pas le bon numero ou l'info utile. Ca vous parle ?",
+        "Parfait qu'il y en ait un. Est-ce que vous savez a peu pres combien de contacts il vous ramene par mois ?",
+        "Si vous n'en avez pas encore, on peut aussi partir tres simple - une page claire qui explique ce que vous faites et comment vous joindre."
+      ]
+    },
+    {
+      "tag": "out_qualify_leads",
+      "profile": "outbound_commercial",
+      "niveau": 2,
+      "priority": 78,
+      "wav_basename": "out_kb_out_qualify_leads",
+      "patterns": [
+        "pas assez de clients",
+        "manque de demandes",
+        "je cherche des clients",
+        "besoin de leads",
+        "le telephone ne sonne pas",
+        "ca marche moyen"
+      ],
+      "responses": [
+        "Ok, c'est exactement le sujet. L'idee chez DanielCraft c'est de rendre votre boite plus facile a trouver quand quelqu'un cherche localement.",
+        "Je vois. Souvent ce n'est pas qu'il n'y a pas de clients - c'est qu'ils tombent sur quelqu'un d'autre en ligne. On peut regarder ca calmement.",
+        "D'accord. Vous aimeriez surtout plus d'appels, plus de messages, ou les deux ?",
+        "Compris. On peut commencer petit : clarifier votre offre en ligne et etre mieux place sur les recherches du coin.",
+        "C'est note. Un mini point sur votre presence web suffit souvent a voir s'il y a du potentiel - sans engagement."
+      ]
+    },
+    {
+      "tag": "out_value_pitch",
+      "profile": "outbound_commercial",
+      "niveau": 2,
+      "priority": 75,
+      "wav_basename": "out_kb_out_value_pitch",
+      "patterns": [
+        "vous proposez quoi",
+        "c est quoi votre offre",
+        "comment vous travaillez",
+        "qu est ce que vous faites",
+        "expliquez"
+      ],
+      "responses": [
+        "En gros : un site plus clair, une meilleure presence locale, et des pages qui donnent envie de vous appeler. On vise des contacts utiles, pas du bruit.",
+        "DanielCraft, c'est du concret - etre trouve, comprendre vite ce que vous faites, et passer a l'action. On reste simple, pas de usine a gaz.",
+        "On regarde votre situation, on corrige ce qui freine - texte, mobile, referencement local - et on vise plus de demandes qualifies.",
+        "L'approche c'est courte et utile : on part de ce que vous avez deja, on ameliore ce qui compte pour vos clients, on mesure ce qui rentre.",
+        "Pas de discours magique. On clarifie votre offre en ligne et on vous aide a etre visible la ou vos clients cherchent deja."
+      ]
+    },
+    {
+      "tag": "out_objection_no_time",
+      "profile": "outbound_commercial",
+      "niveau": 3,
+      "priority": 70,
+      "wav_basename": "out_kb_out_objection_no_time",
+      "patterns": [
+        "j ai pas le temps",
+        "je n ai pas le temps",
+        "trop charge",
+        "plus tard peut etre",
+        "rappelez une autre fois"
+      ],
+      "responses": [
+        "Je comprends, vraiment. Je propose juste un mini echange de dix minutes, a un moment que vous choisissez.",
+        "Ok. Je ne vous prends pas une heure - un creneau court, et si ca ne colle pas on arrete la.",
+        "Pas de souci. Je vous note un rappel, et je prepare trois points max pour aller vite.",
+        "Je respecte votre planning. Vous preferez que je rappelle mardi matin ou en fin d'apres-midi ?",
+        "Compris. Je vous laisse danielcraft.fr, et vous me dites quand c'est plus calme - ca marche ?"
+      ]
+    },
+    {
+      "tag": "out_objection_has_site",
+      "profile": "outbound_commercial",
+      "niveau": 3,
+      "priority": 68,
+      "wav_basename": "out_kb_out_objection_has_site",
+      "patterns": [
+        "j ai deja un site",
+        "on a deja quelqu un",
+        "c est deja fait",
+        "mon neveu s en occupe",
+        "c est recent mon site"
+      ],
+      "responses": [
+        "Tant mieux s'il y en a un. La question c'est surtout : est-ce qu'il vous amene des demandes, ou il dort un peu ?",
+        "Ok, on ne repart pas de zero. Souvent on ameliore ce qui existe - clarte, mobile, appels - sans tout casser.",
+        "Je comprends. Un site recent peut quand meme rater des details qui font la difference. Un regard exterieur ca aide parfois.",
+        "Pas de probleme. Si tout tourne bien, je m'arrete. Si vous sentez que ca pourrait mieux convertir, on peut juste jeter un oeil.",
+        "D'accord. On peut faire un mini audit gratuit sur ce que vous avez - et vous gardez ce qui marche."
+      ]
+    },
+    {
+      "tag": "out_objection_price",
+      "profile": "outbound_commercial",
+      "niveau": 3,
+      "priority": 66,
+      "wav_basename": "out_kb_out_objection_price",
+      "patterns": [
+        "c est trop cher",
+        "pas le budget",
+        "combien ca coute",
+        "les tarifs",
+        "je peux pas me le permettre"
+      ],
+      "responses": [
+        "Je comprends pour le budget. On part souvent d'un besoin precis, pas d'une grosse facture d'entree. On peut en parler sans pression.",
+        "La question prix depend vraiment de ce qu'il faut. Avant de parler chiffre, on regarde ce qui freine vos contacts - ca evite de surpayer.",
+        "Ok. L'idee c'est que ca rapporte plus que ca coute. Un mini point gratuit permet deja de voir si ca vaut le coup.",
+        "Je ne vais pas vous balancer un tarif dans le vide. On clarifie l'objectif, ensuite on voit une option adaptee.",
+        "Compris. On peut rester tres leger au debut - clarifier l'essentiel en ligne - et avancer seulement si ca a du sens pour vous."
+      ]
+    },
+    {
+      "tag": "out_objection_spam",
+      "profile": "outbound_commercial",
+      "niveau": 3,
+      "priority": 72,
+      "wav_basename": "out_kb_out_objection_spam",
+      "patterns": [
+        "c est encore de la pub",
+        "j en ai marre du demarchage",
+        "vous vendez quoi encore",
+        "pas de pub",
+        "stop demarchage",
+        "vous etes un robot"
+      ],
+      "responses": [
+        "Je comprends. Je ne suis pas la pour vous spammer - juste verifier si un mini regard gratuit sur votre presence web peut vous servir.",
+        "Ok, je respecte. Si ce n'est pas pertinent, on arrete la, sans relance lourde.",
+        "La pub vous embete, compris. Chez DanielCraft on propose surtout un regard utile, sans forcing.",
+        "Pas de souci. Vous me dites stop et c'est clos de mon cote.",
+        "Je suis une vraie assistante pour danielcraft.fr. Si le sujet ne vous parle pas, on coupe net - pas de problem."
+      ]
+    },
+    {
+      "tag": "out_callback_later",
+      "profile": "outbound_commercial",
+      "niveau": 3,
+      "priority": 65,
+      "wav_basename": "out_kb_out_callback_later",
+      "action": "schedule_callback",
+      "patterns": [
+        "rappelez moi",
+        "rappelez plus tard",
+        "pas maintenant",
+        "la semaine prochaine",
+        "envoyez moi un mail",
+        "je suis en conges"
+      ],
+      "responses": [
+        "Avec plaisir. Je note un rappel - vous preferez en debut de matinee ou en fin de journee ?",
+        "Ok, je vous rappelle. Quel jour vous arrange le mieux cette semaine ?",
+        "C'est note. Je vous laisse tranquille pour l'instant et je reviens au creneau que vous choisissez.",
+        "Parfait. Je programme un rappel court, dix minutes max, quand vous etes dispo.",
+        "D'accord. Je vous rappelle plus tard - si entre-temps vous voulez jeter un oeil, c'est sur danielcraft.fr."
+      ]
+    },
+    {
+      "tag": "out_closing_audit",
+      "profile": "outbound_commercial",
+      "niveau": 4,
+      "priority": 60,
+      "wav_basename": "out_kb_out_closing_audit",
+      "patterns": [
+        "audit",
+        "vous pouvez regarder",
+        "un avis",
+        "ca m interesse",
+        "pourquoi pas",
+        "on peut voir"
+      ],
+      "responses": [
+        "Super. Je vous propose un mini audit gratuit - on regarde vite fait ce qui freine, et je vous dis clairement s'il y a un levier.",
+        "Parfait. On part sur un regard court de votre presence en ligne, sans engagement. Je vous envoie ensuite deux ou trois pistes concretes.",
+        "Ok. Je note votre accord pour un mini point. Vous preferez qu'on le fasse au telephone ou que je vous envoie un resume apres coup ?",
+        "Top. L'audit reste leger : site, infos cles, facilité a vous joindre. Ensuite vous decidez librement.",
+        "Bien. Je lance ca de mon cote et on se reparle avec des faits, pas du blabla."
+      ]
+    },
+    {
+      "tag": "out_closing_slot",
+      "profile": "outbound_commercial",
+      "niveau": 4,
+      "priority": 58,
+      "wav_basename": "out_kb_out_closing_slot",
+      "action": "schedule_callback",
+      "patterns": [
+        "on prend rendez vous",
+        "quel creneau",
+        "disponibilite",
+        "je suis dispo",
+        "planifions",
+        "rendez vous"
+      ],
+      "responses": [
+        "Parfait. On bloque un petit creneau - mardi matin ou mercredi apres-midi, qu'est-ce qui vous va le mieux ?",
+        "Ok, je vous propose quinze minutes. Vous avez un jour cette semaine ou c'est plus calme ?",
+        "Super. Je note le rendez-vous et je vous confirme. Preferez-vous telephone ou visio courte ?",
+        "C'est bon pour moi. Donnez-moi juste un creneau, je m'adapte.",
+        "Nickel. On fixe ca maintenant pour pas que ca se perde - quel jour vous arrange ?"
+      ]
+    },
+    {
+      "tag": "out_closing_link",
+      "profile": "outbound_commercial",
+      "niveau": 4,
+      "priority": 55,
+      "wav_basename": "out_kb_out_closing_link",
+      "patterns": [
+        "envoyez un lien",
+        "un mail",
+        "un sms",
+        "votre site",
+        "je vais regarder",
+        "envoie moi ca"
+      ],
+      "responses": [
+        "Avec plaisir. Je vous pointe vers danielcraft.fr - vous regardez tranquillement, et on en reparle si ca vous parle.",
+        "Ok. Je vous laisse le site danielcraft.fr. Si une question vient, vous me le dites au prochain appel.",
+        "Parfait. Le plus simple c'est danielcraft.fr - presentation claire, sans prise de tete.",
+        "Je note. Vous jetez un oeil de votre cote, et si vous voulez un mini audit apres, on le fait.",
+        "C'est envoye dans l'esprit : danielcraft.fr. Je ne vous harcele pas derriere - vous gardez la main."
+      ]
+    },
+    {
+      "tag": "out_not_interested",
+      "profile": "outbound_commercial",
+      "niveau": 4,
+      "priority": 50,
+      "wav_basename": "out_kb_out_not_interested",
+      "action": "hangup",
+      "patterns": [
+        "pas interesse",
+        "ca ne m interesse pas",
+        "non merci",
+        "on n a pas besoin",
+        "arretez",
+        "ne rappelez pas"
+      ],
+      "responses": [
+        "Pas de probleme. Merci d'avoir pris l'appel, je ne vous retiens pas. Bonne journee.",
+        "Ok, je respecte. Je coupe ici, sans relance. Passez une bonne journee.",
+        "Compris, on arrete la. Merci pour votre franchise, et bonne continuation.",
+        "D'accord. Je note que ce n'est pas le moment. Bonne journee a vous.",
+        "Aucun souci. Je vous laisse tranquille. Bonne journee."
+      ]
+    },
+    {
+      "tag": "out_goodbye",
+      "profile": "outbound_commercial",
+      "niveau": 4,
+      "priority": 40,
+      "wav_basename": "out_kb_out_goodbye",
+      "action": "hangup",
+      "patterns": [
+        "au revoir",
+        "bonne journee",
+        "a bientot",
+        "merci au revoir",
+        "je raccroche"
+      ],
+      "responses": [
+        "Merci a vous, bonne journee. Au revoir.",
+        "Parfait, je vous souhaite une bonne journee. Au revoir.",
+        "Merci pour votre temps. Bonne continuation, au revoir.",
+        "Ok, on se salue ici. Bonne journee, au revoir.",
+        "Merci, et a bientot peut-etre. Au revoir."
+      ]
+    },
+    {
+      "tag": "out_unclear",
+      "profile": "outbound_commercial",
+      "niveau": 2,
+      "priority": 20,
+      "wav_basename": "out_kb_out_unclear",
+      "patterns": [
+        "quoi",
+        "pardon",
+        "j ai pas compris",
+        "vous pouvez repeter",
+        "allô",
+        "ca coupe"
+      ],
+      "responses": [
+        "Pardon, je reformule. J'appelle de danielcraft.fr pour voir si on peut vous aider a etre mieux visibles en ligne. Vous m'entendez ?",
+        "Desole, je recommence plus lentement. C'est l'assistante DanielCraft - presence web locale, contacts. Ok pour vous ?",
+        "Je crois que ca a coupe. Je suis l'assistante de danielcraft.fr. On peut reprendre en deux phrases ?",
+        "Pardon. Je fais plus court : site plus clair, plus de chances d'etre trouve localement. Ca vous parle ?",
+        "Ok, je repete. DanielCraft, danielcraft.fr - un mini point sur votre presence en ligne, sans pression."
+      ]
+    }
+  ]
+}

@@ -2,14 +2,16 @@
 
 ## Architecture
 
-- **node14** : telephonie, VAD tour (`TurnVad`), belief intents, play WAV modem sous `ivr_wav/kb_*.wav`.
+- **node14** : telephonie, VAD tour (`TurnVad`), belief intents, play WAV modem sous `ivr_wav/kb_*.wav` (entrant) et `out_kb_*.wav` (commercial sortant).
 - **node15** : `POST /v1/transcribe?mode=live|final`, `POST /v1/intent-predict`, `POST /v1/tts`, `POST /v1/greeting-mix` (TTS + mix intro).
-- **Qdrant** (node15, sans Docker) : collection `intents` (vecteurs 384, Cosine) pour la recherche ANN. Service systemd `qdrant`, HTTP `:6333`.
-- **Postgres** (node14) : tables `intents`, `intent_patterns`, `intent_responses`, `intent_embeddings` (+ colonne `embedding` pgvector en fallback), `call_leads`.
-- Seed one-shot : `data/intents/kb_seed/conversation_v1.json` (plus de JSON runtime).
+- **Qdrant** (node15, sans Docker) : collections `intents_inbound` et `intents_outbound_commercial` (vecteurs 384, Cosine). Service systemd `qdrant`, HTTP `:6333`.
+- **Postgres** (node14) : tables `intents` (+ `profile`), `intent_patterns`, `intent_responses`, `intent_embeddings` (+ colonne `embedding` pgvector en fallback), `call_leads`.
+- Seed inbound : `data/intents/kb_seed/conversation_v1.json`.
+- Seed outbound commercial : `data/intents/kb_seed/outbound_commercial_v1.json`.
 
-Predict : Qdrant si `QDRANT_URL` est defini, sinon pgvector, sinon cosine Python.
-Migration : `python scripts/migrate_intents_to_qdrant.py` (voir `scripts/install_qdrant_node15.sh`).
+Predict : Qdrant si `QDRANT_URL` est defini (collection selon `profile`), sinon pgvector, sinon cosine Python.
+Migration : `python scripts/migrate_intents_to_qdrant.py --profile all` (voir `scripts/install_qdrant_node15.sh`).
+Rename legacy : `--rename-legacy` supprime l'ancienne collection `intents`.
 
 Detail complet (install, env, sync CRUD, benches, journal cutover) :
 [QDRANT_INTENTS.md](QDRANT_INTENTS.md).

@@ -3,6 +3,8 @@
 import React from "react";
 import { useOutgoingCallConnectChime, useOutgoingCallRingtone } from "../hooks/useOutgoingCallRingtone";
 import { playDialerKeySound, playHangupSound, playOutgoingDialSound } from "../utils/telephonySounds";
+import { OutboundCommercialChoicesPanel } from "./OutboundCommercialChoicesPanel";
+import type { CommercialSuggestion } from "../services/outboundCommercialApi";
 
 export type OutgoingDialerStatus = "idle" | "dialing" | "connected" | "ended" | "error";
 
@@ -58,8 +60,13 @@ type Props = {
   canSendDtmf: boolean;
   onStartDial: () => void;
   onHangup: () => void;
-  /** Touches pavé : composition (idle) ou DTMF (ligne). */
+  /** Touches pave : composition (idle) ou DTMF (ligne). */
   onKeypadDigit: (digit: string) => void;
+  /** Mode co-pilote commercial DanielCraft. */
+  commercialMode?: boolean;
+  setCommercialMode?: (v: boolean) => void;
+  commercialSuggestions?: import("../services/outboundCommercialApi").CommercialSuggestion[];
+  onClearCommercialSuggestions?: () => void;
 };
 
 function TranscriptBox(props: {
@@ -133,7 +140,11 @@ export function OutgoingCallDialerModal(props: Props): React.ReactElement | null
     canSendDtmf,
     onStartDial,
     onHangup,
-    onKeypadDigit
+    onKeypadDigit,
+    commercialMode = false,
+    setCommercialMode,
+    commercialSuggestions = [],
+    onClearCommercialSuggestions
   } = props;
 
   const [callFeedOpen, setCallFeedOpen] = React.useState(true);
@@ -372,6 +383,26 @@ export function OutgoingCallDialerModal(props: Props): React.ReactElement | null
               {dialerStatus === "error" && <span style={{ color: "#f87171" }}>Erreur</span>}
               {dialerCallId != null && <span style={{ opacity: 0.75 }}>#{dialerCallId}</span>}
             </div>
+            {dialerStatus === "idle" && setCommercialMode ? (
+              <label
+                style={{
+                  marginTop: "12px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "8px",
+                  fontSize: "0.75rem",
+                  color: "#94a3b8",
+                  cursor: "pointer"
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={commercialMode}
+                  onChange={(e) => setCommercialMode(e.target.checked)}
+                />
+                Appel commercial (co-pilote)
+              </label>
+            ) : null}
           </div>
         )}
 
@@ -446,6 +477,15 @@ export function OutgoingCallDialerModal(props: Props): React.ReactElement | null
               borderTop: "1px solid rgba(51,65,85,0.35)"
             }}
           >
+            {commercialMode ? (
+              <OutboundCommercialChoicesPanel
+                open={commercialMode}
+                callId={dialerCallId}
+                connected={dialerStatus === "connected"}
+                suggestions={commercialSuggestions as CommercialSuggestion[]}
+                onClearSuggestions={onClearCommercialSuggestions}
+              />
+            ) : null}
             <div style={{ fontSize: "0.75rem", color: "#94a3b8", fontWeight: 600, flexShrink: 0 }}>Journal modem</div>
             <div
               style={{

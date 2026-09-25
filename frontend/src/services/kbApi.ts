@@ -61,14 +61,36 @@ export type KbIntentPatch = {
 };
 
 /**
+ * True si l'erreur vient d'un abort (navigation / unmount).
+ *
+ * @param err Erreur catch.
+ */
+export function isAbortError(err: unknown): boolean {
+  if (!err) return false;
+  if (typeof DOMException !== "undefined" && err instanceof DOMException) {
+    return err.name === "AbortError";
+  }
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "name" in err &&
+    (err as { name?: string }).name === "AbortError"
+  );
+}
+
+/**
  * Liste les intents KB.
  *
  * @param enabledOnly Filtre enabled.
+ * @param signal AbortSignal (annule au changement de page).
  * @returns Intents.
  */
-export async function fetchKbIntents(enabledOnly = false): Promise<KbIntent[]> {
+export async function fetchKbIntents(
+  enabledOnly = false,
+  signal?: AbortSignal
+): Promise<KbIntent[]> {
   const q = enabledOnly ? "?enabled_only=true" : "";
-  const res = await fetch(`${getApiBaseUrl()}/kb/intents${q}`);
+  const res = await fetch(`${getApiBaseUrl()}/kb/intents${q}`, { signal });
   if (!res.ok) {
     throw new Error(`KB intents HTTP ${res.status}`);
   }
@@ -139,17 +161,24 @@ export type KbConversationStatus = {
   qdrant_ok?: boolean;
   qdrant_url?: string | null;
   qdrant_points?: number;
+  qdrant_collection?: string | null;
   qdrant_detail?: string | null;
+  qdrant_points_outbound?: number;
+  qdrant_ok_outbound?: boolean;
+  qdrant_collection_outbound?: string | null;
   vector_engine?: string | null;
 };
 
 /**
  * Statut de readiness du mode conversation (STT + intents + voix).
  *
+ * @param signal AbortSignal optionnel.
  * @returns Snapshot pret / compteurs.
  */
-export async function fetchKbConversationStatus(): Promise<KbConversationStatus> {
-  const res = await fetch(`${getApiBaseUrl()}/kb/conversation-status`);
+export async function fetchKbConversationStatus(
+  signal?: AbortSignal
+): Promise<KbConversationStatus> {
+  const res = await fetch(`${getApiBaseUrl()}/kb/conversation-status`, { signal });
   if (!res.ok) {
     throw new Error(`KB conversation-status HTTP ${res.status}`);
   }
@@ -243,7 +272,7 @@ export function getKbIntentVoiceUrl(tag: string): string {
   return `${getApiBaseUrl()}/kb/intents/${encodeURIComponent(tag)}/voice`;
 }
 
-import type { ChatMsg } from "../app/kb/chatHistory";
+import type { ChatMsg } from "../components/kb/chatHistory";
 
 export type KbChatSessionDto = {
   id: string;
@@ -260,9 +289,13 @@ export type KbChatSessionDto = {
  * Liste les sessions tchatche (BDD).
  *
  * @param limit Cap.
+ * @param signal AbortSignal optionnel.
  */
-export async function fetchKbChats(limit = 30): Promise<KbChatSessionDto[]> {
-  const res = await fetch(`${getApiBaseUrl()}/kb/chats?limit=${limit}`);
+export async function fetchKbChats(
+  limit = 30,
+  signal?: AbortSignal
+): Promise<KbChatSessionDto[]> {
+  const res = await fetch(`${getApiBaseUrl()}/kb/chats?limit=${limit}`, { signal });
   if (!res.ok) {
     throw new Error(`KB chats HTTP ${res.status}`);
   }
@@ -305,12 +338,17 @@ export async function deleteKbChat(id: string): Promise<void> {
  * Importe un lot (migration localStorage → BDD).
  *
  * @param sessions Sessions locales.
+ * @param signal AbortSignal optionnel.
  */
-export async function importKbChats(sessions: KbChatSessionDto[]): Promise<number> {
+export async function importKbChats(
+  sessions: KbChatSessionDto[],
+  signal?: AbortSignal
+): Promise<number> {
   const res = await fetch(`${getApiBaseUrl()}/kb/chats/import`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessions })
+    body: JSON.stringify({ sessions }),
+    signal
   });
   if (!res.ok) {
     throw new Error(`KB chat import HTTP ${res.status}`);

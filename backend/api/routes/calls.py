@@ -52,7 +52,11 @@ router = APIRouter()
 class OutgoingCallStartRequest(BaseModel):
     """Payload pour demarrer un appel sortant modem."""
 
-    phone_number: str = Field(..., min_length=1, max_length=32)
+    phone_number: str = Field(..., min_length=1, max_length=40)
+    commercial_mode: bool = Field(
+        default=False,
+        description="Active le co-pilote commercial (suggestions top-5).",
+    )
 
 
 class OutgoingCallActionResponse(BaseModel):
@@ -188,6 +192,55 @@ async def _publish_log(call_id: int, phone_number: str, message: str, level: str
     )
 
 
+async def _maybe_publish_commercial_suggestions(
+    call_manager,
+    session: OutgoingCallSession,
+    text: str,
+) -> None:
+    """
+    Si mode commercial, predict top-5 et publie un event WS.
+
+    @param call_manager CallManager (config + DB).
+    @param session Session sortante.
+    @param text Segment STT final.
+    """
+    from loguru import logger as _logger
+
+    if not session.commercial_mode:
+        return
+    clean = (text or "").strip()
+    if len(clean) < 2:
+        return
+    if getattr(session, "playing_wav", False):
+        return
+    try:
+        from backend.database import database as db_module
+        from backend.services import outbound_commercial_engine as commercial
+
+        if db_module.SessionLocal is None:
+            return
+        db = db_module.SessionLocal()
+        try:
+            result = commercial.suggest_top_intents(
+                db, clean, call_manager.config, top_k=5
+            )
+        finally:
+            db.close()
+        session.commercial_suggestions = result.get("suggestions") or []
+        session.commercial_selected_tag = None
+        session.commercial_phrases = []
+        await event_bus.publish(
+            Event(
+                event_type=EventType.OUTBOUND_COMMERCIAL_SUGGESTIONS,
+                timestamp=datetime.utcnow(),
+                data={"call_id": session.call_id, **result},
+                source="CallsRoute",
+            )
+        )
+    except Exception as exc:
+        _logger.debug("Suggest commercial ignore: {}", exc)
+
+
 async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
     """Boucle de session sortante: dial, ALSA ou streaming VRX serie, STT, enregistrement WAV, cloture."""
     call_manager = getattr(app.state, "call_manager", None)
@@ -230,6 +283,8 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
                 text=text,
                 live=False,
             )
+            if session.commercial_mode:
+                await _maybe_publish_commercial_suggestions(call_manager, session, text)
 
     async def _feed_stt_stream(stt_buffer: bytearray) -> None:
         if vosk_stream_ok:
@@ -262,6 +317,10 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
                         text=seg,
                         live=False,
                     )
+                    if session.commercial_mode and (seg or "").strip():
+                        await _maybe_publish_commercial_suggestions(
+                            call_manager, session, seg
+                        )
         else:
             await _stt_flush_legacy(stt_buffer)
 
@@ -451,6 +510,9 @@ async def _run_outgoing_call_session(app, session: OutgoingCallSession) -> None:
                         pass
                     if len(mic_acc) > MAX_MIC_BACKLOG:
                         del mic_acc[:-MAX_MIC_BACKLOG]
+                    # Pendant lecture WAV commercial : on jette l'uplink micro.
+                    if getattr(session, "playing_wav", False):
+                        mic_acc.clear()
 
                 while not session.stop_event.is_set() and not modem._voice_abort:
                     if not uplink_open:
@@ -1023,7 +1085,7 @@ async def start_outgoing_call(
             request,
             config,
             "/api/v1/calls/outgoing/start",
-            {"phone_number": payload.phone_number},
+            {"phone_number": payload.phone_number, "commercial_mode": payload.commercial_mode},
         )
     call_manager = getattr(request.app.state, "call_manager", None)
     if call_manager is None:
@@ -1039,7 +1101,11 @@ async def start_outgoing_call(
         call = await call_manager.call_service.create_outgoing_call(phone)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    session = OutgoingCallSession(call_id=call.id, phone_number=phone)
+    session = OutgoingCallSession(
+        call_id=call.id,
+        phone_number=phone,
+        commercial_mode=bool(payload.commercial_mode),
+    )
     outgoing_sessions[call.id] = session
     asyncio.create_task(_publish_log(call.id, phone, "Session sortante creee (tache modem)"))
     asyncio.create_task(_run_outgoing_call_session(request.app, session))

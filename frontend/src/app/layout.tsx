@@ -1,6 +1,7 @@
 import React from "react";
 import "../styles/globals.css";
 import { ThemeProviderWrapper } from "../components/ThemeProviderWrapper";
+import { AppShellGate } from "../components/AppShell";
 
 export const metadata = {
   title: {
@@ -16,7 +17,7 @@ export interface RootLayoutProps {
 
 /**
  * Layout racine Next.js (app router).
- * ThemeProviderWrapper applique le theme (dark/light) a toute l'app.
+ * Theme + shell persistant (Sidebar/Topbar) pour naviguer sans tout recharger.
  */
 const RootLayout: React.FC<RootLayoutProps> = ({ children }) => {
   return (
@@ -36,7 +37,9 @@ const RootLayout: React.FC<RootLayoutProps> = ({ children }) => {
         />
       </head>
       <body suppressHydrationWarning>
-        <ThemeProviderWrapper>{children}</ThemeProviderWrapper>
+        <ThemeProviderWrapper>
+          <AppShellGate>{children}</AppShellGate>
+        </ThemeProviderWrapper>
       </body>
     </html>
   );

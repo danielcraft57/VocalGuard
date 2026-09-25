@@ -19,17 +19,24 @@ export interface Caller {
 
 /**
  * Liste des appelants en liste blanche (Permitted, inspire callattendant).
+ *
+ * @param signal AbortSignal optionnel.
  */
-export async function fetchWhitelist(): Promise<Caller[]> {
-  const list = await getJson<Caller[]>(`/callers?is_whitelisted=true&limit=200`);
+export async function fetchWhitelist(signal?: AbortSignal): Promise<Caller[]> {
+  const list = await getJson<Caller[]>(
+    `/callers?is_whitelisted=true&limit=200`,
+    signal
+  );
   return Array.isArray(list) ? list : [];
 }
 
 /**
  * Liste des appelants en liste noire (Blocked, inspire callattendant).
+ *
+ * @param signal AbortSignal optionnel.
  */
-export async function fetchBlocklist(): Promise<Caller[]> {
-  const list = await getJson<Caller[]>(`/callers?is_blocked=true&limit=200`);
+export async function fetchBlocklist(signal?: AbortSignal): Promise<Caller[]> {
+  const list = await getJson<Caller[]>(`/callers?is_blocked=true&limit=200`, signal);
   return Array.isArray(list) ? list : [];
 }
 

@@ -18,8 +18,8 @@ export interface BlockRule {
   updated_at: string;
 }
 
-export async function fetchBlockRules(): Promise<BlockRule[]> {
-  const list = await getJson<BlockRule[]>(BASE);
+export async function fetchBlockRules(signal?: AbortSignal): Promise<BlockRule[]> {
+  const list = await getJson<BlockRule[]>(BASE, signal);
   return Array.isArray(list) ? list : [];
 }
 

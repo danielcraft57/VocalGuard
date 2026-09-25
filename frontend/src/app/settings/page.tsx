@@ -7,7 +7,6 @@ import {
   Card,
   CardActionArea,
   CardContent,
-  CircularProgress,
   Grid,
   Stack,
   Typography
@@ -23,6 +22,8 @@ import { AppLayout } from "../../components/AppLayout";
 import { VgPageHeader } from "../../components/mui/VgPageHeader";
 import { VgProfileChip } from "../../components/mui/VgProfileChip";
 import { useIncomingCallConfig } from "../../hooks/useIncomingCallConfig";
+import { VgSoftSyncBar } from "../../components/mui/VgSoftSyncBar";
+import { VgFormSkeleton } from "../../components/mui/VgListSkeleton";
 
 type HubTile = {
   href: string;
@@ -81,7 +82,7 @@ const TILES: HubTile[] = [
  * Hub parametres Material (tuiles navigation).
  */
 export default function SettingsHubPage() {
-  const { config, loading } = useIncomingCallConfig();
+  const { config, loading, syncing } = useIncomingCallConfig();
 
   return (
     <AppLayout
@@ -95,10 +96,14 @@ export default function SettingsHubPage() {
         action={<SettingsIcon color="action" />}
       />
 
-      {loading ? (
-        <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-          <CircularProgress />
+      {syncing && config ? (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+          <VgSoftSyncBar />
         </Box>
+      ) : null}
+
+      {loading && !config ? (
+        <VgFormSkeleton />
       ) : config ? (
         <Card sx={{ mb: 3 }}>
           <CardContent>

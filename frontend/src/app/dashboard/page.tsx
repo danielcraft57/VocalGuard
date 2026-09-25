@@ -1,44 +1,29 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useCallback } from "react";
 import Link from "next/link";
+import { Box } from "@mui/material";
 import { AppLayout } from "../../components/AppLayout";
 import { DashboardCharts } from "../../components/DashboardCharts";
 import { VgTelephonyStatusStrip } from "../../components/mui/VgTelephonyStatusStrip";
+import { VgSoftSyncBar } from "../../components/mui/VgSoftSyncBar";
+import { VgCardsSkeleton } from "../../components/mui/VgListSkeleton";
 import { fetchDashboardStats, DashboardStats } from "../../services/dashboardStatsApi";
+import { useSoftCachedLoad } from "../../hooks/useSoftCachedLoad";
+import { UI_CACHE_KEYS } from "../../services/uiPersist";
 
 /**
  * Dashboard : stats chargees cote client pour afficher les vraies donnees.
  */
 export default function DashboardPage() {
-  const [stats, setStats] = useState<DashboardStats | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetchDashboardStats()
-      .then((data) => {
-        if (!cancelled) {
-          setStats(data);
-          setError(null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setError("Impossible de charger les stats (verifie le backend).");
-          setStats(null);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const fetcher = useCallback(
+    (signal: AbortSignal) => fetchDashboardStats(signal),
+    []
+  );
+  const { data: stats, loading, syncing, error } = useSoftCachedLoad<DashboardStats>({
+    cacheKey: UI_CACHE_KEYS.dashboardStats,
+    fetcher
+  });
 
   const cards: {
     label: string;
@@ -86,7 +71,12 @@ export default function DashboardPage() {
       subtitle="Vue d'ensemble des appels, RDV et devis VocalGuard."
     >
       <VgTelephonyStatusStrip />
-      {error ? (
+      {syncing ? (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+          <VgSoftSyncBar label="Synchro stats…" />
+        </Box>
+      ) : null}
+      {error && !stats ? (
         <div className="vg-card">
           <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
             <span className="material-icons" style={{ color: "#ef4444", fontSize: "18px" }}>
@@ -96,6 +86,8 @@ export default function DashboardPage() {
           </div>
           <div style={{ fontSize: "0.9rem", color: "#ef4444" }}>{error}</div>
         </div>
+      ) : loading && !stats ? (
+        <VgCardsSkeleton count={5} />
       ) : (
         <div className="vg-card-grid">
           {cards.map((card) => (
@@ -106,15 +98,7 @@ export default function DashboardPage() {
                 </span>
                 {card.label}
               </div>
-              <div className="vg-card-value">
-                {loading ? (
-                  <span className="material-icons" style={{ fontSize: "1.2rem", verticalAlign: "middle" }}>
-                    hourglass_empty
-                  </span>
-                ) : (
-                  card.value
-                )}
-              </div>
+              <div className="vg-card-value">{card.value}</div>
               {"href" in card && card.href ? (
                 <Link href={card.href} style={{ fontSize: "0.8rem", marginTop: "0.35rem", display: "inline-block" }}>
                   Voir les appels
@@ -125,7 +109,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <DashboardCharts stats={stats} loading={loading} />
+      <DashboardCharts stats={stats} loading={loading && !stats} />
     </AppLayout>
   );
 }

@@ -32,6 +32,10 @@ class IntentPredictBody(BaseModel):
 
     text: str = Field(..., min_length=1)
     top_k: int = Field(default=8, ge=1, le=32)
+    profile: Optional[str] = Field(
+        default=None,
+        description="inbound | outbound_commercial (defaut inbound)",
+    )
 
 
 class IntentCreateBody(BaseModel):
@@ -72,6 +76,8 @@ class PrefetchBody(BaseModel):
 
     force: bool = False
     tags: Optional[List[str]] = None
+    profile: Optional[str] = None
+    tts_provider: Optional[str] = None
 
 
 class ChatSessionUpsertBody(BaseModel):
@@ -201,9 +207,16 @@ async def conversation_status(request: Request) -> Dict[str, Any]:
     ready = stt_ok and intents_enabled > 0
     voices_complete = intents_enabled > 0 and voices_ready >= intents_enabled
 
-    from backend.voice.qdrant_intents import fetch_qdrant_status
+    from backend.voice.qdrant_intents import (
+        COLLECTION_INBOUND,
+        COLLECTION_OUTBOUND_COMMERCIAL,
+        fetch_all_qdrant_status,
+        fetch_qdrant_status,
+    )
 
-    qdrant = fetch_qdrant_status()
+    qdrant_all = fetch_all_qdrant_status()
+    qdrant = fetch_qdrant_status(collection=COLLECTION_INBOUND)
+    q_out = qdrant_all.get("outbound_commercial") or {}
 
     return {
         "ready": ready,
@@ -217,7 +230,12 @@ async def conversation_status(request: Request) -> Dict[str, Any]:
         "qdrant_ok": bool(qdrant.get("ok")),
         "qdrant_url": qdrant.get("url"),
         "qdrant_points": int(qdrant.get("points_count") or 0),
+        "qdrant_collection": qdrant.get("collection") or COLLECTION_INBOUND,
         "qdrant_detail": qdrant.get("detail"),
+        "qdrant_points_outbound": int(q_out.get("points_count") or 0),
+        "qdrant_ok_outbound": bool(q_out.get("ok")),
+        "qdrant_collection_outbound": q_out.get("collection")
+        or COLLECTION_OUTBOUND_COMMERCIAL,
         "vector_engine": (
             "qdrant"
             if qdrant.get("ok")
@@ -468,7 +486,7 @@ async def intent_predict(body: IntentPredictBody, request: Request) -> Dict[str,
     try:
         intent_repo.ensure_seeded(db, _base_path(request))
         preds, engine = intent_repo.predict_intent_scores_detailed(
-            db, body.text, top_k=body.top_k
+            db, body.text, top_k=body.top_k, profile=body.profile
         )
     finally:
         db.close()
@@ -512,6 +530,8 @@ async def regenerate_voices(body: PrefetchBody, request: Request) -> Dict[str, A
             synthesis,
             force=body.force,
             tags=body.tags,
+            profile=body.profile,
+            tts_provider=body.tts_provider,
         )
         return result
     finally:

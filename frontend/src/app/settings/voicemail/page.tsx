@@ -4,7 +4,6 @@ import React, { useCallback, useMemo } from "react";
 import Link from "next/link";
 import {
   Box,
-  CircularProgress,
   FormControl,
   FormControlLabel,
   InputLabel,
@@ -25,6 +24,8 @@ import { VgPageHeader } from "../../../components/mui/VgPageHeader";
 import { VgSaveBar } from "../../../components/mui/VgSaveBar";
 import { VgSettingsSection } from "../../../components/mui/VgSettingsSection";
 import { VgConversationModeStatus } from "../../../components/mui/VgConversationModeStatus";
+import { VgSoftSyncBar } from "../../../components/mui/VgSoftSyncBar";
+import { VgFormSkeleton } from "../../../components/mui/VgListSkeleton";
 import { useIncomingCallConfig } from "../../../hooks/useIncomingCallConfig";
 
 type VoicemailBlock = {
@@ -49,6 +50,7 @@ export default function VoicemailSettingsPage() {
   const {
     config,
     loading,
+    syncing,
     saving,
     dirty,
     error,
@@ -84,11 +86,15 @@ export default function VoicemailSettingsPage() {
         }
       />
 
-      {loading || !config ? (
-        <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-          <CircularProgress />
+      {syncing && config ? (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+          <VgSoftSyncBar />
         </Box>
-      ) : (
+      ) : null}
+
+      {loading && !config ? (
+        <VgFormSkeleton />
+      ) : config ? (
         <>
           <VgSettingsSection
             title="Mode repondeur"
@@ -258,7 +264,7 @@ export default function VoicemailSettingsPage() {
             onDismissSuccess={() => setSuccess(null)}
           />
         </>
-      )}
+      ) : null}
     </AppLayout>
   );
 }

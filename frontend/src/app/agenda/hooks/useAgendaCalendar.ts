@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Appointment, AppointmentPayload } from "../../../services/appointmentsApi";
 import {
   createAppointment,
@@ -10,6 +10,13 @@ import {
 } from "../../../services/appointmentsApi";
 import { fetchEntreprises, type Entreprise } from "../../../services/entreprisesApi";
 import type { AgendaView } from "../types";
+import {
+  isAbortError,
+  isUiCacheFresh,
+  loadUiCache,
+  saveUiCache,
+  UI_CACHE_KEYS
+} from "../../../services/uiPersist";
 
 function toLocalInput(date: Date): string {
   const y = date.getFullYear();
@@ -58,6 +65,10 @@ function startOfWeek(base: Date): Date {
 
 /**
  * Fenetre de chargement agenda (marge autour de la vue pour rester fluide).
+ *
+ * @param view Vue jour / semaine / mois.
+ * @param cursor Date curseur.
+ * @returns Bornes from / to.
  */
 function agendaFetchWindow(view: AgendaView, cursor: Date): { from: Date; to: Date } {
   if (view === "month") {
@@ -82,6 +93,17 @@ function agendaFetchWindow(view: AgendaView, cursor: Date): { from: Date; to: Da
   return { from, to };
 }
 
+/**
+ * Cle cache pour une fenetre de RDV.
+ *
+ * @param from Debut ISO.
+ * @param to Fin ISO.
+ * @returns Cle session.
+ */
+function appointmentsCacheKey(from: Date, to: Date): string {
+  return `${UI_CACHE_KEYS.appointments}:${from.toISOString()}:${to.toISOString()}`;
+}
+
 function defaultFormFromDate(start: Date): AppointmentPayload {
   const end = new Date(start.getTime() + 60 * 60 * 1000);
   return {
@@ -97,9 +119,19 @@ function defaultFormFromDate(start: Date): AppointmentPayload {
   };
 }
 
+/**
+ * Etat et actions du calendrier agenda (cache fenetre + soft sync).
+ *
+ * @returns API exposee a la page Agenda.
+ */
 export function useAgendaCalendar() {
-  const [events, setEvents] = useState<Appointment[]>([]);
-  const [loading, setLoading] = useState(true);
+  const initialWindow = agendaFetchWindow("week", new Date());
+  const initialKey = appointmentsCacheKey(initialWindow.from, initialWindow.to);
+  const initialCached = loadUiCache<Appointment[]>(initialKey);
+
+  const [events, setEvents] = useState<Appointment[]>(() => initialCached ?? []);
+  const [loading, setLoading] = useState(() => !Array.isArray(initialCached));
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<AgendaView>("week");
   const [cursorDate, setCursorDate] = useState(new Date());
@@ -113,7 +145,9 @@ export function useAgendaCalendar() {
   const [entrepriseCache, setEntrepriseCache] = useState<Entreprise[]>([]);
   const [focusSlot, setFocusSlot] = useState<Date | null>(null);
   const [focusNonce, setFocusNonce] = useState(0);
-  const [settings, setSettings] = useState<AppointmentSettings | null>(null);
+  const cachedSettings = loadUiCache<AppointmentSettings>(UI_CACHE_KEYS.appointmentSettings);
+  const [settings, setSettings] = useState<AppointmentSettings | null>(() => cachedSettings);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const start = form.start_time ? parseDate(form.start_time) : null;
@@ -128,9 +162,16 @@ export function useAgendaCalendar() {
   }, [form.start_time]);
 
   useEffect(() => {
+    const cached = loadUiCache<AppointmentSettings>(UI_CACHE_KEYS.appointmentSettings);
+    if (cached) setSettings(cached);
     fetchAppointmentSettings()
-      .then((res) => setSettings(res))
-      .catch(() => setSettings(null));
+      .then((res) => {
+        setSettings(res);
+        saveUiCache(UI_CACHE_KEYS.appointmentSettings, res);
+      })
+      .catch(() => {
+        if (!cached) setSettings(null);
+      });
   }, []);
 
   useEffect(() => {
@@ -164,29 +205,53 @@ export function useAgendaCalendar() {
   }, [entrepriseQuery, entrepriseCache]);
 
   useEffect(() => {
-    let cancelled = false;
-    async function loadEvents(): Promise<void> {
+    const { from, to } = agendaFetchWindow(view, cursorDate);
+    const cacheKey = appointmentsCacheKey(from, to);
+    const cached = loadUiCache<Appointment[]>(cacheKey);
+    const already = Array.isArray(cached) || events.length > 0;
+
+    if (Array.isArray(cached)) {
+      setEvents(cached);
+    }
+
+    if (already && isUiCacheFresh(cacheKey)) {
+      if (Array.isArray(cached)) setEvents(cached);
+      setLoading(false);
+      setSyncing(false);
+      return;
+    }
+
+    if (already) setSyncing(true);
+    else setLoading(true);
+
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+
+    (async () => {
       try {
-        const { from, to } = agendaFetchWindow(view, cursorDate);
-        const data = await fetchAppointments({ from, to });
-        if (!cancelled) {
-          setEvents(data);
-          setError(null);
-        }
-      } catch {
-        if (!cancelled) {
+        const data = await fetchAppointments({ from, to }, ac.signal);
+        if (ac.signal.aborted) return;
+        setEvents(data);
+        saveUiCache(cacheKey, data);
+        setError(null);
+      } catch (e) {
+        if (isAbortError(e) || ac.signal.aborted) return;
+        if (!already) {
           setError("Impossible de charger l'agenda.");
         }
       } finally {
-        if (!cancelled) {
+        if (!ac.signal.aborted) {
           setLoading(false);
+          setSyncing(false);
         }
       }
-    }
-    loadEvents();
+    })();
+
     return () => {
-      cancelled = true;
+      ac.abort();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- soft sync: ne pas clear events
   }, [view, cursorDate]);
 
   const weekDays = useMemo(() => {
@@ -288,9 +353,15 @@ export function useAgendaCalendar() {
     setEditorOpen(true);
   };
 
+  /**
+   * Recharge la fenetre courante et met a jour le cache (apres mutation).
+   */
   const refreshEvents = async (): Promise<void> => {
     const { from, to } = agendaFetchWindow(view, cursorDate);
-    setEvents(await fetchAppointments({ from, to }));
+    const cacheKey = appointmentsCacheKey(from, to);
+    const data = await fetchAppointments({ from, to });
+    setEvents(data);
+    saveUiCache(cacheKey, data);
   };
 
   const saveEvent = async (): Promise<void> => {
@@ -391,6 +462,7 @@ export function useAgendaCalendar() {
   return {
     events,
     loading,
+    syncing,
     error,
     view,
     setView,

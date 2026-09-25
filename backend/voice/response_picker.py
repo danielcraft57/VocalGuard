@@ -142,18 +142,27 @@ def apply_recent_tag_penalty(
     return adjusted
 
 
-def variant_wav_basename(tag: str, response_index: int) -> str:
+def variant_wav_basename(
+    tag: str,
+    response_index: int,
+    *,
+    wav_basename: Optional[str] = None,
+    prefix: str = "kb",
+) -> str:
     """
     Basename WAV pour une variante de reponse.
 
     @param tag Tag intent.
-    @param response_index Index (0 = principal kb_tag).
+    @param response_index Index (0 = principal).
+    @param wav_basename Basename custom (ex. out_kb_out_presentation).
+    @param prefix Prefixe si pas de wav_basename (``kb`` ou ``out_kb``).
     @returns Nom sans extension.
     """
     clean = (tag or "").strip() or "intent"
+    base = (wav_basename or "").strip() or f"{prefix}_{clean}"
     if response_index <= 0:
-        return f"kb_{clean}"
-    return f"kb_{clean}_r{int(response_index)}"
+        return base
+    return f"{base}_r{int(response_index)}"
 
 
 def reply_content_token(text: str) -> str:

@@ -30,7 +30,9 @@ export interface DashboardStats {
 
 /**
  * Recupere les stats du dashboard depuis l'API (valeurs reelles backend).
+ *
+ * @param signal AbortSignal optionnel.
  */
-export async function fetchDashboardStats(): Promise<DashboardStats> {
-  return getJson<DashboardStats>("/stats");
+export async function fetchDashboardStats(signal?: AbortSignal): Promise<DashboardStats> {
+  return getJson<DashboardStats>("/stats", signal);
 }

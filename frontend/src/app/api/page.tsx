@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppLayout } from "../../components/AppLayout";
 import {
   Alert,
@@ -35,43 +35,91 @@ import {
   revealPublicToken,
   revokePublicToken,
 } from "../../services/publicApiAdmin";
+import {
+  isAbortError,
+  loadUiCache,
+  saveUiCache,
+  UI_CACHE_KEYS
+} from "../../services/uiPersist";
+import { VgSoftSyncBar } from "../../components/mui/VgSoftSyncBar";
 
+/**
+ * Page admin API publique : tokens, droits et documentation.
+ */
 export default function ApiManagementPage() {
-  const [docs, setDocs] = useState<PublicApiDocsPayload | null>(null);
-  const [tokens, setTokens] = useState<PublicApiToken[]>([]);
+  const cachedDocs = loadUiCache<PublicApiDocsPayload>(UI_CACHE_KEYS.publicApiDocs);
+  const cachedTokens = loadUiCache<PublicApiToken[]>(UI_CACHE_KEYS.publicTokens);
+  const [docs, setDocs] = useState<PublicApiDocsPayload | null>(() => cachedDocs);
+  const [tokens, setTokens] = useState<PublicApiToken[]>(() => cachedTokens ?? []);
   const [adminToken, setAdminToken] = useState("");
   const [appUrl, setAppUrl] = useState("https://example.com");
   const [canReadAgenda, setCanReadAgenda] = useState(true);
   const [canWriteAgenda, setCanWriteAgenda] = useState(true);
   const [canWriteEntreprises, setCanWriteEntreprises] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [syncingDocs, setSyncingDocs] = useState(false);
+  const [syncingTokens, setSyncingTokens] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [revealMap, setRevealMap] = useState<Record<number, string>>({});
   const [showSystemTokens, setShowSystemTokens] = useState(false);
   const [expandedDoc, setExpandedDoc] = useState<string | null>(null);
+  const docsAbortRef = useRef<AbortController | null>(null);
+  const tokensAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     setAdminToken((window.localStorage.getItem("vg_public_api_admin_token") ?? "").trim());
   }, []);
+
   useEffect(() => {
-    fetchPublicApiDocs().then(setDocs).catch(() => null);
-  }, []);
-  useEffect(() => {
-    refreshTokens();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    docsAbortRef.current?.abort();
+    const ac = new AbortController();
+    docsAbortRef.current = ac;
+    const hasLocal = Boolean(loadUiCache(UI_CACHE_KEYS.publicApiDocs));
+    if (hasLocal) setSyncingDocs(true);
+
+    fetchPublicApiDocs(ac.signal)
+      .then((payload) => {
+        if (ac.signal.aborted) return;
+        setDocs(payload);
+        saveUiCache(UI_CACHE_KEYS.publicApiDocs, payload);
+      })
+      .catch((err) => {
+        if (isAbortError(err) || ac.signal.aborted) return;
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setSyncingDocs(false);
+      });
+
+    return () => {
+      ac.abort();
+    };
   }, []);
 
-  const refreshTokens = async () => {
-    setBusy(true);
+  /**
+   * Recharge la liste des tokens (soft sync si cache present).
+   */
+  const refreshTokens = useCallback(async () => {
+    const hasLocal =
+      Boolean(loadUiCache(UI_CACHE_KEYS.publicTokens)) || tokens.length > 0;
+    if (hasLocal) setSyncingTokens(true);
+    else setBusy(true);
     setError(null);
     setSuccess(null);
+
+    tokensAbortRef.current?.abort();
+    const ac = new AbortController();
+    tokensAbortRef.current = ac;
+
     try {
-      const rows = await listPublicTokens();
+      const rows = await listPublicTokens(ac.signal);
+      if (ac.signal.aborted) return;
       setTokens(rows);
+      saveUiCache(UI_CACHE_KEYS.publicTokens, rows);
       setSuccess(`${rows.length} token(s) chargé(s).`);
     } catch (err) {
+      if (isAbortError(err) || ac.signal.aborted) return;
       const message = err instanceof Error ? err.message : "Chargement impossible.";
       if (message.includes("(401)")) {
         setError("401: renseigne le token admin puis clique sur Rafraîchir.");
@@ -79,9 +127,20 @@ export default function ApiManagementPage() {
         setError(message);
       }
     } finally {
-      setBusy(false);
+      if (!ac.signal.aborted) {
+        setBusy(false);
+        setSyncingTokens(false);
+      }
     }
-  };
+  }, [tokens.length]);
+
+  useEffect(() => {
+    void refreshTokens();
+    return () => {
+      tokensAbortRef.current?.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const saveAdminToken = () => {
     if (typeof window === "undefined") return;
@@ -195,8 +254,15 @@ export default function ApiManagementPage() {
     return tokens.filter((t) => !["bootstrap-admin", "local-token-manager"].includes((t.name || "").trim()));
   }, [showSystemTokens, tokens]);
 
+  const syncing = syncingDocs || syncingTokens;
+
   return (
     <AppLayout title="API publique" subtitle="Documentation, tokens et droits d'accès de l'API publique.">
+      {syncing ? (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+          <VgSoftSyncBar label="Synchro API…" />
+        </Box>
+      ) : null}
       <Stack spacing={2}>
         <Card sx={{ borderRadius: 3, border: "1px solid var(--vg-color-border-subtle)" }}>
           <CardContent>
@@ -250,7 +316,7 @@ export default function ApiManagementPage() {
                 <Button variant="contained" onClick={onCreate} disabled={busy || !appUrl.trim()}>
                   Générer le token
                 </Button>
-                <Button variant="outlined" onClick={refreshTokens} disabled={busy}>
+                <Button variant="outlined" onClick={() => void refreshTokens()} disabled={busy || syncing}>
                   Rafraîchir
                 </Button>
               </Box>

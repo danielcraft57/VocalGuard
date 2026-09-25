@@ -4,11 +4,12 @@
 
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Chip, Tooltip } from "@mui/material";
 import StorageIcon from "@mui/icons-material/Storage";
 import {
   fetchKbConversationStatus,
+  isAbortError,
   type KbConversationStatus
 } from "../../services/kbApi";
 
@@ -31,18 +32,38 @@ export function KbVectorEngineChip({
 }: Props): React.ReactElement {
   const [status, setStatus] = useState<KbConversationStatus | null>(null);
 
-  const reload = useCallback(() => {
-    fetchKbConversationStatus()
-      .then(setStatus)
-      .catch(() => setStatus(null));
-  }, []);
-
   useEffect(() => {
+    let cancelled = false;
+    let current: AbortController | null = null;
+
+    const reload = () => {
+      current?.abort();
+      const ac = new AbortController();
+      current = ac;
+      fetchKbConversationStatus(ac.signal)
+        .then((data) => {
+          if (!cancelled) setStatus(data);
+        })
+        .catch((e) => {
+          if (isAbortError(e) || cancelled) return;
+          setStatus(null);
+        });
+    };
+
     reload();
-    if (pollMs <= 0) return;
+    if (pollMs <= 0) {
+      return () => {
+        cancelled = true;
+        current?.abort();
+      };
+    }
     const id = window.setInterval(reload, pollMs);
-    return () => window.clearInterval(id);
-  }, [reload, pollMs]);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      current?.abort();
+    };
+  }, [pollMs]);
 
   if (!status) {
     return (
@@ -65,8 +86,18 @@ export function KbVectorEngineChip({
 
   if (engine === "qdrant" && qOk) {
     color = "success";
-    label = compact ? "Qdrant" : `Qdrant · ${points} pts`;
-    tip = `Moteur Qdrant OK${status.qdrant_url ? ` (${status.qdrant_url})` : ""}.`;
+    const ptsOut = Number(status.qdrant_points_outbound || 0);
+    const coll = status.qdrant_collection || "intents_inbound";
+    label = compact
+      ? "Qdrant"
+      : ptsOut > 0
+        ? `Qdrant · in ${points} / out ${ptsOut}`
+        : `Qdrant · ${points} pts`;
+    tip = `Collections: ${coll}` +
+      (status.qdrant_collection_outbound
+        ? ` + ${status.qdrant_collection_outbound}`
+        : "") +
+      (status.qdrant_url ? ` (${status.qdrant_url})` : "");
   } else if (status.qdrant_configured && !qOk) {
     color = "warning";
     label = "Qdrant KO";

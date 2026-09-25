@@ -36,15 +36,18 @@ export interface EntrepriseListResponse {
   items: Entreprise[];
 }
 
-export async function fetchEntreprises(params?: {
-  skip?: number;
-  limit?: number;
-  q?: string;
-  country?: string;
-  city?: string;
-  category?: string;
-  has_phone?: boolean;
-}): Promise<EntrepriseListResponse> {
+export async function fetchEntreprises(
+  params?: {
+    skip?: number;
+    limit?: number;
+    q?: string;
+    country?: string;
+    city?: string;
+    category?: string;
+    has_phone?: boolean;
+  },
+  signal?: AbortSignal
+): Promise<EntrepriseListResponse> {
   const sp = new URLSearchParams();
   if (typeof params?.skip === "number") sp.set("skip", String(params.skip));
   if (typeof params?.limit === "number") sp.set("limit", String(params.limit));
@@ -55,7 +58,7 @@ export async function fetchEntreprises(params?: {
   if (typeof params?.has_phone === "boolean") sp.set("has_phone", params.has_phone ? "true" : "false");
 
   const qs = sp.toString();
-  return getJson<EntrepriseListResponse>(`/entreprises${qs ? `?${qs}` : ""}`);
+  return getJson<EntrepriseListResponse>(`/entreprises${qs ? `?${qs}` : ""}`, signal);
 }
 
 export async function importEntreprisesXlsx(file: File, analyzePhone: boolean = true): Promise<EntrepriseImportSummary> {

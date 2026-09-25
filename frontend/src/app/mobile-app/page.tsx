@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -38,6 +38,7 @@ import ApiIcon from "@mui/icons-material/Api";
 import { AppLayout } from "../../components/AppLayout";
 import { VgPageHeader } from "../../components/mui/VgPageHeader";
 import { VgSettingsSection } from "../../components/mui/VgSettingsSection";
+import { VgSoftSyncBar } from "../../components/mui/VgSoftSyncBar";
 import { listPublicTokens, PublicApiToken, revealPublicToken } from "../../services/publicApiAdmin";
 import {
   createPairingSession,
@@ -45,6 +46,12 @@ import {
   MobilePingResult,
   testMobilePing,
 } from "../../services/mobilePairingApi";
+import {
+  isAbortError,
+  loadUiCache,
+  saveUiCache,
+  UI_CACHE_KEYS
+} from "../../services/uiPersist";
 
 const PAIRING_STEPS = [
   {
@@ -101,13 +108,16 @@ function ServiceStatusChip({ label, ok, okLabel, koLabel }: ServiceStatusProps) 
  * Page d'appairage mobile : QR code ephemere pour lier le smartphone au serveur VocalGuard.
  */
 export default function MobileAppPage() {
-  const [tokens, setTokens] = useState<PublicApiToken[]>([]);
+  const cachedTokens = loadUiCache<PublicApiToken[]>(UI_CACHE_KEYS.publicTokens);
+  const [tokens, setTokens] = useState<PublicApiToken[]>(() => cachedTokens ?? []);
   const [selectedTokenId, setSelectedTokenId] = useState<number | "auto">("auto");
   const [pairing, setPairing] = useState<MobilePairingSession | null>(null);
   const [ping, setPing] = useState<MobilePingResult | null>(null);
   const [busy, setBusy] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const tokensAbortRef = useRef<AbortController | null>(null);
 
   const resolveBaseUrl = (): string => {
     if (typeof window === "undefined") return "";
@@ -116,23 +126,44 @@ export default function MobileAppPage() {
 
   const mobileTokens = useMemo(() => tokens.filter((t) => t.is_active), [tokens]);
 
+  /**
+   * Recharge les tokens API (soft sync si cache present).
+   */
   const refreshTokens = useCallback(async () => {
-    setBusy(true);
+    const hasLocal =
+      Boolean(loadUiCache(UI_CACHE_KEYS.publicTokens)) || tokens.length > 0;
+    if (hasLocal) setSyncing(true);
+    else setBusy(true);
     setError(null);
+
+    tokensAbortRef.current?.abort();
+    const ac = new AbortController();
+    tokensAbortRef.current = ac;
+
     try {
-      const rows = await listPublicTokens();
+      const rows = await listPublicTokens(ac.signal);
+      if (ac.signal.aborted) return;
       setTokens(rows);
+      saveUiCache(UI_CACHE_KEYS.publicTokens, rows);
     } catch (err) {
+      if (isAbortError(err) || ac.signal.aborted) return;
       const message = err instanceof Error ? err.message : "Impossible de charger les tokens d'API.";
       setError(message.includes("(401)") ? "Session expiree : reconnecte-toi sur /login." : message);
     } finally {
-      setBusy(false);
+      if (!ac.signal.aborted) {
+        setBusy(false);
+        setSyncing(false);
+      }
     }
-  }, []);
+  }, [tokens.length]);
 
   useEffect(() => {
-    refreshTokens();
-  }, [refreshTokens]);
+    void refreshTokens();
+    return () => {
+      tokensAbortRef.current?.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onGenerateQr = async () => {
     setBusy(true);
@@ -219,6 +250,12 @@ export default function MobileAppPage() {
         }
       />
 
+      {syncing ? (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+          <VgSoftSyncBar label="Synchro tokens…" />
+        </Box>
+      ) : null}
+
       <Stack spacing={2} sx={{ mb: 3 }}>
         {error ? (
           <Alert severity="error" onClose={() => setError(null)}>
@@ -302,8 +339,8 @@ export default function MobileAppPage() {
                   </Button>
                   <Button
                     variant="text"
-                    onClick={refreshTokens}
-                    disabled={busy}
+                    onClick={() => void refreshTokens()}
+                    disabled={busy || syncing}
                     startIcon={<RefreshIcon />}
                     sx={{ textTransform: "none", borderRadius: 999 }}
                   >

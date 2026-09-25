@@ -22,11 +22,17 @@ export interface Appointment {
 /**
  * Retourne la liste des rendez-vous depuis l'API.
  * Optionnellement bornes a une fenetre (plus rapide que charger toute la table).
+ *
+ * @param opts Fenetre from/to.
+ * @param signal AbortSignal optionnel.
  */
-export async function fetchAppointments(opts?: {
-  from?: string | Date;
-  to?: string | Date;
-}): Promise<Appointment[]> {
+export async function fetchAppointments(
+  opts?: {
+    from?: string | Date;
+    to?: string | Date;
+  },
+  signal?: AbortSignal
+): Promise<Appointment[]> {
   const params = new URLSearchParams();
   if (opts?.from) {
     const v = opts.from instanceof Date ? opts.from.toISOString() : opts.from;
@@ -37,7 +43,7 @@ export async function fetchAppointments(opts?: {
     params.set("to_time", v);
   }
   const qs = params.toString();
-  return getJson<Appointment[]>(`/agenda${qs ? `?${qs}` : ""}`);
+  return getJson<Appointment[]>(`/agenda${qs ? `?${qs}` : ""}`, signal);
 }
 
 export interface AppointmentPayload {

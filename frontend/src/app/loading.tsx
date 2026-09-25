@@ -1,8 +1,6 @@
-import { PageLoader } from "../components/PageLoader";
-
 /**
- * Affiche pendant le chargement / la navigation entre pages (App Router).
+ * Pas de plein ecran "Chargement…" : le shell reste visible pendant le swap de page.
  */
 export default function Loading() {
-  return <PageLoader variant="page" label="Chargement de la page…" />;
+  return null;
 }

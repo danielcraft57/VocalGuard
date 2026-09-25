@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { Alert, CircularProgress, Typography } from "@mui/material";
 import {
   fetchKbConversationStatus,
+  isAbortError,
   type KbConversationStatus
 } from "../../services/kbApi";
 
@@ -16,25 +17,21 @@ export function VgConversationModeStatus() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    let cancelled = false;
+    const ac = new AbortController();
     void (async () => {
       try {
-        const data = await fetchKbConversationStatus();
-        if (!cancelled) {
-          setStatus(data);
-          setError(null);
-        }
+        const data = await fetchKbConversationStatus(ac.signal);
+        if (ac.signal.aborted) return;
+        setStatus(data);
+        setError(null);
       } catch (exc) {
-        if (!cancelled) {
-          setError(exc instanceof Error ? exc.message : "Statut conversation indisponible");
-        }
+        if (isAbortError(exc) || ac.signal.aborted) return;
+        setError(exc instanceof Error ? exc.message : "Statut conversation indisponible");
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!ac.signal.aborted) setLoading(false);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => ac.abort();
   }, []);
 
   if (loading) {

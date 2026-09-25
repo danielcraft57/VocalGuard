@@ -9,7 +9,6 @@ import {
   Box,
   Button,
   Chip,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -20,7 +19,6 @@ import {
   Stack,
   Switch,
   TextField,
-  Tooltip,
   Typography
 } from "@mui/material";
 import RefreshIcon from "@mui/icons-material/Refresh";
@@ -29,50 +27,37 @@ import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import AddIcon from "@mui/icons-material/Add";
 import EditIcon from "@mui/icons-material/Edit";
 import DeleteIcon from "@mui/icons-material/Delete";
-import SendIcon from "@mui/icons-material/Send";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import ChatIcon from "@mui/icons-material/Chat";
-import HistoryIcon from "@mui/icons-material/History";
 import SearchIcon from "@mui/icons-material/Search";
-import CheckIcon from "@mui/icons-material/Check";
-import CloseIcon from "@mui/icons-material/Close";
+import MicIcon from "@mui/icons-material/Mic";
 import { AppLayout } from "../../components/AppLayout";
-import { KbIntentBars } from "../../components/kb/KbIntentBars";
 import { KbVectorEngineChip } from "../../components/kb/KbVectorEngineChip";
 import { VgPageHeader } from "../../components/mui/VgPageHeader";
 import { VgSettingsSection } from "../../components/mui/VgSettingsSection";
 import {
-  chatKb,
   createKbIntent,
-  deleteKbChat,
   deleteKbIntent,
-  fetchKbChats,
   fetchKbIntents,
   getKbIntentVoiceUrl,
-  importKbChats,
+  isAbortError,
   patchKbIntent,
   regenerateKbVoices,
-  upsertKbChat,
   type KbIntent
 } from "../../services/kbApi";
 import {
-  createSession,
-  DEFAULT_CHAT_WELCOME,
-  loadChatSessions,
-  loadChatWelcome,
-  saveChatSessions,
-  saveChatWelcome,
-  sessionFromDto,
-  sessionToDto,
-  titleFromMessages,
-  type ChatMsg,
-  type ChatSession
-} from "./chatHistory";
+  isIntentsCacheFresh,
+  loadIntentsCache,
+  loadKbUiState,
+  saveIntentsCache,
+  saveKbUiState
+} from "../../services/kbUiPersist";
 import {
   groupIntents,
   INTENT_GROUPS,
   type IntentGroupId
 } from "./intentGroups";
+import { KbIntentsListSkeleton, KbSoftSyncBar } from "../../components/kb/KbSkeleton";
+import { PageLoader } from "../../components/PageLoader";
 
 type IntentForm = {
   tag: string;
@@ -130,11 +115,14 @@ function linesOf(text: string): string[] {
 }
 
 /**
- * Page Base de connaissances : tchat modal + historique + intents groupes.
+ * Page Base de connaissances : intents groupes, voix, Qdrant.
+ * Le tchatche / historique vit sur /simulator.
  */
 export default function KnowledgeBasePage(): React.ReactElement {
   const [intents, setIntents] = useState<KbIntent[]>([]);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [regenBusy, setRegenBusy] = useState(false);
   const [regenMsg, setRegenMsg] = useState<string | null>(null);
@@ -142,19 +130,8 @@ export default function KnowledgeBasePage(): React.ReactElement {
   const [filterQ, setFilterQ] = useState("");
   const [groupFilter, setGroupFilter] = useState<IntentGroupId | "all">("all");
 
-  const [welcomeText, setWelcomeText] = useState(DEFAULT_CHAT_WELCOME);
-  const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [chatOpen, setChatOpen] = useState(false);
-  const [activeSession, setActiveSession] = useState<ChatSession | null>(null);
-  const [chatInput, setChatInput] = useState("");
-  const [chatBusy, setChatBusy] = useState(false);
-  const [editingMsgId, setEditingMsgId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState("");
-  const [bubbleSaving, setBubbleSaving] = useState(false);
-
-  const chatScrollRef = useRef<HTMLDivElement | null>(null);
-  const stickToBottomRef = useRef(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const loadAbortRef = useRef<AbortController | null>(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTag, setEditTag] = useState<string | null>(null);
@@ -164,59 +141,24 @@ export default function KnowledgeBasePage(): React.ReactElement {
   const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
-    setWelcomeText(loadChatWelcome());
-    void (async () => {
-      try {
-        const local = loadChatSessions();
-        if (local.length > 0) {
-          // Migration one-shot localStorage → BDD
-          await importKbChats(local.map(sessionToDto));
-          try {
-            localStorage.removeItem("vg_kb_chat_history_v1");
-          } catch {
-            /* ignore */
-          }
-        }
-        const remote = await fetchKbChats(30);
-        setSessions(remote.map(sessionFromDto));
-      } catch {
-        // Fallback local si API KO
-        setSessions(loadChatSessions());
-      }
-    })();
-  }, []);
-
-  const persistToDb = useCallback(async (session: ChatSession) => {
-    try {
-      await upsertKbChat(sessionToDto(session));
-    } catch {
-      // Garde aussi un miroir local en secours
-      const locals = loadChatSessions();
-      saveChatSessions([session, ...locals.filter((s) => s.id !== session.id)]);
+    const ui = loadKbUiState();
+    setFilterQ(ui.filterQ);
+    setGroupFilter((ui.groupFilter as IntentGroupId | "all") || "all");
+    const cache = loadIntentsCache();
+    if (cache?.intents?.length) {
+      setIntents(cache.intents);
+      setLoading(false);
     }
+    setHydrated(true);
+    return () => {
+      loadAbortRef.current?.abort();
+    };
   }, []);
 
-  const persistSessions = useCallback(
-    (next: ChatSession[]) => {
-      setSessions(next);
-      // Miroir local leger (offline)
-      saveChatSessions(next);
-    },
-    []
-  );
-
-  const upsertActive = useCallback(
-    (session: ChatSession) => {
-      setActiveSession(session);
-      setSessions((prev) => {
-        const next = [session, ...prev.filter((s) => s.id !== session.id)];
-        saveChatSessions(next);
-        return next;
-      });
-      void persistToDb(session);
-    },
-    [persistToDb]
-  );
+  useEffect(() => {
+    if (!hydrated) return;
+    saveKbUiState({ filterQ, groupFilter });
+  }, [filterQ, groupFilter, hydrated]);
 
   const playVoice = useCallback((tag: string) => {
     const url = getKbIntentVoiceUrl(tag);
@@ -228,248 +170,50 @@ export default function KnowledgeBasePage(): React.ReactElement {
     });
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (opts?: { soft?: boolean }) => {
+    const hasData = intents.length > 0;
+    const soft = Boolean(opts?.soft) && hasData;
+    if (soft) setSyncing(true);
+    else if (!hasData) setLoading(true);
     setError(null);
+
+    loadAbortRef.current?.abort();
+    const ac = new AbortController();
+    loadAbortRef.current = ac;
+
     try {
-      const rows = await fetchKbIntents(false);
+      const rows = await fetchKbIntents(false, ac.signal);
+      if (ac.signal.aborted) return;
       setIntents(rows);
-      const salutation = rows.find((i) => i.tag === "salutation");
-      if (salutation?.responses?.[0] && loadChatWelcome() === DEFAULT_CHAT_WELCOME) {
-        // Prefill accueil depuis l'intent salutation si jamais personnalise
-        setWelcomeText(salutation.responses[0]);
-      }
+      saveIntentsCache(rows);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur chargement KB");
+      if (isAbortError(e) || ac.signal.aborted) return;
+      if (!hasData) {
+        setError(e instanceof Error ? e.message : "Erreur chargement KB");
+      }
     } finally {
-      setLoading(false);
+      if (!ac.signal.aborted) {
+        setLoading(false);
+        setSyncing(false);
+      }
     }
-  }, []);
+  }, [intents.length]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!hydrated) return;
+    const cache = loadIntentsCache();
+    if (cache?.intents?.length && isIntentsCacheFresh(cache)) {
+      setLoading(false);
+      return;
+    }
+    void load({ soft: Boolean(cache?.intents?.length) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- apres hydrate
+  }, [hydrated]);
 
   const grouped = useMemo(
     () => groupIntents(intents, filterQ, groupFilter),
     [intents, filterQ, groupFilter]
   );
-
-  const openNewConversation = useCallback(() => {
-    const session = createSession(welcomeText.trim() || DEFAULT_CHAT_WELCOME);
-    stickToBottomRef.current = true;
-    setActiveSession(session);
-    setChatInput("");
-    setEditingMsgId(null);
-    setChatOpen(true);
-    persistSessions([session, ...sessions.filter((s) => s.id !== session.id)]);
-    void persistToDb(session);
-  }, [welcomeText, sessions, persistSessions, persistToDb]);
-
-  const openHistorySession = useCallback((session: ChatSession) => {
-    stickToBottomRef.current = false;
-    setActiveSession(session);
-    setChatInput("");
-    setEditingMsgId(null);
-    setChatOpen(true);
-  }, []);
-
-  const closeChat = useCallback(() => {
-    if (activeSession) {
-      const updated: ChatSession = {
-        ...activeSession,
-        title: titleFromMessages(activeSession.messages),
-        updatedAt: new Date().toISOString()
-      };
-      const others = sessions.filter((s) => s.id !== updated.id);
-      persistSessions([updated, ...others]);
-      void persistToDb(updated);
-    }
-    setChatOpen(false);
-    setEditingMsgId(null);
-  }, [activeSession, sessions, persistSessions, persistToDb]);
-
-  const scrollIfNeeded = useCallback(() => {
-    if (!stickToBottomRef.current) return;
-    const el = chatScrollRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, []);
-
-  useEffect(() => {
-    if (!chatOpen) return;
-    // Uniquement si l'utilisateur vient d'envoyer (pas a chaque rendu / historique)
-    const t = window.setTimeout(scrollIfNeeded, 50);
-    return () => window.clearTimeout(t);
-  }, [activeSession?.messages.length, chatOpen, scrollIfNeeded]);
-
-  const sendChat = useCallback(async () => {
-    if (!activeSession) return;
-    const text = chatInput.trim();
-    if (!text || chatBusy) return;
-    setChatBusy(true);
-    setError(null);
-    setChatInput("");
-    stickToBottomRef.current = true;
-
-    const userMsg: ChatMsg = { id: `u-${Date.now()}`, role: "user", text };
-    let working: ChatSession = {
-      ...activeSession,
-      messages: [...activeSession.messages, userMsg],
-      updatedAt: new Date().toISOString()
-    };
-    setActiveSession(working);
-
-    try {
-      const r = await chatKb(
-        text,
-        working.recentReplies,
-        working.recentTags,
-        working.recentUserTexts || []
-      );
-      const botMsg: ChatMsg = {
-        id: `b-${Date.now()}`,
-        role: "bot",
-        text: r.reply,
-        tag: r.tag,
-        score: r.score,
-        preds: r.top_predictions?.slice(0, 5) || [],
-        responseIndex: typeof r.response_index === "number" ? r.response_index : 0,
-        personaReason: r.persona_reason || null,
-        moodTone: r.mood?.tone || null,
-        engine: r.source || null
-      };
-      working = {
-        ...working,
-        title: titleFromMessages([...working.messages, botMsg]),
-        messages: [...working.messages, botMsg],
-        recentReplies: r.reply
-          ? [...working.recentReplies, r.reply].slice(-12)
-          : working.recentReplies,
-        recentTags: r.tag
-          ? [...working.recentTags, r.tag].slice(-12)
-          : working.recentTags,
-        recentUserTexts: [...(working.recentUserTexts || []), text].slice(-12),
-        updatedAt: new Date().toISOString()
-      };
-      upsertActive(working);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur tchat");
-      working = {
-        ...working,
-        messages: [
-          ...working.messages,
-          {
-            id: `e-${Date.now()}`,
-            role: "bot",
-            text: "Oups, le tchat a plante. Reessaie dans un instant."
-          }
-        ],
-        updatedAt: new Date().toISOString()
-      };
-      upsertActive(working);
-    } finally {
-      setChatBusy(false);
-    }
-  }, [activeSession, chatInput, chatBusy, upsertActive]);
-
-  const startEditBubble = useCallback((msg: ChatMsg) => {
-    if (msg.role !== "bot") return;
-    setEditingMsgId(msg.id);
-    setEditDraft(msg.text);
-  }, []);
-
-  const cancelEditBubble = useCallback(() => {
-    setEditingMsgId(null);
-    setEditDraft("");
-  }, []);
-
-  const saveBubbleEdit = useCallback(async () => {
-    if (!activeSession || !editingMsgId) return;
-    const msg = activeSession.messages.find((m) => m.id === editingMsgId);
-    if (!msg || msg.role !== "bot") return;
-    const nextText = editDraft.trim();
-    if (!nextText) return;
-
-    setBubbleSaving(true);
-    setError(null);
-    try {
-      // Message d'accueil (1ere bulle) → pref locale + intent salutation si possible
-      if (msg.id === "welcome" || (!msg.tag && msg.id.startsWith("welcome"))) {
-        saveChatWelcome(nextText);
-        setWelcomeText(nextText);
-        const salutation = intents.find((i) => i.tag === "salutation");
-        if (salutation) {
-          const responses = [...salutation.responses];
-          if (responses.length === 0) responses.push(nextText);
-          else responses[0] = nextText;
-          await patchKbIntent("salutation", { responses });
-          await load();
-        }
-      } else if (msg.tag) {
-        const intent = intents.find((i) => i.tag === msg.tag);
-        if (intent) {
-          const responses = [...intent.responses];
-          const idx =
-            typeof msg.responseIndex === "number" && msg.responseIndex >= 0
-              ? msg.responseIndex
-              : 0;
-          if (responses.length === 0) {
-            responses.push(nextText);
-          } else if (idx < responses.length) {
-            responses[idx] = nextText;
-          } else {
-            // Variante pont (index -1) : remplace la 1ere pour rester coherent
-            responses[0] = nextText;
-          }
-          await patchKbIntent(msg.tag, { responses });
-          await load();
-        }
-      }
-
-      const messages = activeSession.messages.map((m) =>
-        m.id === editingMsgId ? { ...m, text: nextText } : m
-      );
-      const updated: ChatSession = {
-        ...activeSession,
-        messages,
-        updatedAt: new Date().toISOString()
-      };
-      upsertActive(updated);
-      setEditingMsgId(null);
-      setEditDraft("");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur sauvegarde bulle");
-    } finally {
-      setBubbleSaving(false);
-    }
-  }, [
-    activeSession,
-    editingMsgId,
-    editDraft,
-    intents,
-    load,
-    upsertActive
-  ]);
-
-  const saveWelcomeSetting = useCallback(async () => {
-    const text = welcomeText.trim() || DEFAULT_CHAT_WELCOME;
-    saveChatWelcome(text);
-    setWelcomeText(text);
-    setError(null);
-    try {
-      const salutation = intents.find((i) => i.tag === "salutation");
-      if (salutation) {
-        const responses = [...salutation.responses];
-        if (responses.length === 0) responses.push(text);
-        else responses[0] = text;
-        await patchKbIntent("salutation", { responses });
-        await load();
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur sauvegarde accueil");
-    }
-  }, [welcomeText, intents, load]);
 
   const openCreate = useCallback(() => {
     setEditTag(null);
@@ -514,7 +258,7 @@ export default function KnowledgeBasePage(): React.ReactElement {
         });
       }
       setDialogOpen(false);
-      await load();
+      await load({ soft: true });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur sauvegarde");
     } finally {
@@ -529,7 +273,7 @@ export default function KnowledgeBasePage(): React.ReactElement {
     try {
       await deleteKbIntent(deleteTag);
       setDeleteTag(null);
-      await load();
+      await load({ soft: true });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur suppression");
     } finally {
@@ -543,49 +287,45 @@ export default function KnowledgeBasePage(): React.ReactElement {
     try {
       const r = await regenerateKbVoices(true);
       setRegenMsg(`Voix: ${r.ok} ok, ${r.skipped} ignorees, ${r.failed} echecs`);
+      await load({ soft: true });
     } catch (e) {
       setRegenMsg(e instanceof Error ? e.message : "Echec regen");
     } finally {
       setRegenBusy(false);
     }
-  }, []);
-
-  const deleteSession = useCallback(
-    (id: string) => {
-      persistSessions(sessions.filter((s) => s.id !== id));
-      void deleteKbChat(id).catch(() => {
-        /* ignore */
-      });
-      if (activeSession?.id === id) {
-        setActiveSession(null);
-        setChatOpen(false);
-      }
-    },
-    [sessions, persistSessions, activeSession]
-  );
+  }, [load]);
 
   return (
     <AppLayout title="Base de connaissances" hidePageHeader>
       <VgPageHeader
         title="Base de connaissances"
-        subtitle="Intents, Qdrant (node15), tchatche en modale, historique et groupes."
+        subtitle="Intents, Qdrant (node15), voix. Le tchatche est sur le simulateur."
         action={
           <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 1, alignItems: "center" }}>
             <KbVectorEngineChip />
+            <Button
+              component={Link}
+              href="/simulator"
+              size="small"
+              variant="contained"
+              startIcon={<MicIcon />}
+            >
+              Simulateur / Tchatche
+            </Button>
             <Button
               component={Link}
               href="/settings/incoming-audio"
               size="small"
               variant="outlined"
             >
-              Voix d'accueil
+              Voix d&apos;accueil
             </Button>
             <Button
               size="small"
               variant="outlined"
               startIcon={<RefreshIcon />}
-              onClick={() => void load()}
-              disabled={loading}
+              onClick={() => void load({ soft: intents.length > 0 })}
+              disabled={loading || syncing}
             >
               Actualiser
             </Button>
@@ -615,94 +355,15 @@ export default function KnowledgeBasePage(): React.ReactElement {
           {regenMsg}
         </Typography>
       ) : null}
-
-      <VgSettingsSection
-        title="Tchatche"
-        description="Ouvre une conversation dans une modale. Historique sauve en base (reprise possible). Clique une bulle bot pour editer la reponse."
-      >
-        <Stack spacing={2}>
-          <TextField
-            label="Message d'accueil (1ere bulle)"
-            size="small"
-            fullWidth
-            multiline
-            minRows={2}
-            value={welcomeText}
-            onChange={(e) => setWelcomeText(e.target.value)}
-            helperText="Aussi synchronise avec l'intent salutation (1ere reponse)."
-          />
-          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-            <Button variant="outlined" onClick={() => void saveWelcomeSetting()}>
-              Enregistrer l'accueil
-            </Button>
-            <Button
-              variant="contained"
-              startIcon={<ChatIcon />}
-              onClick={openNewConversation}
-            >
-              Ouvrir une nlle conversation
-            </Button>
-          </Stack>
-
-          <Box>
-            <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 1 }}>
-              <HistoryIcon fontSize="small" color="action" />
-              <Typography variant="subtitle2">Historique</Typography>
-            </Stack>
-            {sessions.length === 0 ? (
-              <Typography variant="body2" color="text.secondary">
-                Aucune conversation pour l'instant.
-              </Typography>
-            ) : (
-              <Stack
-                spacing={0}
-                sx={{ border: "1px solid", borderColor: "divider", borderRadius: 1, overflow: "hidden" }}
-              >
-                {sessions.slice(0, 12).map((s) => (
-                  <Stack
-                    key={s.id}
-                    direction="row"
-                    sx={{
-                      alignItems: "center",
-                      px: 1.5,
-                      py: 1,
-                      borderBottom: "1px solid",
-                      borderColor: "divider",
-                      "&:last-child": { borderBottom: "none" },
-                      cursor: "pointer",
-                      "&:hover": { bgcolor: "action.hover" }
-                    }}
-                    onClick={() => openHistorySession(s)}
-                  >
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Typography variant="body2" noWrap>
-                        {s.title}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {new Date(s.updatedAt).toLocaleString("fr-FR")}
-                      </Typography>
-                    </Box>
-                    <IconButton
-                      size="small"
-                      aria-label="supprimer"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteSession(s.id);
-                      }}
-                    >
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
-                  </Stack>
-                ))}
-              </Stack>
-            )}
-          </Box>
-        </Stack>
-      </VgSettingsSection>
+      {syncing ? (
+        <Box sx={{ mb: 2 }}>
+          <KbSoftSyncBar label="Synchronisation des intents…" />
+        </Box>
+      ) : null}
 
       <VgSettingsSection
         title={`Intents (${intents.length})`}
-        description="Filtres + groupes. Plus de tableau interminable."
+        description="Filtres + groupes. Pour tester les reponses : Simulateur / Tchatche."
       >
         <Stack spacing={1.5} sx={{ mb: 2 }}>
           <TextField
@@ -742,9 +403,12 @@ export default function KnowledgeBasePage(): React.ReactElement {
           </Stack>
         </Stack>
 
-        {loading ? (
-          <Box sx={{ display: "flex", justifyContent: "center", py: 4 }}>
-            <CircularProgress />
+        {loading && !intents.length ? (
+          <Box>
+            <PageLoader variant="inline" label="Chargement des intents…" />
+            <Box sx={{ mt: 2 }}>
+              <KbIntentsListSkeleton />
+            </Box>
           </Box>
         ) : (
           INTENT_GROUPS.map((g) => {
@@ -806,7 +470,12 @@ export default function KnowledgeBasePage(): React.ReactElement {
                               ) : null}
                               <Chip size="small" variant="outlined" label={`prio ${row.priority}`} />
                             </Stack>
-                            <Typography variant="body2" color="text.secondary" noWrap title={row.responses[0] || ""}>
+                            <Typography
+                              variant="body2"
+                              color="text.secondary"
+                              noWrap
+                              title={row.responses[0] || ""}
+                            >
                               {row.responses[0] || "—"}
                             </Typography>
                             <Typography variant="caption" color="text.secondary">
@@ -845,180 +514,6 @@ export default function KnowledgeBasePage(): React.ReactElement {
           })
         )}
       </VgSettingsSection>
-
-      <Dialog
-        open={chatOpen}
-        onClose={closeChat}
-        fullWidth
-        maxWidth="md"
-        slotProps={{ paper: { sx: { height: { xs: "90vh", sm: "80vh" } } } }}
-      >
-        <DialogTitle sx={{ pr: 1 }}>
-          <Stack direction="row" sx={{ alignItems: "center", justifyContent: "space-between" }}>
-            <Box>
-              <Typography variant="h6" component="span">
-                Tchatche
-              </Typography>
-              {activeSession ? (
-                <Typography variant="caption" color="text.secondary" sx={{ display: "block" }}>
-                  {activeSession.title}
-                </Typography>
-              ) : null}
-            </Box>
-            <IconButton aria-label="fermer" onClick={closeChat}>
-              <CloseIcon />
-            </IconButton>
-          </Stack>
-        </DialogTitle>
-        <DialogContent
-          dividers
-          sx={{ display: "flex", flexDirection: "column", p: 0, minHeight: 0 }}
-        >
-          <Box
-            ref={chatScrollRef}
-            onScroll={(e) => {
-              const el = e.currentTarget;
-              const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-              stickToBottomRef.current = nearBottom;
-            }}
-            sx={{
-              flex: 1,
-              overflowY: "auto",
-              p: 2,
-              bgcolor: "action.hover"
-            }}
-          >
-            <Stack spacing={1.25}>
-              {(activeSession?.messages || []).map((m) => (
-                <Box
-                  key={m.id}
-                  sx={{
-                    alignSelf: m.role === "user" ? "flex-end" : "flex-start",
-                    maxWidth: "92%"
-                  }}
-                >
-                  <Box
-                    sx={{
-                      px: 1.5,
-                      py: 1,
-                      borderRadius: 1,
-                      bgcolor: m.role === "user" ? "primary.main" : "background.paper",
-                      color: m.role === "user" ? "primary.contrastText" : "text.primary",
-                      border: m.role === "bot" ? "1px solid" : "none",
-                      borderColor: "divider",
-                      position: "relative"
-                    }}
-                  >
-                    {editingMsgId === m.id ? (
-                      <Stack spacing={1}>
-                        <TextField
-                          size="small"
-                          fullWidth
-                          multiline
-                          minRows={2}
-                          value={editDraft}
-                          onChange={(e) => setEditDraft(e.target.value)}
-                          autoFocus
-                        />
-                        <Stack direction="row" spacing={1}>
-                          <Button
-                            size="small"
-                            variant="contained"
-                            startIcon={<CheckIcon />}
-                            disabled={bubbleSaving || !editDraft.trim()}
-                            onClick={() => void saveBubbleEdit()}
-                          >
-                            Sauver
-                          </Button>
-                          <Button size="small" onClick={cancelEditBubble} disabled={bubbleSaving}>
-                            Annuler
-                          </Button>
-                        </Stack>
-                      </Stack>
-                    ) : (
-                      <>
-                        <Typography variant="body2">{m.text}</Typography>
-                        {m.role === "bot" ? (
-                          <Stack
-                            direction="row"
-                            spacing={1}
-                            sx={{ mt: 0.75, alignItems: "center", justifyContent: "space-between" }}
-                          >
-                            <Typography variant="caption" color="text.secondary">
-                              {[
-                                m.tag
-                                  ? `intent: ${m.tag}${
-                                      typeof m.score === "number"
-                                        ? ` (${Math.round(m.score * 100)}%)`
-                                        : ""
-                                    }`
-                                  : m.id === "welcome"
-                                    ? "accueil"
-                                    : "",
-                                m.moodTone ? `ton: ${m.moodTone}` : "",
-                                m.personaReason ? `persona: ${m.personaReason}` : ""
-                              ]
-                                .filter(Boolean)
-                                .join(" · ")}
-                            </Typography>
-                            <Tooltip title="Modifier cette reponse">
-                              <IconButton
-                                size="small"
-                                aria-label="editer bulle"
-                                onClick={() => startEditBubble(m)}
-                              >
-                                <EditIcon fontSize="inherit" />
-                              </IconButton>
-                            </Tooltip>
-                          </Stack>
-                        ) : null}
-                      </>
-                    )}
-                  </Box>
-                  {m.preds && m.preds.length > 0 && editingMsgId !== m.id ? (
-                    <KbIntentBars preds={m.preds} winner={m.tag} animKey={m.id} />
-                  ) : null}
-                </Box>
-              ))}
-            </Stack>
-          </Box>
-          <Box sx={{ p: 1.5, borderTop: "1px solid", borderColor: "divider" }}>
-            <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-              <TextField
-                fullWidth
-                size="small"
-                label="Ton message"
-                placeholder="ex. je veux un devis"
-                value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void sendChat();
-                  }
-                }}
-                disabled={chatBusy || !activeSession}
-              />
-              <Button
-                variant="contained"
-                endIcon={
-                  chatBusy ? <CircularProgress size={16} color="inherit" /> : <SendIcon />
-                }
-                onClick={() => void sendChat()}
-                disabled={chatBusy || !chatInput.trim() || !activeSession}
-              >
-                Envoyer
-              </Button>
-            </Stack>
-          </Box>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={openNewConversation} startIcon={<ChatIcon />}>
-            Nlle conversation
-          </Button>
-          <Button onClick={closeChat}>Fermer</Button>
-        </DialogActions>
-      </Dialog>
 
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>{editTag ? `Modifier ${editTag}` : "Nouvel intent"}</DialogTitle>
@@ -1081,7 +576,7 @@ export default function KnowledgeBasePage(): React.ReactElement {
       </Dialog>
 
       <Dialog open={Boolean(deleteTag)} onClose={() => setDeleteTag(null)}>
-        <DialogTitle>Supprimer l'intent ?</DialogTitle>
+        <DialogTitle>Supprimer l&apos;intent ?</DialogTitle>
         <DialogContent>
           <Typography variant="body2">
             Tu vas supprimer <strong>{deleteTag}</strong> (patterns, reponses, embeddings). Pas de

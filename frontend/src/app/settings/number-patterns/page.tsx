@@ -6,7 +6,6 @@ import {
   Alert,
   Box,
   Button,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -34,6 +33,8 @@ import { VgPageHeader } from "../../../components/mui/VgPageHeader";
 import { VgProfileChip } from "../../../components/mui/VgProfileChip";
 import { VgSaveBar } from "../../../components/mui/VgSaveBar";
 import { VgSettingsSection } from "../../../components/mui/VgSettingsSection";
+import { VgSoftSyncBar } from "../../../components/mui/VgSoftSyncBar";
+import { VgFormSkeleton } from "../../../components/mui/VgListSkeleton";
 import { useIncomingCallConfig } from "../../../hooks/useIncomingCallConfig";
 
 type PatternRule = {
@@ -62,6 +63,7 @@ export default function NumberPatternsSettingsPage() {
   const {
     config,
     loading,
+    syncing,
     saving,
     dirty,
     error,
@@ -128,11 +130,15 @@ export default function NumberPatternsSettingsPage() {
         }
       />
 
-      {loading || !config ? (
-        <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-          <CircularProgress />
+      {syncing && config ? (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+          <VgSoftSyncBar />
         </Box>
-      ) : (
+      ) : null}
+
+      {loading && !config ? (
+        <VgFormSkeleton />
+      ) : config ? (
         <>
           <Alert severity="info" sx={{ mb: 2 }}>
             Formats : <code>+338%</code> (prefixe), <code>P</code> / <code>O</code> (masque),{" "}
@@ -265,7 +271,7 @@ export default function NumberPatternsSettingsPage() {
             </DialogActions>
           </Dialog>
         </>
-      )}
+      ) : null}
     </AppLayout>
   );
 }

@@ -601,13 +601,19 @@ class Intent(Base):
     Intent conversationnel (repondeur / KB).
 
     Source de verite runtime : tables normalisees (pas de JSON metier).
+    ``profile`` separe les catalogues : inbound (appels entrants) vs
+    outbound_commercial (appel commercial sortant).
     """
 
     __tablename__ = "intents"
-    __table_args__ = (Index("ix_intents_enabled_priority", "enabled", "priority"),)
+    __table_args__ = (
+        Index("ix_intents_enabled_priority", "enabled", "priority"),
+        Index("ix_intents_profile_enabled_priority", "profile", "enabled", "priority"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     tag = Column(String(100), unique=True, nullable=False, index=True)
+    profile = Column(String(40), nullable=False, default="inbound", index=True)
     source = Column(String(40), nullable=False, default="seed")
     niveau = Column(Integer, nullable=False, default=1)
     enabled = Column(Boolean, nullable=False, default=True)

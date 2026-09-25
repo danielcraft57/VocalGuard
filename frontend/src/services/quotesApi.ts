@@ -21,12 +21,18 @@ export interface Quote {
 
 /**
  * Liste les devis existants (pagine, defaut 100).
+ *
+ * @param opts Pagination.
+ * @param signal AbortSignal optionnel.
  */
-export async function fetchQuotes(opts?: { skip?: number; limit?: number }): Promise<Quote[]> {
+export async function fetchQuotes(
+  opts?: { skip?: number; limit?: number },
+  signal?: AbortSignal
+): Promise<Quote[]> {
   const params = new URLSearchParams();
   if (opts?.skip != null) params.set("skip", String(opts.skip));
   if (opts?.limit != null) params.set("limit", String(opts.limit));
   const qs = params.toString();
-  return getJson<Quote[]>(`/quotes${qs ? `?${qs}` : ""}`);
+  return getJson<Quote[]>(`/quotes${qs ? `?${qs}` : ""}`, signal);
 }
 

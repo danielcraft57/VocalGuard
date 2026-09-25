@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 import httpx
@@ -22,18 +23,37 @@ from backend.voice.intent_embed import (
     normalize_intent_text,
 )
 from backend.voice.qdrant_intents import (
+    PROFILE_INBOUND,
+    PROFILE_OUTBOUND_COMMERCIAL,
+    collection_for_profile,
     delete_points_by_ids,
     qdrant_base_url,
+    resolve_search_collection,
     upsert_embedding_point,
 )
 
 DEFAULT_SEED_PATH = Path("data/intents/kb_seed/conversation_v1.json")
+OUTBOUND_SEED_PATH = Path("data/intents/kb_seed/outbound_commercial_v1.json")
 _TAG_RE = re.compile(r"^[a-z][a-z0-9_]{1,79}$")
+
+# Evite de recharger / rescanner les seeds JSON a chaque GET /kb/intents (~5s sinon).
+_SEED_ENSURE_TTL_SEC = 120.0
+_seed_ensure_last: Dict[str, float] = {}
+
+
+def _seed_ensure_cache_key(profile: Optional[str]) -> str:
+    """Cle memo pour ensure_seeded (tous profils ou un seul)."""
+    return (profile or "*").strip().lower() or "*"
+
+
+def invalidate_seed_ensure_cache() -> None:
+    """Invalide le cache ensure_seeded (apres import / regen admin)."""
+    _seed_ensure_last.clear()
 
 
 def default_seed_path(base_path: Optional[Path] = None) -> Path:
     """
-    Chemin du catalogue seed.
+    Chemin du catalogue seed inbound (appels entrants).
 
     @param base_path Racine projet.
     @returns Path JSON.
@@ -42,17 +62,49 @@ def default_seed_path(base_path: Optional[Path] = None) -> Path:
     return root / DEFAULT_SEED_PATH
 
 
+def outbound_seed_path(base_path: Optional[Path] = None) -> Path:
+    """
+    Chemin du catalogue seed commercial sortant.
+
+    @param base_path Racine projet.
+    @returns Path JSON.
+    """
+    root = Path(base_path) if base_path else Path(".")
+    return root / OUTBOUND_SEED_PATH
+
+
+def seed_path_for_profile(
+    profile: Optional[str] = None,
+    base_path: Optional[Path] = None,
+) -> Path:
+    """
+    Seed JSON selon le profil KB.
+
+    @param profile ``inbound`` | ``outbound_commercial``.
+    @param base_path Racine projet.
+    @returns Path fichier seed.
+    """
+    key = (profile or PROFILE_INBOUND).strip().lower()
+    if key == PROFILE_OUTBOUND_COMMERCIAL:
+        return outbound_seed_path(base_path)
+    return default_seed_path(base_path)
+
+
 def load_seed_catalog(path: Path) -> List[Dict[str, Any]]:
     """
     Charge le JSON de seed.
 
-    @param path Fichier conversation_v1.json.
+    @param path Fichier conversation_v1.json ou outbound_commercial_v1.json.
     @returns Liste d'intents dict.
     """
     payload = json.loads(path.read_text(encoding="utf-8"))
     intents = payload.get("intents") or []
     if not isinstance(intents, list):
         raise ValueError("Seed invalide: 'intents' doit etre une liste")
+    default_profile = str(payload.get("profile") or PROFILE_INBOUND).strip().lower()
+    for item in intents:
+        if isinstance(item, dict) and not item.get("profile"):
+            item["profile"] = default_profile
     return intents
 
 
@@ -61,6 +113,7 @@ def _intent_to_dict(intent: Intent) -> Dict[str, Any]:
     return {
         "id": intent.id,
         "tag": intent.tag,
+        "profile": getattr(intent, "profile", None) or PROFILE_INBOUND,
         "source": intent.source,
         "niveau": intent.niveau,
         "enabled": intent.enabled,
@@ -70,6 +123,18 @@ def _intent_to_dict(intent: Intent) -> Dict[str, Any]:
         "patterns": [p.pattern for p in intent.patterns],
         "responses": [r.text for r in sorted(intent.responses, key=lambda x: x.position)],
     }
+
+
+def _wav_prefix_for_profile(profile: str) -> str:
+    """
+    Prefixe basename WAV selon le profil.
+
+    @param profile Profil KB.
+    @returns ``kb`` ou ``out_kb``.
+    """
+    if (profile or "").strip().lower() == PROFILE_OUTBOUND_COMMERCIAL:
+        return "out_kb"
+    return "kb"
 
 
 def seed_intents_from_catalog(
@@ -93,6 +158,9 @@ def seed_intents_from_catalog(
         tag = str(item.get("tag") or "").strip()
         if not tag:
             continue
+        profile = str(item.get("profile") or PROFILE_INBOUND).strip().lower()
+        if profile not in (PROFILE_INBOUND, PROFILE_OUTBOUND_COMMERCIAL):
+            profile = PROFILE_INBOUND
         existing = db.query(Intent).filter(Intent.tag == tag).one_or_none()
         if existing and not replace:
             continue
@@ -100,13 +168,15 @@ def seed_intents_from_catalog(
             db.delete(existing)
             db.flush()
 
+        prefix = _wav_prefix_for_profile(profile)
         intent = Intent(
             tag=tag,
+            profile=profile,
             source=str(item.get("source") or source),
             niveau=int(item.get("niveau") or 1),
             enabled=bool(item.get("enabled", True)),
             priority=int(item.get("priority") or 10),
-            wav_basename=str(item.get("wav_basename") or f"kb_{tag}"),
+            wav_basename=str(item.get("wav_basename") or f"{prefix}_{tag}"),
             action=(str(item["action"]).strip() if item.get("action") else None),
         )
         db.add(intent)
@@ -181,12 +251,17 @@ def _upsert_embedding(
     if qdrant_base_url() and row.id is not None:
         intent = db.query(Intent).filter(Intent.id == intent_id).one_or_none()
         tag = intent.tag if intent is not None else ""
+        profile = (
+            getattr(intent, "profile", None) if intent is not None else None
+        ) or PROFILE_INBOUND
         upsert_embedding_point(
             point_id=int(row.id),
             vector=payload,
             intent_tag=tag,
             ref_type=ref_type,
             ref_id=ref_id,
+            profile=profile,
+            collection=collection_for_profile(profile),
         )
 
 
@@ -212,22 +287,49 @@ def _sync_pgvector_column(db: Session) -> None:
         logger.debug("Sync pgvector ignoree: {}", exc)
 
 
-def ensure_seeded(db: Session, base_path: Optional[Path] = None) -> int:
+def ensure_seeded(
+    db: Session,
+    base_path: Optional[Path] = None,
+    *,
+    profile: Optional[str] = None,
+    force: bool = False,
+) -> int:
     """
     Seed les intents manquants + complete les variantes seed absentes.
 
+    Sans ``profile`` : seed inbound puis outbound_commercial.
+    Memoize ~2 min pour ne pas ralentir chaque GET UI.
+
     @param db Session.
     @param base_path Racine projet.
+    @param profile Profil unique optionnel.
+    @param force Ignore le cache TTL.
     @returns Nombre d'intents nouvellement inseres.
     """
-    path = default_seed_path(base_path)
-    if not path.is_file():
-        logger.warning("Seed intents introuvable: {}", path)
-        return 0
-    catalog = load_seed_catalog(path)
-    inserted = seed_intents_from_catalog(db, catalog, replace=False)
-    _sync_missing_seed_variants(db, catalog)
-    return inserted
+    cache_key = _seed_ensure_cache_key(profile)
+    now = time.monotonic()
+    if not force:
+        last = _seed_ensure_last.get(cache_key, 0.0)
+        if now - last < _SEED_ENSURE_TTL_SEC:
+            return 0
+
+    profiles = (
+        [profile]
+        if profile
+        else [PROFILE_INBOUND, PROFILE_OUTBOUND_COMMERCIAL]
+    )
+    total = 0
+    for prof in profiles:
+        path = seed_path_for_profile(prof, base_path)
+        if not path.is_file():
+            logger.warning("Seed intents introuvable: {} ({})", path, prof)
+            continue
+        catalog = load_seed_catalog(path)
+        inserted = seed_intents_from_catalog(db, catalog, replace=False)
+        _sync_missing_seed_variants(db, catalog)
+        total += inserted
+    _seed_ensure_last[cache_key] = time.monotonic()
+    return total
 
 
 def _sync_missing_seed_variants(db: Session, catalog: Sequence[Dict[str, Any]]) -> int:
@@ -288,12 +390,18 @@ def _sync_missing_seed_variants(db: Session, catalog: Sequence[Dict[str, Any]]) 
     return added
 
 
-def list_intents_detailed(db: Session, *, enabled_only: bool = False) -> List[Dict[str, Any]]:
+def list_intents_detailed(
+    db: Session,
+    *,
+    enabled_only: bool = False,
+    profile: Optional[str] = None,
+) -> List[Dict[str, Any]]:
     """
     Liste les intents avec patterns et responses.
 
     @param db Session.
     @param enabled_only Filtre enabled.
+    @param profile Filtre profil (None = tous).
     @returns Liste de dicts API.
     """
     q = db.query(Intent).options(
@@ -302,6 +410,8 @@ def list_intents_detailed(db: Session, *, enabled_only: bool = False) -> List[Di
     )
     if enabled_only:
         q = q.filter(Intent.enabled.is_(True))
+    if profile:
+        q = q.filter(Intent.profile == profile.strip().lower())
     rows = q.order_by(Intent.priority.desc(), Intent.tag.asc()).all()
     return [_intent_to_dict(intent) for intent in rows]
 
@@ -327,6 +437,7 @@ def create_intent(
     action: Optional[str] = None,
     source: str = "kb",
     niveau: int = 1,
+    profile: str = PROFILE_INBOUND,
 ) -> Dict[str, Any]:
     """
     Cree un intent normalise + embeddings.
@@ -339,13 +450,18 @@ def create_intent(
     if get_intent_by_tag(db, clean) is not None:
         raise ValueError(f"Tag deja existant: {clean}")
 
+    prof = (profile or PROFILE_INBOUND).strip().lower()
+    if prof not in (PROFILE_INBOUND, PROFILE_OUTBOUND_COMMERCIAL):
+        prof = PROFILE_INBOUND
+    prefix = _wav_prefix_for_profile(prof)
     intent = Intent(
         tag=clean,
+        profile=prof,
         source=source,
         niveau=int(niveau),
         enabled=bool(enabled),
         priority=int(priority),
-        wav_basename=f"kb_{clean}",
+        wav_basename=f"{prefix}_{clean}",
         action=(action.strip() if action else None),
     )
     db.add(intent)
@@ -421,10 +537,15 @@ def delete_intent(db: Session, tag: str) -> bool:
         .all()
         if r[0] is not None
     ]
+    profile = getattr(intent, "profile", None) or PROFILE_INBOUND
     db.delete(intent)
     db.commit()
     if emb_ids and qdrant_base_url():
-        delete_points_by_ids(emb_ids)
+        delete_points_by_ids(
+            emb_ids,
+            collection=collection_for_profile(profile),
+            profile=profile,
+        )
     return True
 
 
@@ -443,9 +564,10 @@ def _predict_qdrant(
     scored: Dict[str, float],
     *,
     top_k: int,
+    profile: Optional[str] = None,
 ) -> bool:
     """
-    Recherche via Qdrant HTTP API (collection ``intents``).
+    Recherche via Qdrant HTTP API (collection selon profil).
 
     Active uniquement si ``QDRANT_URL`` est defini (pas de tentative
     silencieuse sur localhost pour eviter une latence inutile).
@@ -454,12 +576,16 @@ def _predict_qdrant(
     @param query_vec Vecteur requete L2-normalise.
     @param scored Dict tag -> score a remplir.
     @param top_k Nombre de voisins demandes.
+    @param profile ``inbound`` | ``outbound_commercial``.
     @returns True si la requete a retourne des resultats utilisables.
     """
     qdrant_url = _qdrant_base_url()
     if not qdrant_url:
         return False
-    url = f"{qdrant_url}/collections/intents/points/search"
+    collection = resolve_search_collection(profile=profile, qdrant_url=qdrant_url)
+    if not collection:
+        return False
+    url = f"{qdrant_url}/collections/{collection}/points/search"
     body = {
         "vector": [float(x) for x in query_vec],
         "limit": int(top_k) * 4,
@@ -472,40 +598,53 @@ def _predict_qdrant(
         items = data.get("result") or data.get("points") or data.get("data") or []
         if not items:
             return False
+        want_profile = (profile or PROFILE_INBOUND).strip().lower()
         for item in items:
             payload = item.get("payload") or {}
             tag = payload.get("intent_tag")
             ref_type = payload.get("ref_type")
+            point_profile = str(payload.get("profile") or want_profile).strip().lower()
+            # Ignore les points d'un autre profil si le payload est renseigne.
+            if payload.get("profile") and point_profile != want_profile:
+                continue
             score = float(item.get("score") or 0.0)
             if not tag:
                 continue
             weight = 1.0 if str(ref_type or "") == "pattern" else 0.35
             val = float(score) * weight
             scored[str(tag)] = max(scored.get(str(tag), 0.0), val)
-        return True
+        return bool(scored)
     except Exception as exc:
         logger.debug("qdrant predict fallback: {}", exc)
         return False
 
 
-def pattern_boost_scores(db: Session, text: str) -> Dict[str, float]:
+def pattern_boost_scores(
+    db: Session,
+    text: str,
+    *,
+    profile: Optional[str] = None,
+) -> Dict[str, float]:
     """
     Boost lexical si un pattern apparait dans le texte cumule.
 
     @param db Session.
     @param text Texte normalise ou brut.
+    @param profile Filtre profil optionnel.
     @returns tag -> bonus.
     """
     norm = normalize_intent_text(text)
     if not norm:
         return {}
     boosts: Dict[str, float] = {}
-    rows = (
+    q = (
         db.query(IntentPattern, Intent)
         .join(Intent, Intent.id == IntentPattern.intent_id)
         .filter(Intent.enabled.is_(True))
-        .all()
     )
+    if profile:
+        q = q.filter(Intent.profile == profile.strip().lower())
+    rows = q.all()
     for pattern, intent in rows:
         p = normalize_intent_text(pattern.pattern)
         if not p:
@@ -530,6 +669,7 @@ def predict_intent_scores_detailed(
     *,
     top_k: int = 8,
     use_pgvector: bool = True,
+    profile: Optional[str] = None,
 ) -> tuple[List[Dict[str, Any]], str]:
     """
     Predict vector-first + nom du moteur utilise.
@@ -538,6 +678,7 @@ def predict_intent_scores_detailed(
     @param text Texte cumule.
     @param top_k Nombre d'embeddings voisins.
     @param use_pgvector Tente SQL pgvector avant fallback Python.
+    @param profile Catalogue KB (defaut inbound).
     @returns (liste {tag, score}, engine) engine in
              qdrant|pgvector|python|empty.
     """
@@ -545,24 +686,29 @@ def predict_intent_scores_detailed(
     if not query:
         return [], "empty"
 
+    prof = (profile or PROFILE_INBOUND).strip().lower()
     query_vec = embed_text(query)
     scored: Dict[str, float] = {}
     engine = "python"
 
     used_qdrant = False
     try:
-        used_qdrant = _predict_qdrant(db, query_vec, scored, top_k=top_k)
+        used_qdrant = _predict_qdrant(
+            db, query_vec, scored, top_k=top_k, profile=prof
+        )
     except Exception:
         used_qdrant = False
     if used_qdrant:
         engine = "qdrant"
-    elif use_pgvector and _predict_pgvector(db, query_vec, scored, top_k=top_k):
+    elif use_pgvector and _predict_pgvector(
+        db, query_vec, scored, top_k=top_k, profile=prof
+    ):
         engine = "pgvector"
     else:
-        _predict_python_cosine(db, query_vec, scored)
+        _predict_python_cosine(db, query_vec, scored, profile=prof)
         engine = "python"
 
-    boosts = pattern_boost_scores(db, query)
+    boosts = pattern_boost_scores(db, query, profile=prof)
     for tag, bonus in boosts.items():
         scored[tag] = scored.get(tag, 0.0) + bonus
 
@@ -579,6 +725,7 @@ def predict_intent_scores(
     *,
     top_k: int = 8,
     use_pgvector: bool = True,
+    profile: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     Predict vector-first : embed + top-k, agreg par intent, boost patterns.
@@ -587,10 +734,11 @@ def predict_intent_scores(
     @param text Texte cumule.
     @param top_k Nombre d'embeddings voisins.
     @param use_pgvector Tente SQL pgvector avant fallback Python.
+    @param profile Catalogue KB.
     @returns Liste {tag, score} triee.
     """
     preds, _engine = predict_intent_scores_detailed(
-        db, text, top_k=top_k, use_pgvector=use_pgvector
+        db, text, top_k=top_k, use_pgvector=use_pgvector, profile=profile
     )
     return preds
 
@@ -601,6 +749,7 @@ def _predict_pgvector(
     scored: Dict[str, float],
     *,
     top_k: int,
+    profile: Optional[str] = None,
 ) -> bool:
     """
     Recherche HNSW cosine si colonne embedding presente.
@@ -611,6 +760,7 @@ def _predict_pgvector(
     @returns True si la requete a fonctionne.
     """
     vec_lit = "[" + ",".join(f"{float(x):.8f}" for x in query_vec) + "]"
+    prof = (profile or PROFILE_INBOUND).strip().lower()
     try:
         rows = db.execute(
             text(
@@ -619,12 +769,14 @@ def _predict_pgvector(
                        1 - (e.embedding <=> CAST(:q AS vector)) AS sim
                 FROM intent_embeddings e
                 JOIN intents i ON i.id = e.intent_id
-                WHERE i.enabled = true AND e.embedding IS NOT NULL
+                WHERE i.enabled = true
+                  AND i.profile = :profile
+                  AND e.embedding IS NOT NULL
                 ORDER BY e.embedding <=> CAST(:q AS vector)
                 LIMIT :k
                 """
             ),
-            {"q": vec_lit, "k": int(top_k) * 4},
+            {"q": vec_lit, "k": int(top_k) * 4, "profile": prof},
         ).fetchall()
     except Exception as exc:
         db.rollback()
@@ -646,14 +798,18 @@ def _predict_python_cosine(
     db: Session,
     query_vec: Sequence[float],
     scored: Dict[str, float],
+    *,
+    profile: Optional[str] = None,
 ) -> None:
     """Fallback : cosine sur embedding_json en Python (patterns > responses)."""
-    rows = (
+    q = (
         db.query(IntentEmbedding, Intent)
         .join(Intent, Intent.id == IntentEmbedding.intent_id)
         .filter(Intent.enabled.is_(True))
-        .all()
     )
+    if profile:
+        q = q.filter(Intent.profile == profile.strip().lower())
+    rows = q.all()
     for emb, intent in rows:
         vec = emb.embedding_json or []
         if not isinstance(vec, list) or not vec:
@@ -701,7 +857,12 @@ def update_intent_response(
             db.delete(old)
         db.flush()
         if old_ids and qdrant_base_url():
-            delete_points_by_ids(old_ids)
+            delete_points_by_ids(
+                old_ids,
+                collection=collection_for_profile(
+                    getattr(intent, "profile", None) or PROFILE_INBOUND
+                ),
+            )
         for ptxt in patterns:
             p = str(ptxt or "").strip()
             if not p:
@@ -721,7 +882,12 @@ def update_intent_response(
             db.delete(old)
         db.flush()
         if old_ids and qdrant_base_url():
-            delete_points_by_ids(old_ids)
+            delete_points_by_ids(
+                old_ids,
+                collection=collection_for_profile(
+                    getattr(intent, "profile", None) or PROFILE_INBOUND
+                ),
+            )
         for pos, rtxt in enumerate(responses):
             r = str(rtxt or "").strip()
             if not r:

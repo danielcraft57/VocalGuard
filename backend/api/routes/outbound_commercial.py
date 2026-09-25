@@ -1,0 +1,254 @@
+"""
+Routes API appel commercial sortant (co-pilote top-5 + 5 phrases).
+"""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from fastapi import APIRouter, HTTPException, Request
+from loguru import logger
+from pydantic import BaseModel, Field
+
+from backend.core.events import Event, EventType, event_bus
+from backend.core.outgoing_session_registry import outgoing_sessions
+from backend.database import database as db_module
+from backend.services import intent_repository as intent_repo
+from backend.services import outbound_commercial_engine as commercial
+from backend.services.kb_tts_prefetch import prefetch_intent_voices
+from backend.voice.qdrant_intents import PROFILE_OUTBOUND_COMMERCIAL
+from backend.voice.synthesis import VoiceSynthesis
+
+router = APIRouter(prefix="/kb/outbound-commercial", tags=["kb-outbound-commercial"])
+
+
+class SuggestBody(BaseModel):
+    """Texte prospect / STT pour predict top-5."""
+
+    text: str = Field(..., min_length=1)
+    top_k: int = Field(default=5, ge=1, le=8)
+    call_id: Optional[int] = None
+
+
+class PhrasesBody(BaseModel):
+    """Choix d'un intent parmi le top-5."""
+
+    tag: str = Field(..., min_length=2, max_length=100)
+
+
+class ChooseBody(BaseModel):
+    """Choix final phrase + lecture WAV optionnelle sur la ligne."""
+
+    tag: str = Field(..., min_length=2, max_length=100)
+    variant_index: int = Field(..., ge=0, le=4)
+    call_id: Optional[int] = None
+    play: bool = True
+
+
+class PrefetchOutboundBody(BaseModel):
+    """Regeneration voix sortantes."""
+
+    force: bool = False
+    tags: Optional[list[str]] = None
+    tts_provider: Optional[str] = Field(
+        default=None,
+        description="edge | elevenlabs (defaut config)",
+    )
+
+
+def _db():
+    if db_module.SessionLocal is None:
+        raise HTTPException(status_code=503, detail="Base de donnees non initialisee")
+    return db_module.SessionLocal()
+
+
+def _config(request: Request):
+    cm = getattr(request.app.state, "call_manager", None)
+    if cm is None or getattr(cm, "config", None) is None:
+        raise HTTPException(status_code=503, detail="Call manager indisponible")
+    return cm.config
+
+
+@router.post("/seed")
+async def seed_outbound(request: Request, replace: bool = False) -> Dict[str, Any]:
+    """
+    Importe le seed ``outbound_commercial_v1.json``.
+
+    @param replace Si True, recree les tags existants.
+    """
+    config = _config(request)
+    path = intent_repo.outbound_seed_path(Path(config.base_path or "."))
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail=f"Seed introuvable: {path}")
+    db = _db()
+    try:
+        catalog = intent_repo.load_seed_catalog(path)
+        n = intent_repo.seed_intents_from_catalog(db, catalog, replace=replace)
+        return {
+            "ok": True,
+            "inserted": n,
+            "profile": PROFILE_OUTBOUND_COMMERCIAL,
+            "path": str(path),
+        }
+    finally:
+        db.close()
+
+
+@router.get("/presentation")
+async def get_presentation(request: Request) -> Dict[str, Any]:
+    """Cinq formulations d'ouverture (avant / pendant composition)."""
+    config = _config(request)
+    db = _db()
+    try:
+        return commercial.presentation_phrases(db, config)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        db.close()
+
+
+@router.post("/suggest")
+async def suggest(body: SuggestBody, request: Request) -> Dict[str, Any]:
+    """
+    Predict top-5 intents commerciaux + event WS si call_id.
+    """
+    config = _config(request)
+    db = _db()
+    try:
+        result = commercial.suggest_top_intents(
+            db, body.text, config, top_k=body.top_k
+        )
+        if body.call_id is not None:
+            session = outgoing_sessions.get(body.call_id)
+            if session is not None:
+                session.commercial_suggestions = result.get("suggestions") or []
+                session.commercial_selected_tag = None
+                session.commercial_phrases = []
+            await event_bus.publish(
+                Event(
+                    event_type=EventType.OUTBOUND_COMMERCIAL_SUGGESTIONS,
+                    data={
+                        "call_id": body.call_id,
+                        **result,
+                    },
+                    source="outbound_commercial",
+                )
+            )
+        return result
+    finally:
+        db.close()
+
+
+@router.post("/phrases")
+async def phrases(body: PhrasesBody, request: Request) -> Dict[str, Any]:
+    """Apres choix intent : retourne les 5 formulations."""
+    config = _config(request)
+    db = _db()
+    try:
+        result = commercial.select_intent_phrases(db, body.tag, config)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    finally:
+        db.close()
+
+
+@router.post("/choose")
+async def choose(body: ChooseBody, request: Request) -> Dict[str, Any]:
+    """
+    Valide une phrase et joue le WAV sur la ligne si ``play`` et session active.
+    """
+    config = _config(request)
+    db = _db()
+    try:
+        resolved = commercial.resolve_choice(
+            db,
+            config,
+            tag=body.tag,
+            variant_index=body.variant_index,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        db.close()
+
+    played = False
+    play_error: Optional[str] = None
+    if body.play and body.call_id is not None:
+        session = outgoing_sessions.get(body.call_id)
+        cm = getattr(request.app.state, "call_manager", None)
+        modem = getattr(cm, "modem", None) if cm else None
+        if session is None:
+            play_error = "Session sortante introuvable"
+        elif modem is None:
+            play_error = "Modem indisponible"
+        else:
+            wav_path = Path(resolved["wav_path"])
+            try:
+                # Pause micro / VTX uplink le temps de jouer le clip.
+                session.play_lock = getattr(session, "play_lock", None) or asyncio.Lock()
+                async with session.play_lock:
+                    session.playing_wav = True
+                    try:
+                        ok = await modem.play_wav_via_serial(str(wav_path))
+                        played = bool(ok)
+                        if not played:
+                            play_error = "Lecture WAV refusee par le modem"
+                    finally:
+                        session.playing_wav = False
+            except Exception as exc:
+                play_error = str(exc)
+                logger.exception("Play WAV commercial: {}", exc)
+
+        await event_bus.publish(
+            Event(
+                event_type=EventType.OUTBOUND_COMMERCIAL_PLAY,
+                data={
+                    "call_id": body.call_id,
+                    "played": played,
+                    "error": play_error,
+                    **{k: v for k, v in resolved.items() if k != "wav_path"},
+                },
+                source="outbound_commercial",
+            )
+        )
+
+    return {
+        "ok": True,
+        "played": played,
+        "play_error": play_error,
+        **resolved,
+    }
+
+
+@router.post("/voices/regenerate")
+async def regenerate_outbound_voices(
+    body: PrefetchOutboundBody,
+    request: Request,
+) -> Dict[str, Any]:
+    """Prefetch offline des WAV ``out_kb_*`` (ElevenLabs ou Edge)."""
+    config = _config(request)
+    cm = request.app.state.call_manager
+    synthesis = getattr(cm, "voice_synthesis", None)
+    if synthesis is None:
+        synthesis = VoiceSynthesis(config)
+        await synthesis.initialize()
+    db = _db()
+    try:
+        intent_repo.ensure_seeded(
+            db, Path(config.base_path or "."), profile=PROFILE_OUTBOUND_COMMERCIAL
+        )
+        stats = await prefetch_intent_voices(
+            db,
+            config,
+            synthesis,
+            force=body.force,
+            tags=body.tags,
+            profile=PROFILE_OUTBOUND_COMMERCIAL,
+            tts_provider=body.tts_provider,
+        )
+        return {"ok": True, **stats}
+    finally:
+        db.close()

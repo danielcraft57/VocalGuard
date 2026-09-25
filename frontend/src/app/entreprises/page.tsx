@@ -11,6 +11,7 @@ import {
   fetchEntrepriseCallStats,
   Entreprise,
   EntrepriseImportSummary,
+  EntrepriseListResponse,
 } from "../../services/entreprisesApi";
 import { EntreprisesFiltersBar } from "./components/EntreprisesFiltersBar";
 import { EntreprisesListTable } from "./components/EntreprisesListTable";
@@ -19,11 +20,63 @@ import { EntrepriseImportPanel } from "./components/EntrepriseImportPanel";
 import { EntreprisesPaginationBar } from "./components/EntreprisesPaginationBar";
 import { useEntrepriseImportRealtime } from "./hooks/useEntrepriseImportRealtime";
 import type { EntrepriseCallStats, EntrepriseDetailsTab, ImportProgressCounters, PhoneAvailabilityFilter } from "./types";
+import { VgSoftSyncBar } from "../../components/mui/VgSoftSyncBar";
+import { VgTableSkeleton } from "../../components/mui/VgListSkeleton";
+import {
+  isAbortError,
+  isUiCacheFresh,
+  loadUiCache,
+  saveUiCache,
+  UI_CACHE_KEYS,
+} from "../../services/uiPersist";
+
+/**
+ * Cle de cache pour une combinaison filtres / pagination.
+ *
+ * @param skip Offset.
+ * @param limit Taille de page.
+ * @param q Recherche.
+ * @param city Ville.
+ * @param category Categorie.
+ * @param hasPhone Filtre telephone.
+ * @returns Cle session unique.
+ */
+function entreprisesCacheKey(
+  skip: number,
+  limit: number,
+  q: string,
+  city: string,
+  category: string,
+  hasPhone: PhoneAvailabilityFilter,
+): string {
+  const parts = [
+    UI_CACHE_KEYS.entreprises,
+    `s${skip}`,
+    `l${limit}`,
+    `q${q.trim()}`,
+    `c${city.trim()}`,
+    `cat${category.trim()}`,
+    `p${hasPhone || "any"}`,
+  ];
+  return parts.join(":");
+}
 
 export default function EntreprisesPage() {
-  const [entreprises, setEntreprises] = useState<Entreprise[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
+  const [skip, setSkip] = useState(0);
+  const [limit, setLimit] = useState(50);
+  const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
+  const [city, setCity] = useState("");
+  const [category, setCategory] = useState("");
+  const [hasPhone, setHasPhone] = useState<PhoneAvailabilityFilter>("");
+
+  const initialKey = entreprisesCacheKey(0, 50, "", "", "", "");
+  const initialCached = loadUiCache<EntrepriseListResponse>(initialKey);
+
+  const [entreprises, setEntreprises] = useState<Entreprise[]>(() => initialCached?.items ?? []);
+  const [total, setTotal] = useState(() => initialCached?.total ?? 0);
+  const [loading, setLoading] = useState(() => !initialCached);
+  const [syncing, setSyncing] = useState(false);
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastImport, setLastImport] = useState<EntrepriseImportSummary | null>(null);
@@ -32,20 +85,19 @@ export default function EntreprisesPage() {
   const [importCounters, setImportCounters] = useState<ImportProgressCounters | null>(null);
   const [activeImportBatchId, setActiveImportBatchId] = useState<number | null>(null);
 
-  const [skip, setSkip] = useState(0);
-  const [limit, setLimit] = useState(50);
-  const [total, setTotal] = useState(0);
-  const [q, setQ] = useState("");
-  const [debouncedQ, setDebouncedQ] = useState("");
-  const [city, setCity] = useState("");
-  const [category, setCategory] = useState("");
-  const [hasPhone, setHasPhone] = useState<PhoneAvailabilityFilter>("");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [detailsEntreprise, setDetailsEntreprise] = useState<Entreprise | null>(null);
   const [callStats, setCallStats] = useState<EntrepriseCallStats | null>(null);
   const [detailsTab, setDetailsTab] = useState<EntrepriseDetailsTab>("infos");
   const importUiResetTimer = useRef<number | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const hasDataRef = useRef(Boolean(initialCached));
+
+  const listCacheKey = useMemo(
+    () => entreprisesCacheKey(skip, limit, debouncedQ, city, category, hasPhone),
+    [skip, limit, debouncedQ, city, category, hasPhone],
+  );
 
   const entreprisesCount = useMemo(() => total, [total]);
   const page = useMemo(() => Math.floor(skip / limit) + 1, [skip, limit]);
@@ -56,38 +108,79 @@ export default function EntreprisesPage() {
     return () => window.clearTimeout(t);
   }, [q]);
 
+  /**
+   * Charge la liste entreprises (cache + soft sync + abort).
+   *
+   * @param opts.silent Soft refresh (garde la liste).
+   * @param opts.preserveSelection Ne vide pas la selection.
+   * @param opts.force Ignore le TTL.
+   */
   const reload = useCallback(
-    (opts?: { silent?: boolean; preserveSelection?: boolean }) => {
-      const silent = Boolean(opts?.silent);
-      if (silent) setRefreshing(true);
+    async (opts?: { silent?: boolean; preserveSelection?: boolean; force?: boolean }) => {
+      const cacheKey = entreprisesCacheKey(skip, limit, debouncedQ, city, category, hasPhone);
+      const cached = loadUiCache<EntrepriseListResponse>(cacheKey);
+      const already = Array.isArray(cached?.items) || hasDataRef.current;
+      const soft = Boolean(opts?.silent) || already;
+
+      if (cached?.items) {
+        setEntreprises(cached.items);
+        setTotal(cached.total);
+        hasDataRef.current = true;
+      }
+
+      if (!opts?.force && Array.isArray(cached?.items) && isUiCacheFresh(cacheKey)) {
+        setLoading(false);
+        setSyncing(false);
+        return;
+      }
+
+      if (soft) setSyncing(true);
       else setLoading(true);
       setError(null);
-      fetchEntreprises({
-        skip,
-        limit,
-        q: debouncedQ.trim() || undefined,
-        city: city.trim() || undefined,
-        category: category.trim() || undefined,
-        has_phone: hasPhone === "" ? undefined : hasPhone === "true",
-      })
-        .then((data) => {
-          setEntreprises(data.items);
-          setTotal(data.total);
-          if (!opts?.preserveSelection) setSelectedIds([]);
-        })
-        .catch(() => setError("Impossible de charger les entreprises (verifie le backend)."))
-        .finally(() => {
-          if (silent) setRefreshing(false);
-          else setLoading(false);
-        });
+
+      abortRef.current?.abort();
+      const ac = new AbortController();
+      abortRef.current = ac;
+
+      try {
+        const data = await fetchEntreprises(
+          {
+            skip,
+            limit,
+            q: debouncedQ.trim() || undefined,
+            city: city.trim() || undefined,
+            category: category.trim() || undefined,
+            has_phone: hasPhone === "" ? undefined : hasPhone === "true",
+          },
+          ac.signal,
+        );
+        if (ac.signal.aborted) return;
+        setEntreprises(data.items);
+        setTotal(data.total);
+        hasDataRef.current = true;
+        saveUiCache(cacheKey, data);
+        if (!opts?.preserveSelection) setSelectedIds([]);
+      } catch (e) {
+        if (isAbortError(e) || ac.signal.aborted) return;
+        if (!already) {
+          setError("Impossible de charger les entreprises (verifie le backend).");
+        }
+      } finally {
+        if (!ac.signal.aborted) {
+          setLoading(false);
+          setSyncing(false);
+        }
+      }
     },
     [skip, limit, debouncedQ, city, category, hasPhone],
   );
 
   useEffect(() => {
-    reload();
-  }, [reload]);
-
+    void reload({ silent: Boolean(loadUiCache(listCacheKey)) });
+    return () => {
+      abortRef.current?.abort();
+    };
+  }, [reload, listCacheKey]);
   useEffect(() => {
     // Quand les filtres changent, revenir page 1 sans recharger agressivement.
     setSkip((prev) => (prev === 0 ? prev : 0));
@@ -101,7 +194,7 @@ export default function EntreprisesPage() {
     },
     onCompleted: () => {
       setActiveImportBatchId(null);
-      reload({ silent: true, preserveSelection: true });
+      void reload({ silent: true, preserveSelection: true, force: true });
     },
     onOsintEvent: () => {},
   });
@@ -158,7 +251,7 @@ export default function EntreprisesPage() {
     setError(null);
     try {
       await deleteEntreprise(id);
-      reload();
+      void reload({ silent: true, force: true });
     } catch (err) {
       setError((err as Error)?.message ?? "Erreur suppression inconnue");
     }
@@ -170,7 +263,7 @@ export default function EntreprisesPage() {
     setError(null);
     try {
       await deleteEntreprisesBulk(selectedIds);
-      reload();
+      void reload({ silent: true, force: true });
     } catch (err) {
       setError((err as Error)?.message ?? "Erreur suppression bulk inconnue");
     }
@@ -215,9 +308,12 @@ export default function EntreprisesPage() {
 
       <Card sx={{ mt: 2, borderRadius: 3, border: "1px solid var(--vg-color-border-subtle)", transition: "all .2s ease", "&:hover": { boxShadow: 6 } }}>
         <CardContent>
-          <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5 }}>
-            <span className="material-icons" style={{ fontSize: 18 }}>business</span>
-            <Typography variant="subtitle2">Entreprises ({loading ? "..." : entreprisesCount})</Typography>
+          <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 0.5, justifyContent: "space-between" }}>
+            <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+              <span className="material-icons" style={{ fontSize: 18 }}>business</span>
+              <Typography variant="subtitle2">Entreprises ({loading && entreprises.length === 0 ? "..." : entreprisesCount})</Typography>
+            </Stack>
+            {syncing ? <VgSoftSyncBar label="Synchro entreprises…" /> : null}
           </Stack>
 
         <EntreprisesFiltersBar
@@ -231,9 +327,9 @@ export default function EntreprisesPage() {
           onPhoneFilterChange={setHasPhone}
           pageSize={limit}
           onPageSizeChange={setLimit}
-          loading={loading}
+          loading={loading || syncing}
           selectedCount={selectedIds.length}
-          onRefresh={reload}
+          onRefresh={() => void reload({ silent: true, force: true })}
           onDeleteSelection={handleDeleteSelected}
         />
 
@@ -241,20 +337,18 @@ export default function EntreprisesPage() {
           page={page}
           pageCount={pageCount}
           total={total}
-          loading={loading}
+          loading={loading || syncing}
           canPrev={skip > 0}
           canNext={skip + limit < total}
           onPrev={() => setSkip(Math.max(0, skip - limit))}
           onNext={() => setSkip(Math.min((pageCount - 1) * limit, skip + limit))}
         />
 
-        {loading ? (
-          <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
-            Chargement...
-          </Typography>
+        {loading && entreprises.length === 0 ? (
+          <VgTableSkeleton rows={6} />
         ) : entreprises.length === 0 ? (
           <Alert severity="info" sx={{ mt: 1.5 }}>
-            Aucune entreprise importée pour l’instant.
+            Aucune entreprise importee pour l'instant.
           </Alert>
         ) : (
           <Box sx={{ mt: 0.5 }}>
@@ -268,11 +362,6 @@ export default function EntreprisesPage() {
               onOpenDetails={handleOpenDetails}
               onDeleteRow={handleDeleteOne}
             />
-            {refreshing ? (
-              <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.75 }}>
-                Mise à jour en arrière-plan...
-              </Typography>
-            ) : null}
           </Box>
         )}
         </CardContent>

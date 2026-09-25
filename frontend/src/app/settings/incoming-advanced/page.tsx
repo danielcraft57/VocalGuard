@@ -9,7 +9,6 @@ import {
   Alert,
   Box,
   Button,
-  CircularProgress,
   FormControlLabel,
   Slider,
   Switch,
@@ -22,6 +21,8 @@ import { AppLayout } from "../../../components/AppLayout";
 import { VgPageHeader } from "../../../components/mui/VgPageHeader";
 import { VgSaveBar } from "../../../components/mui/VgSaveBar";
 import { VgSettingsSection } from "../../../components/mui/VgSettingsSection";
+import { VgSoftSyncBar } from "../../../components/mui/VgSoftSyncBar";
+import { VgFormSkeleton } from "../../../components/mui/VgListSkeleton";
 import { useIncomingCallConfig } from "../../../hooks/useIncomingCallConfig";
 
 type AdvancedBlock = {
@@ -39,6 +40,7 @@ export default function IncomingAdvancedSettingsPage() {
   const {
     config,
     loading,
+    syncing,
     saving,
     dirty,
     error,
@@ -97,11 +99,15 @@ export default function IncomingAdvancedSettingsPage() {
         peut faire rater des appels ou couper trop tot.
       </Alert>
 
-      {loading || !config ? (
-        <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-          <CircularProgress />
+      {syncing && config ? (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+          <VgSoftSyncBar />
         </Box>
-      ) : (
+      ) : null}
+
+      {loading && !config ? (
+        <VgFormSkeleton />
+      ) : config ? (
         <>
           <VgSettingsSection title="Timing CID et sonneries">
             <Box sx={{ mb: 3 }}>
@@ -242,7 +248,7 @@ export default function IncomingAdvancedSettingsPage() {
             onDismissSuccess={() => setSuccess(null)}
           />
         </>
-      )}
+      ) : null}
     </AppLayout>
   );
 }

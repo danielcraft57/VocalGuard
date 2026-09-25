@@ -51,16 +51,26 @@ export interface CallWithOsint extends Call {
 /**
  * Recupere la liste des appels avec OSINT (payload liste leger cote API).
  * Defaut 100 lignes recentes (plus rapide que 500 + TEXT/JSONB).
+ *
+ * @param limit Cap.
+ * @param signal AbortSignal optionnel.
  */
-export async function fetchCallsWithOsint(limit = 100): Promise<CallWithOsint[]> {
+export async function fetchCallsWithOsint(
+  limit = 100,
+  signal?: AbortSignal
+): Promise<CallWithOsint[]> {
   const data = await getJson<CallListResponse & { calls: CallWithOsint[] }>(
-    `/calls?with_osint=true&limit=${Math.min(Math.max(limit, 1), 500)}`
+    `/calls?with_osint=true&limit=${Math.min(Math.max(limit, 1), 500)}`,
+    signal
   );
   return data.calls ?? [];
 }
 
-export async function fetchCallWithOsintById(callId: number): Promise<CallWithOsint> {
-  return getJson<CallWithOsint>(`/calls/${callId}?with_osint=true`);
+export async function fetchCallWithOsintById(
+  callId: number,
+  signal?: AbortSignal
+): Promise<CallWithOsint> {
+  return getJson<CallWithOsint>(`/calls/${callId}?with_osint=true`, signal);
 }
 
 export function getCallRecordingUrl(callId: number): string {
@@ -139,8 +149,14 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   }
 }
 
-export async function startOutgoingCall(phoneNumber: string): Promise<OutgoingCallActionResponse> {
-  return postJson<OutgoingCallActionResponse>("/calls/outgoing/start", { phone_number: phoneNumber });
+export async function startOutgoingCall(
+  phoneNumber: string,
+  options?: { commercialMode?: boolean }
+): Promise<OutgoingCallActionResponse> {
+  return postJson<OutgoingCallActionResponse>("/calls/outgoing/start", {
+    phone_number: phoneNumber,
+    commercial_mode: Boolean(options?.commercialMode)
+  });
 }
 
 export async function sendOutgoingDtmf(callId: number, digit: string): Promise<OutgoingCallActionResponse> {

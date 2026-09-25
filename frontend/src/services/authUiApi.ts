@@ -30,8 +30,8 @@ async function uiFetch(path: string, init?: RequestInit): Promise<Response> {
  *
  * @returns Statut d authentification.
  */
-export async function fetchUiSession(): Promise<UiSessionStatus> {
-  const res = await uiFetch("/auth/ui/me", { method: "GET", cache: "no-store" });
+export async function fetchUiSession(signal?: AbortSignal): Promise<UiSessionStatus> {
+  const res = await uiFetch("/auth/ui/me", { method: "GET", cache: "no-store", signal });
   if (!res.ok) {
     throw new Error(`Impossible de verifier la session UI (${res.status}).`);
   }

@@ -4,7 +4,6 @@ import React, { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Box,
-  CircularProgress,
   FormControlLabel,
   Switch,
   Tab,
@@ -23,6 +22,8 @@ import { VgProfileChip } from "../../../components/mui/VgProfileChip";
 import { VgRingsSlider } from "../../../components/mui/VgRingsSlider";
 import { VgSaveBar } from "../../../components/mui/VgSaveBar";
 import { VgSettingsSection } from "../../../components/mui/VgSettingsSection";
+import { VgSoftSyncBar } from "../../../components/mui/VgSoftSyncBar";
+import { VgFormSkeleton } from "../../../components/mui/VgListSkeleton";
 import { useIncomingCallConfig } from "../../../hooks/useIncomingCallConfig";
 
 type ProfileKey = "permitted" | "screened" | "blocked";
@@ -60,6 +61,7 @@ export default function IncomingProfilesSettingsPage() {
   const {
     config,
     loading,
+    syncing,
     saving,
     dirty,
     error,
@@ -140,11 +142,15 @@ export default function IncomingProfilesSettingsPage() {
         }
       />
 
-      {loading || !config ? (
-        <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
-          <CircularProgress />
+      {syncing && config ? (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+          <VgSoftSyncBar />
         </Box>
-      ) : (
+      ) : null}
+
+      {loading && !config ? (
+        <VgFormSkeleton />
+      ) : config ? (
         <>
           <VgEffectiveConfigBanner
             inheritedFrom={config.active_preset === "voicemail" ? "Repondeur" : "Telephone"}
@@ -254,7 +260,7 @@ export default function IncomingProfilesSettingsPage() {
             onDismissSuccess={() => setSuccess(null)}
           />
         </>
-      )}
+      ) : null}
     </AppLayout>
   );
 }

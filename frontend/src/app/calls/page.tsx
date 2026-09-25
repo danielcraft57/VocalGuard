@@ -19,6 +19,14 @@ import {
   deleteCall
 } from "../../services/callsApi";
 import { getWsBaseUrl } from "../../services/httpClient";
+import {
+  isAbortError,
+  loadUiCache,
+  saveUiCache,
+  UI_CACHE_KEYS
+} from "../../services/uiPersist";
+import { VgSoftSyncBar } from "../../components/mui/VgSoftSyncBar";
+import { VgTableSkeleton } from "../../components/mui/VgListSkeleton";
 import { useOutgoingCallAudio, unlockOutgoingAudioContext } from "../../hooks/useOutgoingCallAudio";
 import {
   formatApiDateTime,
@@ -205,11 +213,13 @@ function callMatchesText(call: CallWithOsint, text: string): boolean {
  * quand le front est servi par le backend (export statique).
  */
 export default function CallsPage() {
-  const [calls, setCalls] = useState<CallWithOsint[]>([]);
+  const cachedCalls = loadUiCache<CallWithOsint[]>(UI_CACHE_KEYS.callsOsint);
+  const [calls, setCalls] = useState<CallWithOsint[]>(() => cachedCalls ?? []);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !cachedCalls);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshDone, setRefreshDone] = useState(false);
+  const loadAbortRef = useRef<AbortController | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>(FILTER_STATUS_ALL);
   const [filterReputation, setFilterReputation] = useState<string>(FILTER_REP_ALL);
   const [filterProfile, setFilterProfile] = useState<string>(FILTER_PROFILE_ALL);
@@ -226,6 +236,10 @@ export default function CallsPage() {
   const [dialerLogs, setDialerLogs] = useState<{ t: string; level: string; message: string }[]>([]);
   const [liveListen, setLiveListen] = useState(true);
   const [liveMic, setLiveMic] = useState(false);
+  const [commercialMode, setCommercialMode] = useState(true);
+  const [commercialSuggestions, setCommercialSuggestions] = useState<
+    import("../../services/outboundCommercialApi").CommercialSuggestion[]
+  >([]);
   const [detailCall, setDetailCall] = useState<CallWithOsint | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
@@ -257,27 +271,47 @@ export default function CallsPage() {
 
   const reloadCalls = React.useCallback(async (opts?: { silent?: boolean }) => {
     const silent = Boolean(opts?.silent);
-    if (!silent) setRefreshing(true);
+    const hasLocal = calls.length > 0 || Boolean(loadUiCache(UI_CACHE_KEYS.callsOsint));
+    if (!silent) {
+      if (hasLocal) setRefreshing(true);
+      else setLoading(true);
+    }
     setRefreshDone(false);
     setError(null);
+
+    loadAbortRef.current?.abort();
+    const ac = new AbortController();
+    loadAbortRef.current = ac;
+
     try {
-      const data = await fetchCallsWithOsint();
+      const data = await fetchCallsWithOsint(100, ac.signal);
+      if (ac.signal.aborted) return;
       setCalls(data);
+      saveUiCache(UI_CACHE_KEYS.callsOsint, data);
       if (!silent) {
         setRefreshDone(true);
         window.setTimeout(() => setRefreshDone(false), 1200);
       }
-    } catch {
-      setError("Impossible de contacter l'API VocalGuard (assure-toi que le backend tourne).");
+    } catch (e) {
+      if (isAbortError(e) || ac.signal.aborted) return;
+      if (!hasLocal) {
+        setError("Impossible de contacter l'API VocalGuard (assure-toi que le backend tourne).");
+      }
     } finally {
-      setRefreshing(false);
-      setLoading(false);
+      if (!ac.signal.aborted) {
+        setRefreshing(false);
+        setLoading(false);
+      }
     }
-  }, []);
+  }, [calls.length]);
 
   useEffect(() => {
-    void reloadCalls();
-  }, [reloadCalls]);
+    void reloadCalls({ silent: Boolean(cachedCalls) });
+    return () => {
+      loadAbortRef.current?.abort();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount
+  }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -357,13 +391,14 @@ export default function CallsPage() {
     unlockOutgoingAudioContext();
     setDialerLoading(true);
     try {
-      const result = await startOutgoingCall(num);
+      const result = await startOutgoingCall(num, { commercialMode });
       dialerCallIdRef.current = result.call_id;
       setDialerCallId(result.call_id);
       setDialerStatus("dialing");
       setDialerTranscriptConfirmed("");
       setDialerTranscriptLive("");
       setDialerLogs([]);
+      setCommercialSuggestions([]);
       setLiveListen(true);
       setLiveMic(false);
     } catch (e) {
@@ -405,6 +440,7 @@ export default function CallsPage() {
     setDialerTranscriptLive("");
     setDialerLogs([]);
     setDialerError(null);
+    setCommercialSuggestions([]);
     setDialerOpen(false);
   };
 
@@ -966,6 +1002,7 @@ export default function CallsPage() {
             live?: boolean;
             message?: string;
             level?: string;
+            suggestions?: import("../../services/outboundCommercialApi").CommercialSuggestion[];
           };
         };
         if (!msg || !msg.type || !msg.data || !msg.data.call_id) return;
@@ -979,6 +1016,9 @@ export default function CallsPage() {
           } else if (msg.type === "call.outgoing.ended") {
             setDialerStatus("ended");
             fetchCallsWithOsint().then(setCalls).catch(() => undefined);
+          } else if (msg.type === "outbound.commercial.suggestions") {
+            const list = Array.isArray(msg.data.suggestions) ? msg.data.suggestions : [];
+            setCommercialSuggestions(list);
           } else if (msg.type === "call.transcription.partial" && msg.data.text != null) {
             const piece = String(msg.data.text);
             if (msg.data.live === true) {
@@ -1164,16 +1204,16 @@ export default function CallsPage() {
           </div>
         </div>
       )}
-      {loading ? (
-        <div className="vg-card">
-          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-            <span className="material-icons" style={{ color: "#22c55e", fontSize: "18px" }}>
-              hourglass_empty
-            </span>
-            Chargement des appels...
-          </div>
+      {refreshing && calls.length > 0 ? (
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: "0.5rem" }}>
+          <VgSoftSyncBar label="Synchro appels…" />
         </div>
-      ) : error ? (
+      ) : null}
+      {loading && calls.length === 0 ? (
+        <div className="vg-card">
+          <VgTableSkeleton rows={8} />
+        </div>
+      ) : error && calls.length === 0 ? (
         <div className="vg-card">
           <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
             <span className="material-icons" style={{ color: "#ef4444", fontSize: "18px" }}>
@@ -1269,6 +1309,10 @@ export default function CallsPage() {
         onStartDial={() => void handleStartDial()}
         onHangup={() => void handleHangup()}
         onKeypadDigit={handleKeypadDigit}
+        commercialMode={commercialMode}
+        setCommercialMode={setCommercialMode}
+        commercialSuggestions={commercialSuggestions}
+        onClearCommercialSuggestions={() => setCommercialSuggestions([])}
       />
 
       <CallDetailModal

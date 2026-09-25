@@ -22,6 +22,8 @@ class EventType(str, Enum):
     CALL_OUTGOING_DIALING = "call.outgoing.dialing"
     CALL_OUTGOING_CONNECTED = "call.outgoing.connected"
     CALL_OUTGOING_ENDED = "call.outgoing.ended"
+    OUTBOUND_COMMERCIAL_SUGGESTIONS = "outbound.commercial.suggestions"
+    OUTBOUND_COMMERCIAL_PLAY = "outbound.commercial.play"
     CALL_TRANSCRIPTION_PARTIAL = "call.transcription.partial"
     CALL_TRANSCRIPTION_FINAL = "call.transcription.final"
     CALL_INTENT_BELIEF = "call.intent.belief"

@@ -14,7 +14,8 @@ function LoginForm() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    fetchUiSession()
+    const ac = new AbortController();
+    fetchUiSession(ac.signal)
       .then((session) => {
         if (!session.ui_password_enabled || session.authenticated) {
           const next = searchParams.get("next") || "/dashboard";
@@ -23,6 +24,7 @@ function LoginForm() {
         }
       })
       .catch(() => null);
+    return () => ac.abort();
   }, [searchParams]);
 
   const onSubmit = async (event: React.FormEvent) => {

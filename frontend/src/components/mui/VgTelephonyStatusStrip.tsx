@@ -1,37 +1,19 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Alert, Box, Chip, Stack, Typography } from "@mui/material";
 import PhoneInTalkIcon from "@mui/icons-material/PhoneInTalk";
 import VoicemailIcon from "@mui/icons-material/Voicemail";
 import { VgProfileChip } from "./VgProfileChip";
-import { fetchTelephonyStatus, type TelephonyStatus } from "../../services/settingsApi";
+import { useTelephonyStatus } from "../../hooks/useTelephonyStatus";
 import { parseIncomingDecision } from "../../utils/incomingDecision";
 
 /**
  * Bandeau leger : mode ligne, modem et derniere decision policy.
+ * Reutilise le meme poll/cache que la Topbar.
  */
 export function VgTelephonyStatusStrip(): React.ReactElement {
-  const [tel, setTel] = useState<TelephonyStatus | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    const tick = () => {
-      fetchTelephonyStatus()
-        .then((s) => {
-          if (!cancelled) setTel(s);
-        })
-        .catch(() => {
-          if (!cancelled) setTel(null);
-        });
-    };
-    tick();
-    const id = window.setInterval(tick, 10000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, []);
+  const tel = useTelephonyStatus(10000);
 
   const mode = tel?.incoming_line_mode || "voicemail";
   const modemOk = Boolean(tel?.modem_initialized);

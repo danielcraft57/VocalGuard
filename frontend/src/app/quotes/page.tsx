@@ -1,8 +1,13 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useCallback } from "react";
+import { Box } from "@mui/material";
 import { AppLayout } from "../../components/AppLayout";
 import { fetchQuotes, Quote } from "../../services/quotesApi";
+import { useSoftCachedLoad } from "../../hooks/useSoftCachedLoad";
+import { UI_CACHE_KEYS } from "../../services/uiPersist";
+import { VgSoftSyncBar } from "../../components/mui/VgSoftSyncBar";
+import { VgTableSkeleton } from "../../components/mui/VgListSkeleton";
 
 function renderRow(quote: Quote): React.ReactNode {
   const created = new Date(quote.created_at).toLocaleString("fr-FR");
@@ -29,50 +34,38 @@ function renderRow(quote: Quote): React.ReactNode {
  * Page devis : chargement cote client pour les vraies donnees.
  */
 export default function QuotesPage() {
-  const [quotes, setQuotes] = useState<Quote[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const fetcher = useCallback(
+    (signal: AbortSignal) => fetchQuotes(undefined, signal),
+    []
+  );
+  const {
+    data: quotes,
+    loading,
+    syncing,
+    error
+  } = useSoftCachedLoad<Quote[]>({
+    cacheKey: UI_CACHE_KEYS.quotes,
+    fetcher,
+    hasData: (d) => Array.isArray(d)
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    fetchQuotes()
-      .then((data) => {
-        if (!cancelled) {
-          setQuotes(data);
-          setError(null);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setError("Impossible de charger les devis (verifie le backend).");
-          setQuotes([]);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  const rows = quotes ?? [];
 
   return (
     <AppLayout
       title="Devis"
       subtitle="Suivi des devis DanielCraftFr crees par VocalGuard."
     >
-      {loading ? (
+      {syncing ? (
+        <Box sx={{ display: "flex", justifyContent: "flex-end", mb: 1 }}>
+          <VgSoftSyncBar />
+        </Box>
+      ) : null}
+      {loading && !quotes ? (
         <div className="vg-card">
-          <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-            <span className="material-icons" style={{ color: "#22c55e", fontSize: "18px" }}>
-              hourglass_empty
-            </span>
-            Chargement des devis...
-          </div>
+          <VgTableSkeleton rows={5} />
         </div>
-      ) : error ? (
+      ) : error && !quotes ? (
         <div className="vg-card">
           <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
             <span className="material-icons" style={{ color: "#ef4444", fontSize: "18px" }}>
@@ -82,7 +75,7 @@ export default function QuotesPage() {
           </div>
           <div style={{ fontSize: "0.9rem", color: "#f97373" }}>{error}</div>
         </div>
-      ) : quotes.length === 0 ? (
+      ) : rows.length === 0 ? (
         <div className="vg-card">
           <div className="vg-card-label" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
             <span className="material-icons" style={{ color: "#9ca3af", fontSize: "18px" }}>
@@ -106,7 +99,7 @@ export default function QuotesPage() {
                 <th style={{ textAlign: "left", padding: "0.5rem 0.75rem" }}>Statut</th>
               </tr>
             </thead>
-            <tbody>{quotes.map(renderRow)}</tbody>
+            <tbody>{rows.map(renderRow)}</tbody>
           </table>
         </div>
       )}

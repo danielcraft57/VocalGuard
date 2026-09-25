@@ -18,13 +18,19 @@ import RingVolumeIcon from "@mui/icons-material/RingVolume";
 import VoicemailIcon from "@mui/icons-material/Voicemail";
 import {
   fetchSettings,
-  fetchTelephonyStatus,
   setIncomingLineMode,
-  type IncomingLineMode,
-  type TelephonyStatus
+  type IncomingLineMode
 } from "../services/settingsApi";
+import { useTelephonyStatus } from "../hooks/useTelephonyStatus";
+import {
+  isAbortError,
+  loadUiCache,
+  saveUiCache,
+  UI_CACHE_KEYS
+} from "../services/uiPersist";
 import { VgProfileChip } from "./mui/VgProfileChip";
 import { parseIncomingDecision } from "../utils/incomingDecision";
+import type { SettingsSnapshot } from "../services/settingsApi";
 
 export interface TopbarProps {
   /** Titre de la page courante. */
@@ -37,52 +43,26 @@ export interface TopbarProps {
  * Bandeau superieur Material : menu, switch mode ligne, titre, pastille modem.
  */
 export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
-  const [mode, setMode] = useState<IncomingLineMode>("voicemail");
+  const cachedSettings = loadUiCache<SettingsSnapshot>(UI_CACHE_KEYS.settingsSnapshot);
+  const [mode, setMode] = useState<IncomingLineMode>(
+    () => cachedSettings?.incoming_line_mode || "voicemail"
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [tel, setTel] = useState<TelephonyStatus | null>(null);
+  const tel = useTelephonyStatus(8000);
 
   useEffect(() => {
-    let cancelled = false;
-    fetchSettings()
+    const ac = new AbortController();
+    fetchSettings(ac.signal)
       .then((s) => {
-        if (!cancelled) setMode(s.incoming_line_mode || "voicemail");
+        setMode(s.incoming_line_mode || "voicemail");
+        saveUiCache(UI_CACHE_KEYS.settingsSnapshot, s);
       })
-      .catch(() => {
-        /* ignore */
+      .catch((e) => {
+        if (isAbortError(e)) return;
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => ac.abort();
   }, []);
-
-  useEffect(() => {
-    let cancelled = false;
-    const tick = () => {
-      fetchTelephonyStatus()
-        .then((s) => {
-          if (!cancelled) setTel(s);
-        })
-        .catch(() => {
-          if (!cancelled) {
-            setTel({
-              status: "unreachable",
-              modem_initialized: false,
-              incoming_line_mode: mode,
-              in_call: false,
-              relay_failures: 0,
-              daemon_reachable: false
-            });
-          }
-        });
-    };
-    tick();
-    const id = window.setInterval(tick, 8000);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [mode]);
 
   const switchMode = useCallback(
     async (next: IncomingLineMode) => {
@@ -92,6 +72,7 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
       try {
         const s = await setIncomingLineMode(next);
         setMode(s.incoming_line_mode);
+        saveUiCache(UI_CACHE_KEYS.settingsSnapshot, s);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Impossible de changer le mode");
       } finally {

@@ -44,7 +44,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen = false, onNavigate }) 
     { href: "/entreprises", label: "Entreprises", icon: "business" },
     { href: "/clients", label: "Clients", icon: "groups" },
     { href: "/kb", label: "Base de connaissances", icon: "help_outline" },
-    { href: "/simulator", label: "Simulateur d'appel", icon: "mic" },
+    { href: "/simulator", label: "Simulateur / Tchatche", icon: "mic" },
     { href: "/api-doc", label: "API publique", icon: "api" },
     { href: "/mobile-app", label: "App mobile", icon: "smartphone" },
     { href: "/settings", label: "Parametres", icon: "settings" }

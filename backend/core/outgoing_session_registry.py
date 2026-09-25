@@ -29,6 +29,13 @@ class OutgoingCallSession:
     mic_aplay_proc: Optional[asyncio.subprocess.Process] = None
     mic_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     mic_modem_queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=256))
+    # Mode co-pilote commercial (top-5 + phrases).
+    commercial_mode: bool = False
+    commercial_suggestions: list = field(default_factory=list)
+    commercial_selected_tag: Optional[str] = None
+    commercial_phrases: list = field(default_factory=list)
+    playing_wav: bool = False
+    play_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
 outgoing_sessions: dict[int, OutgoingCallSession] = {}
