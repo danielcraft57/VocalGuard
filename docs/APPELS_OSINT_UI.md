@@ -9,6 +9,7 @@ Documentation des fonctionnalites ajoutees ou modifiees pour la liste des appels
 - **Colonnes** : Date, Contact (numero + nom d'entreprise OSINT si connu), Statut, Duree, Transcription.
 - **OSINT entreprise** : `company_name` / `is_company` sont joints depuis `phone_number_profiles` (ProspectLab / Sirene via node15). La recherche texte matche aussi le nom d'entreprise.
 - **Reputation** : valeurs possibles en base puis affichage : `high` -> Bonne, `low` / spam/scam -> Risque, `neutral` -> Non evaluee (quand on a lieu/operateur mais pas de reputation externe), sinon Inconnue.
+- **spam_type / spam_score** : affiches quand presents ; `spam_type` peut etre vide si aucune categorie fiable (artefacts HTML filtres en amont).
 
 ## Backend
 
@@ -16,7 +17,9 @@ Documentation des fonctionnalites ajoutees ou modifiees pour la liste des appels
 
 - Fichier : `backend/api/routes/calls.py`
 - Parametre `with_osint` : si `true`, jointure sur `PhoneNumberProfile` par numero, construction de `OsintReputationResponse` pour chaque appel.
-- Modele `OsintReputationResponse` (dans `backend/api/models.py`) : `phone_number`, `reputation`, `is_spam`, `is_scam`, etc., champs optionnels `city`, `region`, `operator`, plus `is_company`, `name`, `company_name`.
+- Modele `OsintReputationResponse` (dans `backend/api/models.py`) : `phone_number`, `reputation`, `is_spam`, `is_scam`, `is_robocall`, `spam_type`, `spam_score`, champs optionnels `city`, `region`, `operator`, plus `is_company`, `name`, `company_name`.
+- Sources OSINT persistees : table `phone_osint_sources` (codes type `tellows_html`, `phoneinfoga`, `phoneintel`…), lues via la relation `PhoneNumberProfile.osint_sources`.
+- Rafraichir : `POST /api/v1/calls/{call_id}/osint/queue` met une tache Celery ; reponse `{ ok, call_id, phone_number }`.
 
 ### Reputation "neutral"
 
@@ -52,8 +55,13 @@ Documentation des fonctionnalites ajoutees ou modifiees pour la liste des appels
 |------|--------|
 | API appels + OSINT | `backend/api/routes/calls.py` |
 | Modeles reponse | `backend/api/models.py` (CallResponse, OsintReputationResponse) |
+| Persistance profils | `backend/osint/persist.py` |
+| Worker reputation | `backend/osint_worker/reputation.py` |
+| Migration BDD | `alembic/versions/007_osint_reputation_normalized.py` |
 | Tri appels | `backend/repositories/call_repository.py` |
 | Reputation neutral | `backend/services/osint_service.py` |
+| Taches Celery | `backend/workers/osint_tasks.py` |
 | Migration + OSINT | `scripts/migrate_callattendant_to_vocalguard.py` |
 | Page + filtres + recherche | `frontend/src/app/calls/page.tsx` |
+| Modale + refresh OSINT | `frontend/src/components/CallDetailModal.tsx` |
 | Client API | `frontend/src/services/callsApi.ts` |

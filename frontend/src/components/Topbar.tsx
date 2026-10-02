@@ -115,10 +115,11 @@ export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
       <div className="vg-topbar-left">
         {onMenuClick ? (
           <IconButton
+            className="vg-topbar-menu-button"
             onClick={onMenuClick}
             aria-label="Ouvrir le menu"
             size="small"
-            sx={{ color: "inherit", mr: 0.5 }}
+            sx={{ color: "inherit", mr: 0.5, display: { xs: "inline-flex", sm: "none" } }}
           >
             <MenuIcon />
           </IconButton>

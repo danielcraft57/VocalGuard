@@ -1174,8 +1174,9 @@ html.vg-theme-dark .MuiChip-outlinedWarning {
   }
 }
 
-/* Responsive */
-@media (max-width: 900px) {
+/* Responsive : drawer + burger uniquement sur telephone (< 600px).
+   Tablette / desktop : sidebar permanente, pas de burger. */
+@media (max-width: 599px) {
   .vg-layout {
     position: relative;
     grid-template-columns: minmax(0, 1fr);
@@ -1214,8 +1215,12 @@ html.vg-theme-dark .MuiChip-outlinedWarning {
   }
 }
 
-@media (min-width: 901px) {
+@media (min-width: 600px) {
   .vg-topbar-menu-button {
+    display: none !important;
+  }
+
+  .vg-sidebar-backdrop {
     display: none !important;
   }
 }

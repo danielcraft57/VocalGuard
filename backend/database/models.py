@@ -231,12 +231,19 @@ class PhoneNumberProfile(Base):
     is_company = Column(Boolean, default=False, nullable=False)
     name = Column(String(255), nullable=True)
     company_name = Column(String(255), nullable=True)
+    company_siren = Column(String(16), nullable=True)
+    company_siret = Column(String(32), nullable=True)
+    company_activity = Column(String(255), nullable=True)
+    company_address = Column(String(500), nullable=True)
 
     reputation = Column(String(32), nullable=True, index=True)
     is_spam = Column(Boolean, default=False, nullable=False, index=True)
     is_scam = Column(Boolean, default=False, nullable=False, index=True)
     is_commercial = Column(Boolean, default=False, nullable=False)
     is_telemarketer = Column(Boolean, default=False, nullable=False)
+    is_robocall = Column(Boolean, default=False, nullable=False, index=True)
+    spam_type = Column(String(64), nullable=True, index=True)
+    spam_score = Column(Float, nullable=True)
     confidence = Column(Integer, nullable=True)
 
     last_checked_at = Column(DateTime, nullable=True)
@@ -244,6 +251,34 @@ class PhoneNumberProfile(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     caller = relationship("Caller")
+    osint_sources = relationship(
+        "PhoneOsintSource",
+        back_populates="profile",
+        cascade="all, delete-orphan",
+        order_by="PhoneOsintSource.source_code",
+    )
+
+
+class PhoneOsintSource(Base):
+    """Source OSINT ayant contribue a un profil (ligne normalisee, pas de JSON)."""
+
+    __tablename__ = "phone_osint_sources"
+    __table_args__ = (
+        UniqueConstraint("profile_id", "source_code", name="uq_phone_osint_sources_profile_code"),
+        Index("ix_phone_osint_sources_source_code", "source_code"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(
+        Integer,
+        ForeignKey("phone_number_profiles.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    source_code = Column(String(64), nullable=False)
+    checked_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    profile = relationship("PhoneNumberProfile", back_populates="osint_sources")
 
 
 class Client(Base):

@@ -131,14 +131,57 @@ Le service expose :
 
 Localement sur node15, PhoneInfoga ecoute sur `127.0.0.1:5011`. Le worker interroge aussi **ProspectLab** (`GET /api/public/entreprises/by-phone`) : si le numero est deja dans la base de prospection, on recupere nom, SIREN, adresse, site. Les detections FR / CommercialDetector / APIs NumLookup restent sur node14. Si un nom d'entreprise est deja connu, l'enrichissement appelle aussi `/v1/company` (API publique Sirene).
 
+## Providers reputation (node15)
+
+En parallele de PhoneInfoga, le worker lance des sources spam / scam / commercial :
+
+| Provider | Mode sans cle | Cle optionnelle (`.env.osint`) |
+|----------|---------------|--------------------------------|
+| **Tellows** | HTML public (score 1–9) | `TELLOWS_API_KEY` + `TELLOWS_PARTNER` |
+| **SpamCalls.net** | HTML public | — |
+| **PhoneIntel** | CLI (`pip install phoneintel`) | — |
+| **HUHU.fr** | desactive | `HUHU_API_KEY` |
+| **Spam-Numbers** | desactive | `SPAM_NUMBERS_API_KEY` |
+| **IPQS** | desactive | `IPQS_API_KEY` |
+| **Truecaller** | desactive | `TRUECALLER_INSTALLATION_ID` |
+
+`GET /health` expose `reputation_providers`. Les champs `reputation`, `is_spam`, `is_scam`, `is_telemarketer`, `is_commercial`, `spam_type`, `spam_score` remontent via `/v1/scan` vers node14.
+
+Desactiver un provider : `OSINT_REPUTATION_DISABLE=phoneintel,truecaller`.
+
+### Comportement des parsers (prod)
+
+- **Tellows (HTML)** : score lu via `/images/score/s5.jpg` (ou `scoreN.png` legacy) et texte `Score N` dans l'attribut `alt`. Les attributs HTML type `data-type="image"` (pubs Google) ne sont **pas** utilises comme `spam_type`.
+- **SpamCalls.net** : la page est acceptee seulement si le numero affiche (H1 / URL finale) correspond au numero demande. Le site redirige parfois vers une fiche voisine : dans ce cas la source est ignoree plutot que de polluer le profil.
+- **Truecaller** : la lib `truecallerpy` peut etre installee sans session ; sans `TRUECALLER_INSTALLATION_ID`, aucune source `truecaller` n'est ajoutee (ni cote worker node15, ni cote API node14).
+- **spam_type** : valeurs techniques (`image`, `png`, URLs…) filtrees avant merge et avant persistance (`backend/osint/persist.py`).
+
 ## Liste des appels et profils en base
 
+La page **Appels** affiche pour chaque appel la reputation OSINT, le lieu et l'operateur sans appeler les APIs en direct : tout est lu depuis la table `phone_number_profiles` (champs scalaires) et `phone_osint_sources` (une ligne par source, **pas de JSON**).
 
-La page **Appels** affiche pour chaque appel la reputation OSINT, le lieu et l'operateur sans appeler les APIs en direct : tout est lu depuis la table `phone_number_profiles`.
+Persistance centralisee : `backend/osint/persist.py` (`apply_osint_result_to_profile`, `sync_profile_sources`).
 
-- **Endpoint** : `GET /api/v1/calls?with_osint=true&limit=500`
-- Les profils sont remplis par la migration avec `--run-osint` ou par les taches Celery d'enrichissement. Si un profil a un lieu/operateur (détection française) mais aucune reputation fournie par NumLookup/phoneinfoga, le service pose `reputation: "neutral"` (affichée "Non evaluee" en UI).
-- Voir aussi [APPELS_OSINT_UI.md](APPELS_OSINT_UI.md) pour les détails (filtres, recherche, colonnes).
+Colonnes reputation ajoutees (migration `007_osint_reputation_normalized`) :
+- `is_robocall`, `spam_type`, `spam_score`
+- `company_siren`, `company_siret`, `company_activity`, `company_address`
+
+Table `phone_osint_sources` : `(profile_id, source_code)` unique, ex. `tellows_html`, `phoneinfoga`, `spamcalls`, `phoneintel`.
+
+- **Endpoint liste** : `GET /api/v1/calls?with_osint=true&limit=500`
+- **Endpoint detail** : `GET /api/v1/calls/{id}?with_osint=true`
+- **Rafraichir un appel** : `POST /api/v1/calls/{id}/osint/queue` (Celery) ; l'UI ecoute `osint.profile.completed` / `osint.profile.failed` sur `/ws/events`.
+- Les profils sont remplis par la migration avec `--run-osint` ou par les taches Celery d'enrichissement. Si un profil a un lieu/operateur (detection francaise) mais aucune reputation externe, le service pose `reputation: "neutral"` (affichée "Non evaluee" en UI).
+- Voir aussi [APPELS_OSINT_UI.md](APPELS_OSINT_UI.md) pour les details (filtres, recherche, modale, bouton Rafraichir).
+
+### Deploiement et migration
+
+1. **node15** : `powershell -File scripts/deploy_osint_node15.ps1` (worker + PhoneInfoga + providers).
+2. **node14** : deploy API habituel, puis `alembic upgrade head` (migration `007`).
+3. Variables node14 (`.env.prod`) :
+   - `OSINT_SERVICE_URL=http://node15.lan:8110`
+   - `OSINT_INTERNAL_TOKEN=...` (identique a `/opt/vocalguard-osint/.env.osint`)
+4. Redemarrer **`vocalguard`** et **`vocalguard-celery`** apres toute modif du code OSINT cote API/worker (sinon anciens parsers encore en memoire).
 
 ## OSINT + Entreprises (prospection)
 
@@ -404,6 +447,14 @@ Le module OSINT peut être étendu pour intégrer d'autres outils :
 - Respectez les conditions d'utilisation des services tiers
 
 ## Dépannage
+
+### OSINT rafraichi mais spam_type bizarre (ex. "image")
+
+Profil cree avant le durcissement des parsers : relancer `POST /api/v1/calls/{id}/osint/queue` apres deploy node15 + restart Celery. Un refresh efface aussi un ancien `spam_type` invalide en base.
+
+### SpamCalls absent pour un numero
+
+Normal si SpamCalls.net redirige vers une autre fiche (numero proche). Verifier les logs worker : `SpamCalls page hors-cible`.
 
 ### PhoneInfoga non trouvé
 

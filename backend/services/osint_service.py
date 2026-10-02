@@ -455,32 +455,35 @@ class OSINTService:
     
     async def _query_truecaller(self, phone_number: str) -> Dict[str, Any]:
         """
-        Interroge Truecaller pour obtenir des informations
+        Interroge Truecaller pour obtenir des informations.
+        
+        Sans session / installation_id, ne renvoie rien (pas de source fantome).
         
         Args:
             phone_number: Numéro de téléphone
             
         Returns:
-            Informations depuis Truecaller
+            Informations depuis Truecaller, ou {} si indisponible.
         """
         try:
-            # Utiliser truecallerpy si disponible
             try:
-                import truecallerpy
-                
-                # Note: Truecaller nécessite une authentification
-                # Ici on montre la structure, à adapter selon l'API
-                result = {
-                    "sources": ["truecaller"],
-                    "name": None,  # À remplir avec l'API
-                    "address": None,
-                }
-                external_api_metrics.record("truecaller", True)
-                return result
-                
+                import truecallerpy  # noqa: F401
             except ImportError:
                 logger.warning("truecallerpy non installé")
                 external_api_metrics.record("truecaller", False)
+                return {}
+
+            installation_id = (os.getenv("TRUECALLER_INSTALLATION_ID") or "").strip()
+            if not installation_id:
+                # Lib presente mais pas de session : ne pas polluer les sources
+                logger.debug("truecallerpy present sans TRUECALLER_INSTALLATION_ID")
+                external_api_metrics.record("truecaller", False)
+                return {}
+
+            # API reelle a brancher avec installation_id (truecallerpy.search_phonenumber)
+            logger.debug("Truecaller session configuree mais lookup non implemente cote API locale")
+            external_api_metrics.record("truecaller", False)
+            return {}
         
         except Exception as e:
             logger.exception(f"Erreur lors de l'interrogation Truecaller: {e}")
@@ -583,8 +586,29 @@ class OSINTService:
             base["is_spam"] = True
         if new.get("is_scam"):
             base["is_scam"] = True
+        if new.get("is_telemarketer"):
+            base["is_telemarketer"] = True
+        if new.get("is_commercial"):
+            base["is_commercial"] = True
+        if new.get("is_robocall"):
+            base["is_robocall"] = True
         if new.get("is_company"):
             base["is_company"] = True
+        # Reputation : low gagne sur high/neutral
+        _order = {"low": 0, "neutral": 1, "high": 2}
+        if new.get("reputation"):
+            if not base.get("reputation") or _order.get(new["reputation"], 9) < _order.get(
+                base.get("reputation"), 9
+            ):
+                base["reputation"] = new["reputation"]
+        for key in ("spam_type", "spam_score"):
+            if new.get(key) and not base.get(key):
+                base[key] = new[key]
+        if new.get("confidence"):
+            try:
+                base["confidence"] = max(float(base.get("confidence") or 0), float(new["confidence"]))
+            except (TypeError, ValueError):
+                pass
         
         # Augmenter la confiance
         if new.get("sources"):

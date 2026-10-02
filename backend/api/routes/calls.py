@@ -26,7 +26,7 @@ from backend.voice.audio_utils import (
     write_stereo_modem_wav,
 )
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import desc
 from pydantic import BaseModel, Field
 
@@ -888,13 +888,15 @@ def _profile_to_osint_response(profile: PhoneNumberProfile, phone_number: str) -
     else:
         conf_float = 0.0
     rec = "review"
-    if profile.is_scam or profile.is_spam or profile.is_telemarketer:
+    if profile.is_scam or profile.is_spam or profile.is_telemarketer or getattr(profile, "is_robocall", False):
         rec = "block"
     elif rep == "high":
         rec = "allow"
     elif rep == "neutral":
         rec = "review"
-    sources: list[str] = ["database"]
+    from backend.osint.persist import source_codes_for_profile
+
+    sources = source_codes_for_profile(profile) or ["database"]
     return OsintReputationResponse(
         phone_number=phone_number,
         reputation=rep,
@@ -902,6 +904,9 @@ def _profile_to_osint_response(profile: PhoneNumberProfile, phone_number: str) -
         is_scam=profile.is_scam or False,
         is_commercial=profile.is_commercial or False,
         is_telemarketer=profile.is_telemarketer or False,
+        is_robocall=bool(getattr(profile, "is_robocall", False)),
+        spam_type=getattr(profile, "spam_type", None),
+        spam_score=getattr(profile, "spam_score", None),
         confidence=conf_float,
         sources=sources,
         recommendation=rec,
@@ -955,6 +960,7 @@ async def get_calls(
         if norm_values:
             rows = (
                 db.query(PhoneNumberProfile)
+                .options(joinedload(PhoneNumberProfile.osint_sources))
                 .filter(PhoneNumberProfile.normalized_number.in_(norm_values))
                 .order_by(
                     PhoneNumberProfile.normalized_number,
@@ -1043,6 +1049,7 @@ async def get_call(
     if call.phone_number:
         profile = (
             db.query(PhoneNumberProfile)
+            .options(joinedload(PhoneNumberProfile.osint_sources))
             .filter(PhoneNumberProfile.phone_number == call.phone_number)
             .order_by(desc(PhoneNumberProfile.last_checked_at))
             .first()

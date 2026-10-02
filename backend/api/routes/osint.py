@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import Dict, Any
 from loguru import logger
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from backend.api.dependencies import get_config
 from backend.core.config import Config
@@ -201,6 +201,7 @@ async def get_osint_profile(
     """
     profile = (
         db.query(PhoneNumberProfile)
+        .options(joinedload(PhoneNumberProfile.osint_sources))
         .filter(PhoneNumberProfile.phone_number == phone_number)
         .order_by(PhoneNumberProfile.last_checked_at.desc().nullslast())
         .first()

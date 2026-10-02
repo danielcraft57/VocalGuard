@@ -17,13 +17,20 @@ def test_profile_to_osint_includes_company() -> None:
         is_scam=False,
         is_commercial=False,
         is_telemarketer=False,
+        is_robocall=False,
+        spam_type=None,
+        spam_score=None,
         is_company=True,
         name="INGEDUS.COM Nancy",
         company_name="INGEDUS.COM Nancy",
-        raw_data={"sources": ["phoneinfoga", "prospectlab"]},
+        osint_sources=[
+            SimpleNamespace(source_code="phoneinfoga"),
+            SimpleNamespace(source_code="prospectlab"),
+        ],
     )
     resp = _profile_to_osint_response(profile, "+33383123456")
     assert resp.company_name == "INGEDUS.COM Nancy"
     assert resp.is_company is True
-    assert "database" in resp.sources
+    assert resp.sources == ["phoneinfoga", "prospectlab"]
     assert resp.city == "Nancy"
+    assert resp.is_robocall is False

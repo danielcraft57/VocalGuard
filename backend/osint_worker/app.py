@@ -65,6 +65,15 @@ class ScanResponse(BaseModel):
     name: Optional[str] = None
     social_media: Dict[str, Any] = Field(default_factory=dict)
     reputation_links: list[str] = Field(default_factory=list)
+    reputation: Optional[str] = None
+    is_spam: bool = False
+    is_scam: bool = False
+    is_telemarketer: bool = False
+    is_commercial: bool = False
+    is_robocall: bool = False
+    confidence: float = 0.0
+    spam_type: Optional[str] = None
+    spam_score: Optional[float] = None
     raw: Dict[str, Any] = Field(default_factory=dict)
     error: Optional[str] = None
 
@@ -89,8 +98,9 @@ app = FastAPI(title="VocalGuard OSINT", version="1.0.0", lifespan=_lifespan)
 
 @app.get("/health")
 async def health() -> dict:
-    """Etat du worker et de PhoneInfoga."""
+    """Etat du worker, PhoneInfoga et providers reputation."""
     ready = osint_engine.is_ready()
+    providers = osint_engine.reputation_providers_status()
     return {
         "status": "ok" if ready else "degraded",
         "phoneinfoga_ready": ready,
@@ -99,6 +109,7 @@ async def health() -> dict:
         "phoneinfoga_api": osint_engine.api_base_url(),
         "prospectlab": osint_engine.prospectlab_configured(),
         "prospectlab_url": osint_engine.prospectlab_base_url() if osint_engine.prospectlab_configured() else None,
+        "reputation_providers": providers,
     }
 
 
@@ -123,10 +134,12 @@ async def scan_phone(
             raise HTTPException(status_code=503, detail="PhoneInfoga indisponible.")
     result = await osint_engine.scan_number(body.phone_number.strip())
     logger.info(
-        "OSINT scan {} -> country={} city={} sources={}",
+        "OSINT scan {} -> country={} city={} rep={} spam={} sources={}",
         body.phone_number,
         result.get("country"),
         result.get("city"),
+        result.get("reputation"),
+        result.get("is_spam"),
         result.get("sources"),
     )
     return ScanResponse(**{k: result.get(k) for k in ScanResponse.model_fields})

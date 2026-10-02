@@ -464,17 +464,16 @@ export default function CallsPage() {
   };
 
   const handleRowOsint = async (callId: number) => {
-    try {
-      await queueCallOsint(callId);
-      const data = await fetchCallsWithOsint();
-      setCalls(data);
-      setDetailCall((d) => {
-        if (!d || d.id !== callId) return d;
-        return data.find((c) => c.id === callId) ?? d;
-      });
-    } catch {
-      setError("Impossible de lancer l'OSINT");
-    }
+    await queueCallOsint(callId);
+  };
+
+  const reloadCallOsint = async (callId: number) => {
+    const data = await fetchCallsWithOsint();
+    setCalls(data);
+    setDetailCall((d) => {
+      if (!d || d.id !== callId) return d;
+      return data.find((c) => c.id === callId) ?? d;
+    });
   };
 
   const openDialerWith = (num: string) => {
@@ -1321,8 +1320,13 @@ export default function CallsPage() {
         call={detailCall}
         onClose={() => setDetailCall(null)}
         onDelete={() => void handleDeleteDetailCall()}
-        onRefreshOsint={() => {
-          if (detailCall) void handleRowOsint(detailCall.id);
+        onRefreshOsint={async () => {
+          if (!detailCall) return;
+          await handleRowOsint(detailCall.id);
+        }}
+        onOsintUpdated={async () => {
+          if (!detailCall) return;
+          await reloadCallOsint(detailCall.id);
         }}
       />
     </AppLayout>

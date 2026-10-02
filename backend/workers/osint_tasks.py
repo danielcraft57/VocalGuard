@@ -18,6 +18,7 @@ from backend.celery_app import celery_app
 from backend.core.config import Config
 from backend.database import database as db_module
 from backend.database.models import PhoneNumberProfile, EntreprisePhoneAnalysis
+from backend.osint.persist import apply_osint_result_to_profile
 from backend.services.osint_service import OSINTService
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -48,45 +49,6 @@ def _ensure_db() -> Session:
     return db_module.SessionLocal()
 
 
-def _apply_osint_result_to_profile(
-    profile: PhoneNumberProfile,
-    result: Dict[str, Any],
-) -> None:
-    """
-    Recopie les champs utiles du resultat OSINT vers le profil.
-    
-    Args:
-        profile: Profil a mettre a jour.
-        result: Donnees OSINT brutes.
-    """
-    profile.country = result.get("country") or profile.country
-    profile.region = result.get("region") or profile.region
-    profile.city = result.get("city") or profile.city
-    profile.department = result.get("department") or profile.department
-    profile.postal_code = result.get("postal_code") or profile.postal_code
-    profile.line_type = result.get("line_type") or profile.line_type
-    profile.operator = result.get("operator") or profile.operator
-    profile.carrier = result.get("carrier") or profile.carrier
-
-    profile.name = result.get("name") or profile.name
-    profile.company_name = result.get("company_name") or profile.company_name
-    profile.is_company = bool(result.get("is_company") or profile.is_company)
-
-    profile.reputation = result.get("reputation") or profile.reputation
-    profile.is_spam = bool(result.get("is_spam") or profile.is_spam)
-    profile.is_scam = bool(result.get("is_scam") or profile.is_scam)
-    profile.is_commercial = bool(result.get("is_commercial") or profile.is_commercial)
-    profile.is_telemarketer = bool(result.get("is_telemarketer") or profile.is_telemarketer)
-
-    confidence: Optional[float] = result.get("confidence")
-    if confidence is not None:
-        # On stocke la confiance sur 0-100
-        profile.confidence = int(confidence * 100)
-
-    # Plus de dump JSON brut (raw_data) : champs structures uniquement.
-    profile.last_checked_at = datetime.utcnow()
-
-
 @celery_app.task(name="backend.workers.osint_tasks.run_osint_for_profile")
 def run_osint_for_profile(profile_id: int) -> None:
     """
@@ -111,7 +73,7 @@ def run_osint_for_profile(profile_id: int) -> None:
             logger.error(f"Resultat OSINT invalide pour le profil {profile_id}: {type(result)}")
             return
 
-        _apply_osint_result_to_profile(profile, result)
+        apply_osint_result_to_profile(db, profile, result)
         db.commit()
         logger.info(f"Profil OSINT {profile_id} mis a jour avec succes")
 

@@ -158,13 +158,21 @@ class PhoneNumberProfileResponse(BaseModel):
     is_company: bool = False
     name: Optional[str] = None
     company_name: Optional[str] = None
+    company_siren: Optional[str] = None
+    company_siret: Optional[str] = None
+    company_activity: Optional[str] = None
+    company_address: Optional[str] = None
     
     reputation: Optional[str] = None
     is_spam: bool = False
     is_scam: bool = False
     is_commercial: bool = False
     is_telemarketer: bool = False
+    is_robocall: bool = False
+    spam_type: Optional[str] = None
+    spam_score: Optional[float] = None
     confidence: Optional[int] = None
+    sources: List[str] = []
     
     last_checked_at: Optional[datetime] = None
     created_at: datetime
@@ -175,8 +183,16 @@ class PhoneNumberProfileResponse(BaseModel):
     
     @classmethod
     def from_orm(cls, obj):
-        """Compatibilite avec Pydantic v1."""
-        return cls.model_validate(obj)
+        """Compatibilite avec Pydantic v1 + sources normalisees."""
+        data = cls.model_validate(obj)
+        codes = []
+        for row in getattr(obj, "osint_sources", None) or []:
+            code = getattr(row, "source_code", None)
+            if code:
+                codes.append(code)
+        if codes:
+            data.sources = codes
+        return data
 
 
 class OsintReputationResponse(BaseModel):
@@ -188,6 +204,9 @@ class OsintReputationResponse(BaseModel):
     is_scam: bool = False
     is_commercial: bool = False
     is_telemarketer: bool = False
+    is_robocall: bool = False
+    spam_type: Optional[str] = None
+    spam_score: Optional[float] = None
     confidence: float = 0.0
     sources: List[str] = []
     recommendation: str = "review"

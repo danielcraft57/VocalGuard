@@ -283,13 +283,24 @@ def main() -> int:
         session.close()
 
 
-def _apply_osint_result_to_profile(profile: PhoneNumberProfile, result: Dict[str, Any]) -> None:
+def _apply_osint_result_to_profile(
+    profile: PhoneNumberProfile,
+    result: Dict[str, Any],
+    session=None,
+) -> None:
     """
-    Recopie les champs utiles du resultat OSINT vers le profil.
-    La reputation est remplie par le service OSINT : 'high'/'low' si une API externe
-    (NumLookup, phoneinfoga) ou le detecteur commercial le fournit, sinon 'neutral'
-    quand on a au moins lieu/operateur (detection FR), pour afficher "Non evaluee" en UI.
+    Recopie les champs utiles du resultat OSINT vers le profil (sans JSON).
+
+    @param profile Profil cible.
+    @param result Donnees OSINT.
+    @param session Session SQLAlchemy (recommandee pour sync des sources).
     """
+    from backend.osint.persist import apply_osint_result_to_profile
+
+    if session is not None:
+        apply_osint_result_to_profile(session, profile, result)
+        return
+
     profile.country = result.get("country") or profile.country
     profile.region = result.get("region") or profile.region
     profile.city = result.get("city") or profile.city
@@ -306,10 +317,18 @@ def _apply_osint_result_to_profile(profile: PhoneNumberProfile, result: Dict[str
     profile.is_scam = bool(result.get("is_scam") or profile.is_scam)
     profile.is_commercial = bool(result.get("is_commercial") or profile.is_commercial)
     profile.is_telemarketer = bool(result.get("is_telemarketer") or profile.is_telemarketer)
+    if hasattr(profile, "is_robocall"):
+        profile.is_robocall = bool(result.get("is_robocall") or profile.is_robocall)
+    if hasattr(profile, "spam_type") and result.get("spam_type"):
+        profile.spam_type = str(result.get("spam_type"))[:64]
+    if hasattr(profile, "spam_score") and result.get("spam_score") is not None:
+        try:
+            profile.spam_score = float(result.get("spam_score"))
+        except (TypeError, ValueError):
+            pass
     confidence: Optional[float] = result.get("confidence")
     if confidence is not None:
-        profile.confidence = int(confidence * 100)
-    profile.raw_data = result
+        profile.confidence = int(confidence * 100) if confidence <= 1 else int(confidence)
     profile.last_checked_at = datetime.utcnow()
 
 
@@ -350,7 +369,7 @@ def run_osint_for_migrated_phones(target_path: Path) -> int:
 
             result = asyncio.run(osint_service.enrich_phone_number(phone))
             if isinstance(result, dict):
-                _apply_osint_result_to_profile(profile, result)
+                _apply_osint_result_to_profile(profile, result, session=session)
                 session.commit()
                 count += 1
                 if (i + 1) % 10 == 0:

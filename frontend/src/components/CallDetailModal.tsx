@@ -20,6 +20,8 @@ import CloseIcon from "@mui/icons-material/Close";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import SubtitlesIcon from "@mui/icons-material/Subtitles";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
+import ErrorIcon from "@mui/icons-material/Error";
 import type { CallWithOsint } from "../services/callsApi";
 import { getCallRecordingUrl } from "../services/callsApi";
 import { formatApiDateTime, formatDurationMinSec, parseApiUtcDate } from "../utils/dateTime";
@@ -38,14 +40,31 @@ import { CallSoundtrackBar } from "./CallSoundtrackBar";
 
 const WORD_COLORS = ["#4ade80", "#38bdf8", "#fbbf24", "#c084fc", "#fb7185"];
 
+type OsintRefreshState = "idle" | "loading" | "error" | "done";
+
 type Props = {
   open: boolean;
   loading: boolean;
   call: CallWithOsint | null;
   onClose: () => void;
   onDelete: () => void;
-  onRefreshOsint: () => void;
+  /** Met en file l'enrichissement OSINT (Celery). */
+  onRefreshOsint: () => Promise<void>;
+  /** Recharge l'appel apres osint.profile.completed. */
+  onOsintUpdated?: () => Promise<void>;
 };
+
+/**
+ * Digits utiles pour comparer deux numeros (FR / E.164).
+ *
+ * @param phone Numero brut.
+ * @returns 9 derniers chiffres, ou chaine vide.
+ */
+function phoneDigitsKey(phone: string | null | undefined): string {
+  const digits = String(phone || "").replace(/\D/g, "");
+  if (!digits) return "";
+  return digits.length > 9 ? digits.slice(-9) : digits;
+}
 
 /**
  * Duree d'appel en secondes (champ API ou delta).
@@ -237,7 +256,8 @@ export function CallDetailModal({
   call,
   onClose,
   onDelete,
-  onRefreshOsint
+  onRefreshOsint,
+  onOsintUpdated
 }: Props): React.ReactElement {
   const theme = useTheme();
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -248,6 +268,12 @@ export function CallDetailModal({
   const [liveTranscript, setLiveTranscript] = useState("");
   const [liveBelief, setLiveBelief] = useState<Array<{ tag: string; score: number }>>([]);
   const [liveCommit, setLiveCommit] = useState<string | null>(null);
+  const [osintRefresh, setOsintRefresh] = useState<OsintRefreshState>("idle");
+  const waitingOsintRef = useRef(false);
+  const osintPhoneKeyRef = useRef("");
+  const osintWaitGenRef = useRef(0);
+  const onOsintUpdatedRef = useRef(onOsintUpdated);
+  onOsintUpdatedRef.current = onOsintUpdated;
 
   const recordingUrl = call?.audio_file ? getCallRecordingUrl(call.id) : null;
   const fallbackDuration = call ? getCallDurationSec(call) : 0;
@@ -284,13 +310,35 @@ export function CallDetailModal({
     setLiveTranscript("");
     setLiveBelief([]);
     setLiveCommit(null);
-  }, [call?.id]);
+    setOsintRefresh("idle");
+    waitingOsintRef.current = false;
+    osintWaitGenRef.current += 1;
+    osintPhoneKeyRef.current = phoneDigitsKey(call?.phone_number);
+  }, [call?.id, call?.phone_number]);
 
   useEffect(() => {
     if (!open || !call?.id) return undefined;
     let ws: WebSocket | null = null;
     let cancelled = false;
     const callId = call.id;
+    const phoneKey = phoneDigitsKey(call.phone_number);
+
+    const finishOsint = (ok: boolean) => {
+      if (!waitingOsintRef.current) return;
+      waitingOsintRef.current = false;
+      if (ok) {
+        void (async () => {
+          try {
+            await onOsintUpdatedRef.current?.();
+          } catch {
+            /* ignore reload errors — statut done quand meme */
+          }
+          if (!cancelled) setOsintRefresh("done");
+        })();
+      } else if (!cancelled) {
+        setOsintRefresh("error");
+      }
+    };
 
     const connect = () => {
       if (cancelled) return;
@@ -307,9 +355,19 @@ export function CallDetailModal({
           return;
         }
         const data = msg.data || {};
+        const t = String(msg.type || "");
+
+        if (t === "osint.profile.completed" || t === "osint.profile.failed") {
+          const eventKey = phoneDigitsKey(String(data.phone_number || ""));
+          const expected = osintPhoneKeyRef.current || phoneKey;
+          if (expected && eventKey && eventKey === expected) {
+            finishOsint(t === "osint.profile.completed");
+          }
+          return;
+        }
+
         const id = Number(data.call_id);
         if (!Number.isFinite(id) || id !== callId) return;
-        const t = String(msg.type || "");
         if (t === "call.transcription.partial") {
           const text = String(data.text || "").trim();
           if (!text) return;
@@ -344,7 +402,35 @@ export function CallDetailModal({
         /* ignore */
       }
     };
-  }, [open, call?.id]);
+  }, [open, call?.id, call?.phone_number]);
+
+  useEffect(() => {
+    if (osintRefresh !== "done" && osintRefresh !== "error") return undefined;
+    const tid = window.setTimeout(() => setOsintRefresh("idle"), 3500);
+    return () => window.clearTimeout(tid);
+  }, [osintRefresh]);
+
+  const handleRefreshOsint = useCallback(async () => {
+    if (!call || osintRefresh === "loading") return;
+    const gen = ++osintWaitGenRef.current;
+    setOsintRefresh("loading");
+    waitingOsintRef.current = true;
+    osintPhoneKeyRef.current = phoneDigitsKey(call.phone_number);
+    try {
+      await onRefreshOsint();
+    } catch {
+      if (osintWaitGenRef.current !== gen) return;
+      waitingOsintRef.current = false;
+      setOsintRefresh("error");
+      return;
+    }
+    window.setTimeout(() => {
+      if (osintWaitGenRef.current !== gen) return;
+      if (!waitingOsintRef.current) return;
+      waitingOsintRef.current = false;
+      setOsintRefresh((prev) => (prev === "loading" ? "error" : prev));
+    }, 90_000);
+  }, [call, onRefreshOsint, osintRefresh]);
 
   const onTimeUpdate = useCallback(() => {
     const el = audioRef.current;
@@ -638,8 +724,32 @@ export function CallDetailModal({
                   Pas de profil OSINT en base.
                 </Typography>
               )}
-              <Button size="small" variant="outlined" onClick={onRefreshOsint} sx={{ mt: 1 }}>
-                Rafraichir OSINT
+              <Button
+                size="small"
+                variant="outlined"
+                color={
+                  osintRefresh === "error" ? "error" : osintRefresh === "done" ? "success" : "primary"
+                }
+                disabled={osintRefresh === "loading"}
+                onClick={() => void handleRefreshOsint()}
+                startIcon={
+                  osintRefresh === "loading" ? (
+                    <CircularProgress size={14} color="inherit" />
+                  ) : osintRefresh === "done" ? (
+                    <CheckCircleIcon fontSize="small" />
+                  ) : osintRefresh === "error" ? (
+                    <ErrorIcon fontSize="small" />
+                  ) : undefined
+                }
+                sx={{ mt: 1 }}
+              >
+                {osintRefresh === "loading"
+                  ? "OSINT en cours…"
+                  : osintRefresh === "done"
+                    ? "OSINT termine"
+                    : osintRefresh === "error"
+                      ? "Erreur OSINT"
+                      : "Rafraichir OSINT"}
               </Button>
             </Box>
           </DialogContent>

@@ -59,14 +59,26 @@ async def scan_phone_remote(
         "company_address": payload.get("company_address"),
         "name": payload.get("name"),
         "social_media": payload.get("social_media") or {},
+        "reputation": payload.get("reputation"),
+        "is_spam": bool(payload.get("is_spam")),
+        "is_scam": bool(payload.get("is_scam")),
+        "is_telemarketer": bool(payload.get("is_telemarketer")),
+        "is_commercial": bool(payload.get("is_commercial")),
+        "is_robocall": bool(payload.get("is_robocall")),
+        "confidence": float(payload.get("confidence") or 0.0),
+        "spam_type": payload.get("spam_type"),
+        "spam_score": payload.get("spam_score"),
+        "reputation_links": payload.get("reputation_links") or [],
     }
     if payload.get("e164"):
         result["phone_number"] = payload["e164"]
     logger.debug(
-        "OSINT distant OK {} -> country={} city={}",
+        "OSINT distant OK {} -> country={} city={} rep={} spam={}",
         phone_number,
         result.get("country"),
         result.get("city"),
+        result.get("reputation"),
+        result.get("is_spam"),
     )
     return result
 

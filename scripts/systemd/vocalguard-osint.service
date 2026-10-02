@@ -1,5 +1,5 @@
 [Unit]
-Description=VocalGuard OSINT worker (PhoneInfoga)
+Description=VocalGuard OSINT worker (PhoneInfoga + reputation)
 After=network.target
 
 [Service]

@@ -17,6 +17,8 @@ from typing import Any, Dict, List, Optional
 import httpx
 from loguru import logger
 
+from backend.osint_worker.reputation import gather_reputation, providers_status
+
 _phoneinfoga_proc: Optional[subprocess.Popen] = None
 _api_base: str = ""
 _bin_path: str = ""
@@ -458,6 +460,15 @@ async def scan_number(phone_number: str) -> Dict[str, Any]:
         "name": None,
         "social_media": {},
         "reputation_links": [],
+        "reputation": None,
+        "is_spam": False,
+        "is_scam": False,
+        "is_telemarketer": False,
+        "is_commercial": False,
+        "is_robocall": False,
+        "confidence": 0.0,
+        "spam_type": None,
+        "spam_score": None,
         "raw": {},
     }
 
@@ -581,4 +592,58 @@ async def scan_number(phone_number: str) -> Dict[str, Any]:
                     out[key] = sirene[key]
             out["raw"]["sirene_public"] = sirene.get("raw") or {}
 
+    # Reputation spam / scam / commercial (Tellows, SpamCalls, HUHU, IPQS…)
+    try:
+        rep = await gather_reputation(out.get("e164") or phone_number)
+        if rep:
+            for src in rep.get("sources") or []:
+                if src not in out["sources"]:
+                    out["sources"].append(src)
+            for key in (
+                "reputation",
+                "spam_score",
+                "name",
+                "carrier",
+                "country",
+                "region",
+                "city",
+                "line_type",
+            ):
+                if rep.get(key) and not out.get(key):
+                    out[key] = rep[key]
+            if rep.get("spam_type") and not out.get("spam_type"):
+                from backend.osint_worker.reputation import is_plausible_spam_type
+
+                if is_plausible_spam_type(str(rep.get("spam_type"))):
+                    out["spam_type"] = rep["spam_type"]
+            for flag in ("is_spam", "is_scam", "is_telemarketer", "is_commercial", "is_robocall"):
+                if rep.get(flag):
+                    out[flag] = True
+            if rep.get("confidence"):
+                out["confidence"] = max(float(out.get("confidence") or 0), float(rep["confidence"]))
+            if rep.get("reputation_links"):
+                links = list(out.get("reputation_links") or [])
+                for link in rep["reputation_links"]:
+                    if link not in links:
+                        links.append(link)
+                out["reputation_links"] = links[:20]
+            if isinstance(rep.get("raw"), dict):
+                out["raw"].update(rep["raw"])
+            # Si un provider a marque low mais reputation encore vide
+            if out.get("reputation") is None and (
+                out.get("is_spam") or out.get("is_scam") or out.get("is_telemarketer")
+            ):
+                out["reputation"] = "low"
+    except Exception as exc:
+        logger.warning("gather_reputation KO: {}", exc)
+
     return out
+
+
+def reputation_providers_status() -> Dict[str, Any]:
+    """
+    Etat des providers reputation (expose via /health).
+
+    @returns Dict providers.
+    """
+    return providers_status()
