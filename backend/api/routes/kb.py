@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from backend.database import database as db_module
 from backend.services import intent_repository as intent_repo
 from backend.services import kb_chat_store
-from backend.services.kb_tts_prefetch import prefetch_intent_voices
+from backend.services.kb_tts_prefetch import prefetch_intent_voices, preview_tts_audio
 from backend.voice.node15_voice_client import Node15VoiceClient
 from backend.voice.response_picker import (
     apply_recent_tag_penalty,
@@ -48,6 +48,10 @@ class IntentCreateBody(BaseModel):
     enabled: bool = True
     action: Optional[str] = None
     niveau: int = Field(default=1, ge=1, le=9)
+    profile: Optional[str] = Field(
+        default=None,
+        description="inbound | outbound_commercial",
+    )
 
 
 class IntentUpdateBody(BaseModel):
@@ -78,6 +82,27 @@ class PrefetchBody(BaseModel):
     tags: Optional[List[str]] = None
     profile: Optional[str] = None
     tts_provider: Optional[str] = None
+    edge_tts_voice: Optional[str] = None
+    edge_tts_rate: Optional[str] = None
+    edge_tts_pitch: Optional[str] = None
+    tts_voice_gain_db: Optional[float] = None
+    elevenlabs_voice_id: Optional[str] = None
+
+
+class VoicePreviewBody(BaseModel):
+    """Apercu TTS d'une seule phrase (sans regenerer le catalogue)."""
+
+    text: str = Field(..., min_length=1, max_length=4000)
+    tts_provider: Optional[str] = None
+    edge_tts_voice: Optional[str] = None
+    edge_tts_rate: Optional[str] = None
+    edge_tts_pitch: Optional[str] = None
+    elevenlabs_voice_id: Optional[str] = None
+    # Optionnel : ecrit aussi le WAV modem pour ce tag/index.
+    save_tag: Optional[str] = None
+    save_index: Optional[int] = Field(default=None, ge=0, le=32)
+    profile: Optional[str] = None
+    tts_voice_gain_db: Optional[float] = None
 
 
 class ChatSessionUpsertBody(BaseModel):
@@ -146,18 +171,26 @@ def _enrich_has_wav(base: Path, items: List[Dict[str, Any]]) -> List[Dict[str, A
 
 
 @router.get("/intents")
-async def get_intents(request: Request, enabled_only: bool = False) -> Dict[str, Any]:
+async def get_intents(
+    request: Request,
+    enabled_only: bool = False,
+    profile: Optional[str] = None,
+) -> Dict[str, Any]:
     """
     Liste les intents (patterns + responses) depuis Postgres.
 
     @param enabled_only Filtre enabled.
+    @param profile inbound | outbound_commercial (None = tous).
     """
     db = _db()
     try:
         intent_repo.ensure_seeded(db, _base_path(request))
-        items = intent_repo.list_intents_detailed(db, enabled_only=enabled_only)
+        prof = (profile or "").strip().lower() or None
+        items = intent_repo.list_intents_detailed(
+            db, enabled_only=enabled_only, profile=prof
+        )
         items = _enrich_has_wav(_base_path(request), items)
-        return {"intents": items, "count": len(items)}
+        return {"intents": items, "count": len(items), "profile": prof}
     finally:
         db.close()
 
@@ -321,6 +354,7 @@ async def create_intent(body: IntentCreateBody, request: Request) -> Dict[str, A
                 action=body.action,
                 niveau=body.niveau,
                 source="kb",
+                profile=(body.profile or "inbound"),
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -364,6 +398,30 @@ async def delete_intent(tag: str) -> Dict[str, Any]:
         if not ok:
             raise HTTPException(status_code=404, detail=f"Intent inconnu: {tag}")
         return {"deleted": True, "tag": tag}
+    finally:
+        db.close()
+
+
+@router.delete("/profiles/{profile}/intents")
+async def wipe_profile_intents(profile: str) -> Dict[str, Any]:
+    """
+    Supprime tous les intents d'un profil (entrant ou commercial).
+
+    @param profile inbound | outbound_commercial.
+    @returns Compteur de suppressions.
+    """
+    prof = (profile or "").strip().lower()
+    if prof not in ("inbound", "outbound_commercial"):
+        raise HTTPException(
+            status_code=400,
+            detail="profile doit etre inbound ou outbound_commercial",
+        )
+    db = _db()
+    try:
+        n = intent_repo.delete_intents_by_profile(db, prof)
+        return {"deleted": n, "profile": prof}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         db.close()
 
@@ -532,10 +590,112 @@ async def regenerate_voices(body: PrefetchBody, request: Request) -> Dict[str, A
             tags=body.tags,
             profile=body.profile,
             tts_provider=body.tts_provider,
+            edge_tts_voice=body.edge_tts_voice,
+            edge_tts_rate=body.edge_tts_rate,
+            edge_tts_pitch=body.edge_tts_pitch,
+            tts_voice_gain_db=body.tts_voice_gain_db,
+            elevenlabs_voice_id=body.elevenlabs_voice_id,
         )
         return result
     finally:
         db.close()
+
+
+@router.post("/voices/preview")
+async def preview_voice(body: VoicePreviewBody, request: Request):
+    """
+    Apercu TTS d'une phrase (sans regenerer tout le catalogue).
+
+    Si ``save_tag`` + ``save_index`` : ecrit uniquement le WAV de cette variante.
+    """
+    from fastapi.responses import Response
+
+    from backend.services.kb_tts_prefetch import _write_modem_wav_from_mp3
+    from backend.voice.ivr_cache import IvrAudioCache, ivr_content_hash
+    from backend.voice.modem_profile import resolve_profile_from_config
+    from backend.voice.response_picker import variant_wav_basename
+    from backend.voice.synthesis import VoiceSynthesis
+
+    config = getattr(request.app.state, "config", None)
+    if config is None:
+        raise HTTPException(status_code=503, detail="Config absente")
+
+    try:
+        audio, media_type = await preview_tts_audio(
+            config,
+            body.text,
+            tts_provider=body.tts_provider,
+            edge_tts_voice=body.edge_tts_voice,
+            edge_tts_rate=body.edge_tts_rate,
+            edge_tts_pitch=body.edge_tts_pitch,
+            elevenlabs_voice_id=body.elevenlabs_voice_id,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    saved = False
+    if body.save_tag and body.save_index is not None:
+        call_manager = getattr(request.app.state, "call_manager", None)
+        synthesis = getattr(call_manager, "voice_synthesis", None) if call_manager else None
+        if synthesis is None:
+            synthesis = VoiceSynthesis(config)
+            await synthesis.initialize()
+        db = _db()
+        try:
+            intent = intent_repo.get_intent_by_tag(db, body.save_tag)
+            if intent is not None:
+                custom_base = getattr(intent, "wav_basename", None)
+                basename = variant_wav_basename(
+                    body.save_tag,
+                    int(body.save_index),
+                    wav_basename=str(custom_base) if custom_base else None,
+                )
+                cache = IvrAudioCache(config, synthesis)
+                modem_profile = resolve_profile_from_config(config)
+                provider = (body.tts_provider or "edge").strip().lower()
+                voice = (body.edge_tts_voice or "edge").strip()
+                gain = (
+                    float(body.tts_voice_gain_db)
+                    if body.tts_voice_gain_db is not None
+                    else float(getattr(config, "edge_tts_voice_gain_db", -6.0) or -6.0)
+                )
+                h = ivr_content_hash(
+                    body.text.strip(),
+                    provider,
+                    voice,
+                    body.edge_tts_rate or "",
+                    body.edge_tts_pitch or "",
+                    gain,
+                    profile_sample_rate=modem_profile.sample_rate,
+                    profile_sample_width=modem_profile.sample_width,
+                )
+                await _write_modem_wav_from_mp3(
+                    audio_bytes=audio,
+                    basename=basename,
+                    cache=cache,
+                    modem_profile=modem_profile,
+                    meta={
+                        "hash": h,
+                        "text": body.text.strip(),
+                        "tag": body.save_tag,
+                        "variant": int(body.save_index),
+                        "engine": f"{provider}-preview",
+                    },
+                )
+                saved = True
+        finally:
+            db.close()
+
+    ext = "mp3" if "mpeg" in media_type else "wav"
+    return Response(
+        content=audio,
+        media_type=media_type,
+        headers={
+            "Cache-Control": "no-store",
+            "X-VG-Saved": "1" if saved else "0",
+            "Content-Disposition": f'inline; filename="kb_preview.{ext}"',
+        },
+    )
 
 
 @router.post("/seed")

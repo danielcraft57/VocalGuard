@@ -88,6 +88,13 @@ def run_osint_for_profile(profile_id: int) -> None:
             logger.warning(f"Impossible de mettre à jour EntreprisePhoneAnalysis pour profile_id={profile_id}: {exc}")
             db.rollback()
 
+        try:
+            from backend.services.prospect_phone_enrichment_service import ProspectPhoneEnrichmentService
+
+            ProspectPhoneEnrichmentService(db, _config).sync_prospect_from_profile(profile_id)
+        except Exception as exc:
+            logger.debug("Sync prospect_phones apres OSINT ignore: {}", exc)
+
         # Notifier le backend (WS) via endpoint HTTP
         try:
             host = (_config.api_host or "127.0.0.1").strip()

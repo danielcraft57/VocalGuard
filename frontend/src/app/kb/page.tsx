@@ -18,6 +18,8 @@ import {
   InputAdornment,
   Stack,
   Switch,
+  Tab,
+  Tabs,
   TextField,
   Typography
 } from "@mui/material";
@@ -32,6 +34,8 @@ import SearchIcon from "@mui/icons-material/Search";
 import MicIcon from "@mui/icons-material/Mic";
 import { AppLayout } from "../../components/AppLayout";
 import { KbVectorEngineChip } from "../../components/kb/KbVectorEngineChip";
+import { KbVoicePrefsPanel } from "../../components/kb/KbVoicePrefsPanel";
+import { ElevenLabsKeysPanel } from "../../components/kb/ElevenLabsKeysPanel";
 import { VgPageHeader } from "../../components/mui/VgPageHeader";
 import { VgSettingsSection } from "../../components/mui/VgSettingsSection";
 import {
@@ -41,28 +45,42 @@ import {
   getKbIntentVoiceUrl,
   isAbortError,
   patchKbIntent,
+  previewKbVoice,
   regenerateKbVoices,
   type KbIntent
 } from "../../services/kbApi";
+import { fetchIncomingCallConfig, patchIncomingCallConfig } from "../../services/settingsApi";
 import {
   isIntentsCacheFresh,
   loadIntentsCache,
   loadKbUiState,
   saveIntentsCache,
-  saveKbUiState
+  saveKbUiState,
+  voicePrefsForProfile,
+  type KbProfile,
+  type KbUiState,
+  type KbVoicePrefs
 } from "../../services/kbUiPersist";
 import {
+  defaultExpandedGroupId,
   groupIntents,
-  INTENT_GROUPS,
+  groupsForProfile,
   type IntentGroupId
 } from "./intentGroups";
 import { KbIntentsListSkeleton, KbSoftSyncBar } from "../../components/kb/KbSkeleton";
+import {
+  itemsToCleanLines,
+  KbIntentLinesEditor,
+  linesToItems,
+  useDebouncedValue,
+  type KbLineItem
+} from "../../components/kb/KbIntentLinesEditor";
 import { PageLoader } from "../../components/PageLoader";
 
 type IntentForm = {
   tag: string;
-  patternsText: string;
-  responsesText: string;
+  patterns: KbLineItem[];
+  responses: KbLineItem[];
   priority: string;
   action: string;
   enabled: boolean;
@@ -76,8 +94,8 @@ type IntentForm = {
 function emptyForm(): IntentForm {
   return {
     tag: "",
-    patternsText: "",
-    responsesText: "",
+    patterns: linesToItems([""]),
+    responses: linesToItems([""]),
     priority: "10",
     action: "",
     enabled: true
@@ -93,8 +111,8 @@ function emptyForm(): IntentForm {
 function formFromIntent(row: KbIntent): IntentForm {
   return {
     tag: row.tag,
-    patternsText: row.patterns.join("\n"),
-    responsesText: row.responses.join("\n"),
+    patterns: linesToItems(row.patterns.length ? row.patterns : [""]),
+    responses: linesToItems(row.responses.length ? row.responses : [""]),
     priority: String(row.priority),
     action: row.action || "",
     enabled: row.enabled
@@ -102,21 +120,7 @@ function formFromIntent(row: KbIntent): IntentForm {
 }
 
 /**
- * Decoupe un textarea multi-lignes en liste non vide.
- *
- * @param text Contenu.
- * @returns Lignes nettoyees.
- */
-function linesOf(text: string): string[] {
-  return text
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-}
-
-/**
- * Page Base de connaissances : intents groupes, voix, Qdrant.
- * Le tchatche / historique vit sur /simulator.
+ * Page Base de connaissances : deux catalogues (entrant / commercial), CRUD, TTS.
  */
 export default function KnowledgeBasePage(): React.ReactElement {
   const [intents, setIntents] = useState<KbIntent[]>([]);
@@ -129,27 +133,132 @@ export default function KnowledgeBasePage(): React.ReactElement {
 
   const [filterQ, setFilterQ] = useState("");
   const [groupFilter, setGroupFilter] = useState<IntentGroupId | "all">("all");
+  const [profile, setProfile] = useState<KbProfile>("inbound");
+  const [voiceByProfile, setVoiceByProfile] = useState<
+    Partial<Record<KbProfile, KbVoicePrefs>>
+  >({});
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const loadAbortRef = useRef<AbortController | null>(null);
+  const profileRef = useRef<KbProfile>(profile);
+  profileRef.current = profile;
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editTag, setEditTag] = useState<string | null>(null);
   const [form, setForm] = useState<IntentForm>(emptyForm());
   const [saving, setSaving] = useState(false);
+  const [saveOk, setSaveOk] = useState(false);
   const [deleteTag, setDeleteTag] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [playingLineId, setPlayingLineId] = useState<string | null>(null);
+  const [voiceSaveMsg, setVoiceSaveMsg] = useState<string | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
+  const voiceDirtyRef = useRef(false);
+
+  const voicePrefs = useMemo(
+    () =>
+      voicePrefsForProfile(
+        { filterQ, groupFilter, profile, voiceByProfile } as KbUiState,
+        profile
+      ),
+    [filterQ, groupFilter, profile, voiceByProfile]
+  );
+
+  const debouncedVoicePrefs = useDebouncedValue(voicePrefs, 800);
+
+  const patchVoice = useCallback(
+    (patch: Partial<KbVoicePrefs>) => {
+      voiceDirtyRef.current = true;
+      setVoiceByProfile((prev) => ({
+        ...prev,
+        [profile]: { ...voicePrefs, ...patch }
+      }));
+    },
+    [profile, voicePrefs]
+  );
+
+  /** Autosave prefs voix → settings audio (apres modification user). */
+  useEffect(() => {
+    if (!hydrated || !voiceDirtyRef.current) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        await patchIncomingCallConfig({
+          audio: {
+            tts_provider: debouncedVoicePrefs.tts_provider,
+            edge_tts_voice: debouncedVoicePrefs.edge_tts_voice,
+            edge_tts_rate: debouncedVoicePrefs.edge_tts_rate,
+            edge_tts_pitch: debouncedVoicePrefs.edge_tts_pitch,
+            tts_voice_gain_db: debouncedVoicePrefs.tts_voice_gain_db,
+            elevenlabs_voice_id: debouncedVoicePrefs.elevenlabs_voice_id
+          }
+        });
+        if (!cancelled) setVoiceSaveMsg("Voix enregistree");
+      } catch (e) {
+        if (!cancelled) {
+          setVoiceSaveMsg(
+            e instanceof Error ? e.message : "Echec sauvegarde voix"
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [debouncedVoicePrefs, hydrated]);
+
+  useEffect(() => {
+    if (!voiceSaveMsg) return;
+    const t = window.setTimeout(() => setVoiceSaveMsg(null), 2500);
+    return () => window.clearTimeout(t);
+  }, [voiceSaveMsg]);
+
+  useEffect(() => {
+    return () => {
+      if (previewUrlRef.current) {
+        URL.revokeObjectURL(previewUrlRef.current);
+        previewUrlRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const ui = loadKbUiState();
     setFilterQ(ui.filterQ);
     setGroupFilter((ui.groupFilter as IntentGroupId | "all") || "all");
-    const cache = loadIntentsCache();
+    setProfile(ui.profile);
+    setVoiceByProfile(ui.voiceByProfile || {});
+    const cache = loadIntentsCache(ui.profile);
     if (cache?.intents?.length) {
       setIntents(cache.intents);
       setLoading(false);
     }
     setHydrated(true);
+    void (async () => {
+      try {
+        const cfg = await fetchIncomingCallConfig();
+        const audio = (cfg.audio || {}) as Record<string, unknown>;
+        const fromSettings: KbVoicePrefs = {
+          tts_provider:
+            audio.tts_provider === "elevenlabs" ? "elevenlabs" : "edge",
+          edge_tts_voice: String(
+            audio.edge_tts_voice || "fr-FR-VivienneMultilingualNeural"
+          ),
+          edge_tts_rate: String(audio.edge_tts_rate || "+0%"),
+          edge_tts_pitch: String(audio.edge_tts_pitch || "+0Hz"),
+          tts_voice_gain_db: Number(audio.tts_voice_gain_db ?? -6),
+          elevenlabs_voice_id: String(
+            audio.elevenlabs_voice_id || "JBFqnCBsd6RMkjVDRZzb"
+          )
+        };
+        setVoiceByProfile((prev) => ({
+          ...prev,
+          [ui.profile]: { ...fromSettings, ...(prev[ui.profile] || {}) }
+        }));
+      } catch {
+        /* garde session / defauts */
+      }
+    })();
     return () => {
       loadAbortRef.current?.abort();
     };
@@ -157,8 +266,8 @@ export default function KnowledgeBasePage(): React.ReactElement {
 
   useEffect(() => {
     if (!hydrated) return;
-    saveKbUiState({ filterQ, groupFilter });
-  }, [filterQ, groupFilter, hydrated]);
+    saveKbUiState({ filterQ, groupFilter, profile, voiceByProfile });
+  }, [filterQ, groupFilter, profile, voiceByProfile, hydrated]);
 
   const playVoice = useCallback((tag: string) => {
     const url = getKbIntentVoiceUrl(tag);
@@ -170,69 +279,93 @@ export default function KnowledgeBasePage(): React.ReactElement {
     });
   }, []);
 
-  const load = useCallback(async (opts?: { soft?: boolean }) => {
-    const hasData = intents.length > 0;
-    const soft = Boolean(opts?.soft) && hasData;
-    if (soft) setSyncing(true);
-    else if (!hasData) setLoading(true);
-    setError(null);
+  const load = useCallback(
+    async (opts?: { soft?: boolean; profile?: KbProfile }) => {
+      const prof = opts?.profile ?? profileRef.current;
+      const hasData = intents.length > 0 && profileRef.current === prof;
+      const soft = Boolean(opts?.soft) && hasData;
+      if (soft) setSyncing(true);
+      else if (!hasData) setLoading(true);
+      setError(null);
 
-    loadAbortRef.current?.abort();
-    const ac = new AbortController();
-    loadAbortRef.current = ac;
+      loadAbortRef.current?.abort();
+      const ac = new AbortController();
+      loadAbortRef.current = ac;
 
-    try {
-      const rows = await fetchKbIntents(false, ac.signal);
-      if (ac.signal.aborted) return;
-      setIntents(rows);
-      saveIntentsCache(rows);
-    } catch (e) {
-      if (isAbortError(e) || ac.signal.aborted) return;
-      if (!hasData) {
-        setError(e instanceof Error ? e.message : "Erreur chargement KB");
+      try {
+        const rows = await fetchKbIntents(false, ac.signal, prof);
+        if (ac.signal.aborted) return;
+        if (profileRef.current !== prof) return;
+        setIntents(rows);
+        saveIntentsCache(prof, rows);
+      } catch (e) {
+        if (isAbortError(e) || ac.signal.aborted) return;
+        if (!hasData) {
+          setError(e instanceof Error ? e.message : "Erreur chargement KB");
+        }
+      } finally {
+        if (!ac.signal.aborted) {
+          setLoading(false);
+          setSyncing(false);
+        }
       }
-    } finally {
-      if (!ac.signal.aborted) {
-        setLoading(false);
-        setSyncing(false);
-      }
-    }
-  }, [intents.length]);
+    },
+    [intents.length]
+  );
 
   useEffect(() => {
     if (!hydrated) return;
-    const cache = loadIntentsCache();
-    if (cache?.intents?.length && isIntentsCacheFresh(cache)) {
+    const cache = loadIntentsCache(profile);
+    if (cache?.intents?.length) {
+      setIntents(cache.intents);
       setLoading(false);
+      if (isIntentsCacheFresh(cache)) return;
+      void load({ soft: true, profile });
       return;
     }
-    void load({ soft: Boolean(cache?.intents?.length) });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- apres hydrate
-  }, [hydrated]);
+    setIntents([]);
+    void load({ soft: false, profile });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reload au changement de profil
+  }, [hydrated, profile]);
+
+  const profileGroups = useMemo(() => groupsForProfile(profile), [profile]);
 
   const grouped = useMemo(
-    () => groupIntents(intents, filterQ, groupFilter),
-    [intents, filterQ, groupFilter]
+    () => groupIntents(intents, filterQ, groupFilter, profile),
+    [intents, filterQ, groupFilter, profile]
   );
+
+  const expandedDefault = useMemo(() => defaultExpandedGroupId(profile), [profile]);
+
+  useEffect(() => {
+    // Reset filtre groupe si l'id n'existe plus sur ce profil
+    const ids = new Set(profileGroups.map((g) => g.id));
+    if (groupFilter !== "all" && !ids.has(groupFilter)) {
+      setGroupFilter("all");
+    }
+  }, [profileGroups, groupFilter]);
 
   const openCreate = useCallback(() => {
     setEditTag(null);
     setForm(emptyForm());
+    setSaveOk(false);
     setDialogOpen(true);
   }, []);
 
   const openEdit = useCallback((row: KbIntent) => {
     setEditTag(row.tag);
     setForm(formFromIntent(row));
+    setSaveOk(false);
     setDialogOpen(true);
   }, []);
 
   const saveIntent = useCallback(async () => {
     setSaving(true);
+    setSaveOk(false);
     setError(null);
     try {
-      const patterns = linesOf(form.patternsText);
-      const responses = linesOf(form.responsesText);
+      const patterns = itemsToCleanLines(form.patterns);
+      const responses = itemsToCleanLines(form.responses);
       const priority = Math.max(0, Math.min(100, parseInt(form.priority, 10) || 10));
       const action = form.action.trim() || null;
       if (editTag) {
@@ -254,17 +387,55 @@ export default function KnowledgeBasePage(): React.ReactElement {
           responses,
           priority,
           enabled: form.enabled,
-          action
+          action,
+          profile
         });
+        setEditTag(tag);
       }
-      setDialogOpen(false);
-      await load({ soft: true });
+      await load({ soft: true, profile });
+      setSaveOk(true);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur sauvegarde");
     } finally {
       setSaving(false);
     }
-  }, [editTag, form, load]);
+  }, [editTag, form, load, profile]);
+
+  const playResponsePreview = useCallback(
+    async (item: KbLineItem, index: number) => {
+      const text = item.text.trim();
+      if (!text) return;
+      setPlayingLineId(item.id);
+      setError(null);
+      try {
+        const { blob } = await previewKbVoice({
+          text,
+          tts_provider: voicePrefs.tts_provider,
+          edge_tts_voice: voicePrefs.edge_tts_voice,
+          edge_tts_rate: voicePrefs.edge_tts_rate,
+          edge_tts_pitch: voicePrefs.edge_tts_pitch,
+          tts_voice_gain_db: voicePrefs.tts_voice_gain_db,
+          elevenlabs_voice_id: voicePrefs.elevenlabs_voice_id,
+          save_tag: editTag || undefined,
+          save_index: editTag ? index : undefined,
+          profile
+        });
+        if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+        const url = URL.createObjectURL(blob);
+        previewUrlRef.current = url;
+        if (!audioRef.current) audioRef.current = new Audio();
+        const el = audioRef.current;
+        el.src = url;
+        await el.play();
+        if (editTag) await load({ soft: true, profile });
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Apercu voix impossible");
+      } finally {
+        setPlayingLineId(null);
+      }
+    },
+    [editTag, load, profile, voicePrefs]
+  );
 
   const confirmDelete = useCallback(async () => {
     if (!deleteTag) return;
@@ -273,33 +444,45 @@ export default function KnowledgeBasePage(): React.ReactElement {
     try {
       await deleteKbIntent(deleteTag);
       setDeleteTag(null);
-      await load({ soft: true });
+      await load({ soft: true, profile });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur suppression");
     } finally {
       setDeleting(false);
     }
-  }, [deleteTag, load]);
+  }, [deleteTag, load, profile]);
 
   const runRegen = useCallback(async () => {
     setRegenBusy(true);
     setRegenMsg(null);
     try {
-      const r = await regenerateKbVoices(true);
+      const r = await regenerateKbVoices({
+        force: true,
+        profile,
+        tts_provider: voicePrefs.tts_provider,
+        edge_tts_voice: voicePrefs.edge_tts_voice,
+        edge_tts_rate: voicePrefs.edge_tts_rate,
+        edge_tts_pitch: voicePrefs.edge_tts_pitch,
+        tts_voice_gain_db: voicePrefs.tts_voice_gain_db,
+        elevenlabs_voice_id: voicePrefs.elevenlabs_voice_id
+      });
       setRegenMsg(`Voix: ${r.ok} ok, ${r.skipped} ignorees, ${r.failed} echecs`);
-      await load({ soft: true });
+      await load({ soft: true, profile });
     } catch (e) {
       setRegenMsg(e instanceof Error ? e.message : "Echec regen");
     } finally {
       setRegenBusy(false);
     }
-  }, [load]);
+  }, [load, profile, voicePrefs]);
+
+  const profileLabel =
+    profile === "outbound_commercial" ? "Appels commerciaux" : "Appels entrants";
 
   return (
     <AppLayout title="Base de connaissances" hidePageHeader>
       <VgPageHeader
         title="Base de connaissances"
-        subtitle="Intents, Qdrant (node15), voix. Le tchatche est sur le simulateur."
+        subtitle="Deux catalogues (entrant / commercial), CRUD, voix TTS. Le tchatche est sur le simulateur."
         action={
           <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 1, alignItems: "center" }}>
             <KbVectorEngineChip />
@@ -313,18 +496,10 @@ export default function KnowledgeBasePage(): React.ReactElement {
               Simulateur / Tchatche
             </Button>
             <Button
-              component={Link}
-              href="/settings/incoming-audio"
-              size="small"
-              variant="outlined"
-            >
-              Voix d&apos;accueil
-            </Button>
-            <Button
               size="small"
               variant="outlined"
               startIcon={<RefreshIcon />}
-              onClick={() => void load({ soft: intents.length > 0 })}
+              onClick={() => void load({ soft: intents.length > 0, profile })}
               disabled={loading || syncing}
             >
               Actualiser
@@ -332,18 +507,18 @@ export default function KnowledgeBasePage(): React.ReactElement {
             <Button size="small" variant="outlined" startIcon={<AddIcon />} onClick={openCreate}>
               Nouvel intent
             </Button>
-            <Button
-              size="small"
-              variant="contained"
-              startIcon={<RecordVoiceOverIcon />}
-              onClick={() => void runRegen()}
-              disabled={regenBusy}
-            >
-              Regenerer les voix
-            </Button>
           </Stack>
         }
       />
+
+      <Tabs
+        value={profile}
+        onChange={(_, v: KbProfile) => setProfile(v)}
+        sx={{ mb: 2, borderBottom: 1, borderColor: "divider" }}
+      >
+        <Tab value="inbound" label="Appels entrants" />
+        <Tab value="outbound_commercial" label="Appels commerciaux" />
+      </Tabs>
 
       {error ? (
         <Typography color="error" sx={{ mb: 2 }}>
@@ -362,7 +537,35 @@ export default function KnowledgeBasePage(): React.ReactElement {
       ) : null}
 
       <VgSettingsSection
-        title={`Intents (${intents.length})`}
+        title={`Voix TTS (${profileLabel})`}
+        description="Meme reglage que l'accueil : moteur, voix, volume, debit, hauteur. Applique a la regen de ce catalogue."
+      >
+        <KbVoicePrefsPanel value={voicePrefs} onChange={patchVoice} disabled={regenBusy} />
+        {voicePrefs.tts_provider === "elevenlabs" ? (
+          <Box sx={{ mt: 2 }}>
+            <ElevenLabsKeysPanel />
+          </Box>
+        ) : null}
+        {voiceSaveMsg ? (
+          <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: "block" }}>
+            {voiceSaveMsg}
+          </Typography>
+        ) : null}
+        <Box sx={{ mt: 2 }}>
+          <Button
+            size="small"
+            variant="contained"
+            startIcon={<RecordVoiceOverIcon />}
+            onClick={() => void runRegen()}
+            disabled={regenBusy || loading}
+          >
+            {regenBusy ? "Generation…" : "Regenerer les voix de ce catalogue"}
+          </Button>
+        </Box>
+      </VgSettingsSection>
+
+      <VgSettingsSection
+        title={`Intents ${profileLabel} (${intents.length})`}
         description="Filtres + groupes. Pour tester les reponses : Simulateur / Tchatche."
       >
         <Stack spacing={1.5} sx={{ mb: 2 }}>
@@ -390,7 +593,7 @@ export default function KnowledgeBasePage(): React.ReactElement {
               onClick={() => setGroupFilter("all")}
               variant={groupFilter === "all" ? "filled" : "outlined"}
             />
-            {INTENT_GROUPS.map((g) => (
+            {profileGroups.map((g) => (
               <Chip
                 key={g.id}
                 size="small"
@@ -410,14 +613,18 @@ export default function KnowledgeBasePage(): React.ReactElement {
               <KbIntentsListSkeleton />
             </Box>
           </Box>
+        ) : !intents.length ? (
+          <Typography variant="body2" color="text.secondary" sx={{ py: 3 }}>
+            Catalogue vide. Cree un intent ou reimporte un seed quand tu seras pret.
+          </Typography>
         ) : (
-          INTENT_GROUPS.map((g) => {
-            const rows = grouped[g.id];
+          profileGroups.map((g) => {
+            const rows = grouped[g.id] || [];
             if (!rows.length) return null;
             return (
               <Accordion
-                key={g.id}
-                defaultExpanded={g.id === "accueil" || groupFilter === g.id}
+                key={`${profile}-${g.id}`}
+                defaultExpanded={g.id === expandedDefault || groupFilter === g.id}
                 disableGutters
                 elevation={0}
                 sx={{
@@ -442,57 +649,102 @@ export default function KnowledgeBasePage(): React.ReactElement {
                   </Stack>
                 </AccordionSummary>
                 <AccordionDetails sx={{ pt: 0 }}>
-                  <Stack spacing={1}>
+                  <Box
+                    sx={{
+                      display: "grid",
+                      gridTemplateColumns: {
+                        xs: "1fr",
+                        sm: "repeat(2, minmax(0, 1fr))",
+                        lg: "repeat(3, minmax(0, 1fr))"
+                      },
+                      gap: 1.25
+                    }}
+                  >
                     {rows.map((row) => (
                       <Box
                         key={row.tag}
                         sx={{
                           p: 1.25,
-                          borderRadius: 1,
+                          borderRadius: 1.5,
                           border: "1px solid",
                           borderColor: "divider",
-                          bgcolor: "background.paper"
+                          bgcolor: "background.paper",
+                          display: "flex",
+                          flexDirection: "column",
+                          gap: 1,
+                          minHeight: 132
                         }}
                       >
                         <Stack
-                          direction={{ xs: "column", sm: "row" }}
-                          spacing={1}
-                          sx={{ justifyContent: "space-between", alignItems: { sm: "center" } }}
+                          direction="row"
+                          spacing={0.5}
+                          sx={{ alignItems: "center", flexWrap: "wrap", gap: 0.5 }}
                         >
-                          <Box sx={{ minWidth: 0, flex: 1 }}>
-                            <Stack direction="row" spacing={0.75} sx={{ alignItems: "center", mb: 0.5 }}>
-                              <Typography variant="body2" sx={{ fontWeight: 700 }}>
-                                {row.tag}
-                              </Typography>
-                              {!row.enabled ? <Chip size="small" label="off" /> : null}
-                              {row.action ? (
-                                <Chip size="small" variant="outlined" label={row.action} />
-                              ) : null}
-                              <Chip size="small" variant="outlined" label={`prio ${row.priority}`} />
-                            </Stack>
-                            <Typography
-                              variant="body2"
-                              color="text.secondary"
-                              noWrap
-                              title={row.responses[0] || ""}
-                            >
-                              {row.responses[0] || "—"}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              {row.patterns.length} patterns · {row.responses.length} reponse
-                              {row.responses.length > 1 ? "s" : ""}
-                            </Typography>
-                          </Box>
-                          <Stack direction="row" spacing={0.5} sx={{ flexShrink: 0 }}>
-                            <Button
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontWeight: 700,
+                              fontFamily: "ui-monospace, monospace",
+                              fontSize: "0.8rem"
+                            }}
+                            noWrap
+                            title={row.tag}
+                          >
+                            {row.tag}
+                          </Typography>
+                          {!row.enabled ? <Chip size="small" label="off" /> : null}
+                          {row.action ? (
+                            <Chip size="small" variant="outlined" label={row.action} />
+                          ) : null}
+                          <Chip
+                            size="small"
+                            variant="outlined"
+                            label={`prio ${row.priority}`}
+                          />
+                        </Stack>
+                        <Typography
+                          variant="body2"
+                          color="text.secondary"
+                          title={row.responses[0] || ""}
+                          sx={{
+                            flex: 1,
+                            display: "-webkit-box",
+                            WebkitLineClamp: 2,
+                            WebkitBoxOrient: "vertical",
+                            overflow: "hidden",
+                            lineHeight: 1.35,
+                            fontSize: "0.8125rem"
+                          }}
+                        >
+                          {row.responses[0] || "—"}
+                        </Typography>
+                        <Stack
+                          direction="row"
+                          spacing={0.5}
+                          sx={{
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            mt: "auto"
+                          }}
+                        >
+                          <Typography variant="caption" color="text.secondary">
+                            {row.patterns.length}p · {row.responses.length}r
+                          </Typography>
+                          <Stack direction="row" spacing={0.25}>
+                            <IconButton
                               size="small"
-                              startIcon={<PlayArrowIcon />}
+                              aria-label={row.has_wav ? "ecouter" : "wav absent"}
                               disabled={!row.has_wav}
                               onClick={() => playVoice(row.tag)}
+                              color={row.has_wav ? "primary" : "default"}
                             >
-                              {row.has_wav ? "Ecouter" : "Absent"}
-                            </Button>
-                            <IconButton size="small" aria-label="modifier" onClick={() => openEdit(row)}>
+                              <PlayArrowIcon fontSize="small" />
+                            </IconButton>
+                            <IconButton
+                              size="small"
+                              aria-label="modifier"
+                              onClick={() => openEdit(row)}
+                            >
                               <EditIcon fontSize="small" />
                             </IconButton>
                             <IconButton
@@ -507,7 +759,7 @@ export default function KnowledgeBasePage(): React.ReactElement {
                         </Stack>
                       </Box>
                     ))}
-                  </Stack>
+                  </Box>
                 </AccordionDetails>
               </Accordion>
             );
@@ -515,60 +767,96 @@ export default function KnowledgeBasePage(): React.ReactElement {
         )}
       </VgSettingsSection>
 
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} fullWidth maxWidth="sm">
-        <DialogTitle>{editTag ? `Modifier ${editTag}` : "Nouvel intent"}</DialogTitle>
-        <DialogContent sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
-          {!editTag ? (
-            <TextField
-              label="Tag (ex. mon_intent)"
-              size="small"
-              value={form.tag}
-              onChange={(e) => setForm((f) => ({ ...f, tag: e.target.value }))}
-              helperText="Minuscules, chiffres, underscore. Unique."
-            />
-          ) : null}
-          <TextField
-            label="Priorite"
-            size="small"
-            type="number"
-            value={form.priority}
-            onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value }))}
-          />
-          <TextField
-            label="Action (optionnel)"
-            size="small"
-            value={form.action}
-            onChange={(e) => setForm((f) => ({ ...f, action: e.target.value }))}
-            helperText="ex. record_message, collect_coords, hangup_soft"
-          />
-          <TextField
-            label="Patterns (un par ligne)"
-            size="small"
-            multiline
-            minRows={4}
-            value={form.patternsText}
-            onChange={(e) => setForm((f) => ({ ...f, patternsText: e.target.value }))}
-          />
-          <TextField
-            label="Reponses (une par ligne, 1ere = voix)"
-            size="small"
-            multiline
-            minRows={3}
-            value={form.responsesText}
-            onChange={(e) => setForm((f) => ({ ...f, responsesText: e.target.value }))}
-          />
-          <FormControlLabel
-            control={
-              <Switch
-                checked={form.enabled}
-                onChange={(e) => setForm((f) => ({ ...f, enabled: e.target.checked }))}
+      <Dialog
+        open={dialogOpen}
+        onClose={() => setDialogOpen(false)}
+        fullWidth
+        maxWidth="md"
+        scroll="paper"
+      >
+        <DialogTitle>
+          {editTag ? `Modifier ${editTag}` : `Nouvel intent (${profileLabel})`}
+        </DialogTitle>
+        <DialogContent dividers sx={{ display: "flex", flexDirection: "column", gap: 2.5 }}>
+          <Box
+            sx={{
+              display: "grid",
+              gridTemplateColumns: { xs: "1fr", sm: "1.4fr 0.7fr 1fr auto" },
+              gap: 1.25,
+              alignItems: "start"
+            }}
+          >
+            {!editTag ? (
+              <TextField
+                label="Tag (ex. mon_intent)"
+                size="small"
+                value={form.tag}
+                onChange={(e) => setForm((f) => ({ ...f, tag: e.target.value }))}
+                helperText="Minuscules, chiffres, underscore"
               />
-            }
-            label="Active"
+            ) : (
+              <TextField
+                label="Tag"
+                size="small"
+                value={editTag}
+                disabled
+              />
+            )}
+            <TextField
+              label="Priorite"
+              size="small"
+              type="number"
+              value={form.priority}
+              onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value }))}
+            />
+            <TextField
+              label="Action"
+              size="small"
+              value={form.action}
+              onChange={(e) => setForm((f) => ({ ...f, action: e.target.value }))}
+              placeholder="hangup_soft…"
+            />
+            <FormControlLabel
+              sx={{ m: 0, mt: { xs: 0, sm: 0.5 } }}
+              control={
+                <Switch
+                  checked={form.enabled}
+                  onChange={(e) => setForm((f) => ({ ...f, enabled: e.target.checked }))}
+                />
+              }
+              label="Active"
+            />
+          </Box>
+
+          <KbIntentLinesEditor
+            title="Patterns"
+            hint="Ce que le prospect peut dire (STT). Une carte = un pattern."
+            dense
+            items={form.patterns}
+            onChange={(patterns) => setForm((f) => ({ ...f, patterns }))}
+            placeholder="ex. bonjour"
+          />
+
+          <KbIntentLinesEditor
+            title="Reponses"
+            hint="Une carte = une formulation. Play = TTS avec la voix courante (sans regen tout le catalogue)."
+            markFirstAsVoice
+            items={form.responses}
+            onChange={(responses) => setForm((f) => ({ ...f, responses }))}
+            onPlay={playResponsePreview}
+            playingId={playingLineId}
+            placeholder="Phrase a dire…"
           />
         </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setDialogOpen(false)}>Annuler</Button>
+        <DialogActions sx={{ px: 3, py: 1.5, gap: 1 }}>
+          {saveOk ? (
+            <Typography variant="body2" color="success.main" sx={{ mr: "auto" }}>
+              Enregistre
+            </Typography>
+          ) : (
+            <Box sx={{ mr: "auto" }} />
+          )}
+          <Button onClick={() => setDialogOpen(false)}>Fermer</Button>
           <Button variant="contained" onClick={() => void saveIntent()} disabled={saving}>
             {saving ? "…" : "Enregistrer"}
           </Button>

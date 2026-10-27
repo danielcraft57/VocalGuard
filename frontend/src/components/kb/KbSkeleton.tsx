@@ -14,29 +14,45 @@ import { Box, Skeleton, Stack } from "@mui/material";
  */
 export function KbIntentsListSkeleton(): React.ReactElement {
   return (
-    <Stack spacing={1.25} aria-busy="true" aria-label="Chargement des intents">
-      {[0, 1, 2, 3].map((i) => (
+    <Box
+      sx={{
+        display: "grid",
+        gridTemplateColumns: {
+          xs: "1fr",
+          sm: "repeat(2, minmax(0, 1fr))",
+          lg: "repeat(3, minmax(0, 1fr))"
+        },
+        gap: 1.25
+      }}
+      aria-busy="true"
+      aria-label="Chargement des intents"
+    >
+      {[0, 1, 2, 3, 4, 5].map((i) => (
         <Box
           key={i}
           sx={{
             border: "1px solid",
             borderColor: "divider",
-            borderRadius: 1,
-            p: 1.5,
-            bgcolor: "background.paper"
+            borderRadius: 1.5,
+            p: 1.25,
+            bgcolor: "background.paper",
+            minHeight: 132
           }}
         >
           <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 1 }}>
-            <Skeleton variant="rounded" width={120} height={22} animation="wave" />
-            <Skeleton variant="rounded" width={48} height={20} animation="wave" />
-            <Box sx={{ flex: 1 }} />
+            <Skeleton variant="rounded" width={110} height={18} animation="wave" />
+            <Skeleton variant="rounded" width={40} height={18} animation="wave" />
+          </Stack>
+          <Skeleton variant="text" width="92%" animation="wave" />
+          <Skeleton variant="text" width="70%" animation="wave" />
+          <Stack direction="row" spacing={0.5} sx={{ mt: 1.5, justifyContent: "flex-end" }}>
+            <Skeleton variant="circular" width={28} height={28} animation="wave" />
+            <Skeleton variant="circular" width={28} height={28} animation="wave" />
             <Skeleton variant="circular" width={28} height={28} animation="wave" />
           </Stack>
-          <Skeleton variant="text" width="78%" animation="wave" />
-          <Skeleton variant="text" width="42%" animation="wave" />
         </Box>
       ))}
-    </Stack>
+    </Box>
   );
 }
 

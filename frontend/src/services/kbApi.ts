@@ -16,6 +16,7 @@ export type KbIntent = {
   patterns: string[];
   responses: string[];
   has_wav?: boolean;
+  profile?: string;
 };
 
 export type KbPredictItem = {
@@ -49,6 +50,7 @@ export type KbIntentCreate = {
   enabled?: boolean;
   action?: string | null;
   niveau?: number;
+  profile?: "inbound" | "outbound_commercial";
 };
 
 export type KbIntentPatch = {
@@ -58,6 +60,19 @@ export type KbIntentPatch = {
   priority?: number;
   action?: string | null;
   clear_action?: boolean;
+};
+
+/** Options regen voix intents (overrides TTS). */
+export type KbVoiceRegenOptions = {
+  force?: boolean;
+  tags?: string[];
+  profile?: "inbound" | "outbound_commercial";
+  tts_provider?: "edge" | "elevenlabs";
+  edge_tts_voice?: string;
+  edge_tts_rate?: string;
+  edge_tts_pitch?: string;
+  tts_voice_gain_db?: number;
+  elevenlabs_voice_id?: string;
 };
 
 /**
@@ -83,13 +98,18 @@ export function isAbortError(err: unknown): boolean {
  *
  * @param enabledOnly Filtre enabled.
  * @param signal AbortSignal (annule au changement de page).
+ * @param profile inbound | outbound_commercial (undefined = tous).
  * @returns Intents.
  */
 export async function fetchKbIntents(
   enabledOnly = false,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  profile?: "inbound" | "outbound_commercial"
 ): Promise<KbIntent[]> {
-  const q = enabledOnly ? "?enabled_only=true" : "";
+  const params = new URLSearchParams();
+  if (enabledOnly) params.set("enabled_only", "true");
+  if (profile) params.set("profile", profile);
+  const q = params.toString() ? `?${params.toString()}` : "";
   const res = await fetch(`${getApiBaseUrl()}/kb/intents${q}`, { signal });
   if (!res.ok) {
     throw new Error(`KB intents HTTP ${res.status}`);
@@ -242,24 +262,106 @@ export async function deleteKbIntent(tag: string): Promise<void> {
 }
 
 /**
- * Regenerere les voix intents (params accueil).
+ * Supprime tous les intents d'un profil.
  *
- * @param force Ignore cache.
+ * @param profile inbound | outbound_commercial.
+ * @returns Nombre supprime.
  */
-export async function regenerateKbVoices(force = false): Promise<{
+export async function wipeKbProfileIntents(
+  profile: "inbound" | "outbound_commercial"
+): Promise<number> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/kb/profiles/${encodeURIComponent(profile)}/intents`,
+    { method: "DELETE" }
+  );
+  if (!res.ok) {
+    throw new Error(`KB wipe HTTP ${res.status}`);
+  }
+  const body = (await res.json()) as { deleted?: number };
+  return Number(body.deleted || 0);
+}
+
+/**
+ * Regenerere les voix intents (params TTS override optionnels).
+ *
+ * @param options Force / profile / voix.
+ */
+export async function regenerateKbVoices(
+  options: boolean | KbVoiceRegenOptions = false
+): Promise<{
   ok: number;
   skipped: number;
   failed: number;
 }> {
+  const opts: KbVoiceRegenOptions =
+    typeof options === "boolean" ? { force: options } : options || {};
+  const body: Record<string, unknown> = {
+    force: opts.force ?? false
+  };
+  if (opts.tags?.length) body.tags = opts.tags;
+  if (opts.profile) body.profile = opts.profile;
+  if (opts.tts_provider) body.tts_provider = opts.tts_provider;
+  if (opts.edge_tts_voice) body.edge_tts_voice = opts.edge_tts_voice;
+  if (opts.edge_tts_rate) body.edge_tts_rate = opts.edge_tts_rate;
+  if (opts.edge_tts_pitch) body.edge_tts_pitch = opts.edge_tts_pitch;
+  if (opts.tts_voice_gain_db !== undefined) {
+    body.tts_voice_gain_db = opts.tts_voice_gain_db;
+  }
+  if (opts.elevenlabs_voice_id) body.elevenlabs_voice_id = opts.elevenlabs_voice_id;
+
   const res = await fetch(`${getApiBaseUrl()}/kb/voices/regenerate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ force })
+    body: JSON.stringify(body)
   });
   if (!res.ok) {
     throw new Error(`KB voices HTTP ${res.status}`);
   }
   return (await res.json()) as { ok: number; skipped: number; failed: number };
+}
+
+/** Options apercu TTS une phrase. */
+export type KbVoicePreviewOptions = {
+  text: string;
+  tts_provider?: "edge" | "elevenlabs";
+  edge_tts_voice?: string;
+  edge_tts_rate?: string;
+  edge_tts_pitch?: string;
+  tts_voice_gain_db?: number;
+  elevenlabs_voice_id?: string;
+  /** Ecrit le WAV modem de cette variante seulement. */
+  save_tag?: string;
+  save_index?: number;
+  profile?: "inbound" | "outbound_commercial";
+};
+
+/**
+ * Apercu TTS d'une phrase (blob audio navigateur).
+ *
+ * @param options Texte + prefs voix.
+ * @returns Blob audio + flag saved.
+ */
+export async function previewKbVoice(
+  options: KbVoicePreviewOptions
+): Promise<{ blob: Blob; saved: boolean }> {
+  const res = await fetch(`${getApiBaseUrl()}/kb/voices/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(options)
+  });
+  if (!res.ok) {
+    let detail = `KB preview HTTP ${res.status}`;
+    try {
+      const err = (await res.json()) as { detail?: string };
+      if (err.detail) detail = String(err.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  const blob = await res.blob();
+  const saved = res.headers.get("X-VG-Saved") === "1";
+  return { blob, saved };
 }
 
 /**

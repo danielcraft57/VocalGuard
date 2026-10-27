@@ -77,6 +77,14 @@ class ElevenLabsTts:
             getattr(config, "elevenlabs_api_key", None)
             or os.getenv("ELEVENLABS_API_KEY", "")
         )
+        try:
+            from backend.voice.elevenlabs_key_pool import resolve_active_api_key
+
+            pooled = resolve_active_api_key()
+            if pooled:
+                key = pooled
+        except Exception:
+            pass
         key = (key or "").strip()
         if not key:
             return None
@@ -181,6 +189,27 @@ class ElevenLabsTts:
                 if resp.status_code == 429:
                     self.stopped_reason = "ElevenLabs rate limit / quota (429)"
                     self.requests_failed += 1
+                    try:
+                        from backend.voice.elevenlabs_key_pool import mark_key_exhausted
+
+                        nxt = mark_key_exhausted(self.api_key)
+                        if nxt and nxt != self.api_key:
+                            self.api_key = nxt
+                            logger.warning(
+                                "ElevenLabs 429 → switch clef pool ({})",
+                                nxt[:6] + "…",
+                            )
+                            # Un seul retry sur la nouvelle clef.
+                            headers["xi-api-key"] = self.api_key
+                            resp2 = await client.post(url, headers=headers, json=body)
+                            if resp2.status_code < 400:
+                                audio = resp2.content
+                                path.write_bytes(audio)
+                                self.chars_consumed += len(speak)
+                                self.requests_ok += 1
+                                return audio
+                    except Exception as switch_exc:
+                        logger.debug("Switch clef ElevenLabs ignore: {}", switch_exc)
                     raise ElevenLabsQuotaError(self.stopped_reason)
                 if resp.status_code >= 400:
                     self.requests_failed += 1

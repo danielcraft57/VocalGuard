@@ -243,6 +243,76 @@ export async function fetchElevenLabsVoices(
   return (await res.json()) as ElevenLabsVoicesResponse;
 }
 
+export type ElevenLabsKeyQuota = {
+  fingerprint: string;
+  label: string;
+  ok: boolean;
+  tier?: string | null;
+  status?: string | null;
+  character_count?: number | null;
+  character_limit?: number | null;
+  remaining?: number | null;
+  next_reset_unix?: number | null;
+  next_reset_iso?: string | null;
+  created_at_unix?: number | null;
+  created_at_iso?: string | null;
+  user_id?: string | null;
+  error?: string | null;
+  active?: boolean;
+  quota_readable?: boolean;
+};
+
+export type ElevenLabsKeysStatus = {
+  count: number;
+  active_fingerprint?: string | null;
+  active_label?: string | null;
+  keys: ElevenLabsKeyQuota[];
+  fetched_at?: string;
+};
+
+/**
+ * Statut pool multi-clefs ElevenLabs (quotas masques).
+ *
+ * @param force Refresh force.
+ * @param signal AbortSignal.
+ */
+export async function fetchElevenLabsKeysStatus(
+  force = false,
+  signal?: AbortSignal
+): Promise<ElevenLabsKeysStatus> {
+  const q = force ? "?force=true" : "";
+  const res = await fetch(
+    `${getApiBaseUrl()}/settings/incoming-call/elevenlabs/keys${q}`,
+    { signal }
+  );
+  if (!res.ok) {
+    throw new Error(`Erreur pool ElevenLabs: ${res.status}`);
+  }
+  return (await res.json()) as ElevenLabsKeysStatus;
+}
+
+/**
+ * Active une clef du pool par empreinte.
+ *
+ * @param fingerprint Empreinte.
+ */
+export async function activateElevenLabsKey(
+  fingerprint: string
+): Promise<ElevenLabsKeysStatus> {
+  const res = await fetch(
+    `${getApiBaseUrl()}/settings/incoming-call/elevenlabs/keys/activate`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fingerprint })
+    }
+  );
+  if (!res.ok) {
+    throw new Error(`Activation clef HTTP ${res.status}`);
+  }
+  return (await res.json()) as ElevenLabsKeysStatus;
+}
+
 /**
  * Apercu MP3 court d'une voix ElevenLabs.
  *

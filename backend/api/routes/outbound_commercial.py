@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -65,10 +66,54 @@ def _db():
 
 
 def _config(request: Request):
+    """
+    Config app : prefer call_manager, sinon app.state.config (API seule / simulateur).
+    """
     cm = getattr(request.app.state, "call_manager", None)
-    if cm is None or getattr(cm, "config", None) is None:
-        raise HTTPException(status_code=503, detail="Call manager indisponible")
-    return cm.config
+    if cm is not None and getattr(cm, "config", None) is not None:
+        return cm.config
+    cfg = getattr(request.app.state, "config", None)
+    if cfg is not None:
+        return cfg
+    raise HTTPException(status_code=503, detail="Configuration indisponible")
+
+
+def _base_path(request: Request) -> Path:
+    """Racine projet depuis la config."""
+    config = _config(request)
+    return Path(getattr(config, "base_path", None) or ".")
+
+
+def _safe_wav_path(base: Path, basename: str) -> Path:
+    """WAV sous ivr_wav/ sans path traversal."""
+    name = (basename or "").strip()
+    if not name or "/" in name or "\\" in name or ".." in name:
+        raise HTTPException(status_code=400, detail="Basename invalide")
+    if not all(c.isalnum() or c in ("_", "-") for c in name):
+        raise HTTPException(status_code=400, detail="Basename invalide")
+    ivr = (base / "ivr_wav").resolve()
+    path = (ivr / f"{name}.wav").resolve()
+    if not str(path).startswith(str(ivr)):
+        raise HTTPException(status_code=400, detail="Chemin refuse")
+    return path
+
+
+@router.get("/voice/{basename}")
+async def listen_commercial_voice(basename: str, request: Request) -> FileResponse:
+    """
+    Streame un WAV commercial prefetch (HP navigateur / simulateur).
+
+    @param basename Ex. out_kb_out_objection_prix_v2 (sans .wav).
+    """
+    path = _safe_wav_path(_base_path(request), basename)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="WAV commercial introuvable")
+    return FileResponse(
+        path,
+        media_type="audio/wav",
+        filename=f"{basename}.wav",
+        headers={"Cache-Control": "private, max-age=120"},
+    )
 
 
 @router.post("/seed")
@@ -219,7 +264,7 @@ async def choose(body: ChooseBody, request: Request) -> Dict[str, Any]:
         "ok": True,
         "played": played,
         "play_error": play_error,
-        **resolved,
+        **{k: v for k, v in resolved.items() if k != "wav_path"},
     }
 
 

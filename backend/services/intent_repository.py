@@ -549,6 +549,51 @@ def delete_intent(db: Session, tag: str) -> bool:
     return True
 
 
+def delete_intents_by_profile(db: Session, profile: str) -> int:
+    """
+    Supprime tous les intents d'un profil (CASCADE + Qdrant).
+
+    @param db Session.
+    @param profile ``inbound`` | ``outbound_commercial``.
+    @returns Nombre d'intents supprimes.
+    """
+    prof = (profile or PROFILE_INBOUND).strip().lower()
+    if prof not in (PROFILE_INBOUND, PROFILE_OUTBOUND_COMMERCIAL):
+        raise ValueError(f"Profil invalide: {profile}")
+
+    rows = db.query(Intent).filter(Intent.profile == prof).all()
+    if not rows:
+        _seed_ensure_last.pop(_seed_ensure_cache_key(prof), None)
+        _seed_ensure_last.pop(_seed_ensure_cache_key(None), None)
+        return 0
+
+    emb_ids: List[int] = []
+    tags: List[str] = []
+    for intent in rows:
+        tags.append(intent.tag)
+        emb_ids.extend(
+            int(r[0])
+            for r in db.query(IntentEmbedding.id)
+            .filter(IntentEmbedding.intent_id == intent.id)
+            .all()
+            if r[0] is not None
+        )
+        db.delete(intent)
+
+    db.commit()
+    if emb_ids and qdrant_base_url():
+        delete_points_by_ids(
+            emb_ids,
+            collection=collection_for_profile(prof),
+            profile=prof,
+        )
+
+    _seed_ensure_last.pop(_seed_ensure_cache_key(prof), None)
+    _seed_ensure_last.pop(_seed_ensure_cache_key(None), None)
+    logger.info("Wipe intents profile={}: {} tags", prof, len(tags))
+    return len(tags)
+
+
 def _qdrant_base_url() -> Optional[str]:
     """
     URL de base Qdrant si activee (env QDRANT_URL).

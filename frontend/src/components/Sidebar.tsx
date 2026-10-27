@@ -42,6 +42,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen = false, onNavigate }) 
     { href: "/agenda", label: "Agenda", icon: "calendar_month" },
     { href: "/quotes", label: "Devis", icon: "description" },
     { href: "/entreprises", label: "Entreprises", icon: "business" },
+    { href: "/verification-prospects", label: "Qualif. telephonique", icon: "contact_phone" },
     { href: "/clients", label: "Clients", icon: "groups" },
     { href: "/kb", label: "Base de connaissances", icon: "help_outline" },
     { href: "/simulator", label: "Simulateur / Tchatche", icon: "mic" },

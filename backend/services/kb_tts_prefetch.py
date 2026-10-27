@@ -72,6 +72,11 @@ async def prefetch_intent_voices(
     tags: Optional[List[str]] = None,
     profile: Optional[str] = None,
     tts_provider: Optional[str] = None,
+    edge_tts_voice: Optional[str] = None,
+    edge_tts_rate: Optional[str] = None,
+    edge_tts_pitch: Optional[str] = None,
+    tts_voice_gain_db: Optional[float] = None,
+    elevenlabs_voice_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Regenerere les WAV modem pour chaque variante de reponse d'intent.
@@ -83,6 +88,11 @@ async def prefetch_intent_voices(
     @param tags Sous-ensemble de tags.
     @param profile Filtre catalogue.
     @param tts_provider ``edge`` | ``elevenlabs``.
+    @param edge_tts_voice Override voix Edge.
+    @param edge_tts_rate Override debit.
+    @param edge_tts_pitch Override hauteur.
+    @param tts_voice_gain_db Override volume (dB).
+    @param elevenlabs_voice_id Override voix ElevenLabs.
     @returns Stats ok/skipped/failed/details/provider.
     """
     cache = IvrAudioCache(config, synthesis)
@@ -104,15 +114,20 @@ async def prefetch_intent_voices(
     eleven: Optional[ElevenLabsTts] = None
     if provider == "elevenlabs":
         eleven = ElevenLabsTts.from_config(config)
+        if elevenlabs_voice_id and eleven is not None:
+            eleven.voice_id = str(elevenlabs_voice_id).strip()
         if eleven is None:
             logger.warning(
                 "Prefetch ElevenLabs demande mais cle absente - fallback Edge"
             )
             provider = "edge"
 
-    voice = getattr(config, "edge_tts_voice", None) or "fr-FR-DeniseNeural"
-    rate = getattr(config, "edge_tts_rate", None) or "+0%"
-    pitch = getattr(config, "edge_tts_pitch", None) or "+0Hz"
+    voice = (
+        (edge_tts_voice or getattr(config, "edge_tts_voice", None) or "fr-FR-DeniseNeural")
+        .strip()
+    )
+    rate = (edge_tts_rate or getattr(config, "edge_tts_rate", None) or "+0%").strip()
+    pitch = (edge_tts_pitch or getattr(config, "edge_tts_pitch", None) or "+0Hz").strip()
     client: Optional[Node15VoiceClient] = None
     tts_url = resolve_tts_service_url(config)
     if tts_url:
@@ -128,7 +143,10 @@ async def prefetch_intent_voices(
     details: List[Dict[str, Any]] = []
     modem_profile = resolve_profile_from_config(config)
     used_provider = provider
-    gain = float(getattr(config, "edge_tts_voice_gain_db", -6.0) or -6.0)
+    if tts_voice_gain_db is not None:
+        gain = float(tts_voice_gain_db)
+    else:
+        gain = float(getattr(config, "edge_tts_voice_gain_db", -6.0) or -6.0)
 
     async def _synth_edge(text: str, basename: str, tag: str, idx: int) -> str:
         """Synthese Edge → WAV. Retourne label engine."""
@@ -269,3 +287,68 @@ async def prefetch_intent_voices(
     if eleven is not None:
         result["elevenlabs"] = eleven.stats()
     return result
+
+
+async def preview_tts_audio(
+    config: "Config",
+    text: str,
+    *,
+    tts_provider: Optional[str] = None,
+    edge_tts_voice: Optional[str] = None,
+    edge_tts_rate: Optional[str] = None,
+    edge_tts_pitch: Optional[str] = None,
+    elevenlabs_voice_id: Optional[str] = None,
+) -> tuple[bytes, str]:
+    """
+    Synthetise un apercu audio (sans ecrire le catalogue ivr_wav).
+
+    @param config Config app.
+    @param text Phrase a dire.
+    @param tts_provider edge | elevenlabs.
+    @param edge_tts_voice Voix Edge.
+    @param edge_tts_rate Debit.
+    @param edge_tts_pitch Hauteur.
+    @param elevenlabs_voice_id Voix ElevenLabs.
+    @returns (bytes audio, media_type).
+    @raises RuntimeError Si synthese impossible.
+    """
+    phrase = (text or "").strip()
+    if not phrase:
+        raise RuntimeError("Texte vide")
+
+    provider = (
+        (tts_provider or getattr(config, "tts_provider", None) or "edge")
+        .strip()
+        .lower()
+    )
+    if provider not in ("edge", "elevenlabs"):
+        provider = "edge"
+
+    if provider == "elevenlabs":
+        eleven = ElevenLabsTts.from_config(config)
+        if eleven is not None and elevenlabs_voice_id:
+            eleven.voice_id = str(elevenlabs_voice_id).strip()
+        if eleven is not None:
+            audio = await eleven.synthesize(phrase, force=True)
+            return audio, "audio/mpeg"
+        logger.warning("Preview ElevenLabs indisponible - fallback Edge")
+        provider = "edge"
+
+    voice = (
+        (edge_tts_voice or getattr(config, "edge_tts_voice", None) or "fr-FR-DeniseNeural")
+        .strip()
+    )
+    rate = (edge_tts_rate or getattr(config, "edge_tts_rate", None) or "+0%").strip()
+    pitch = (edge_tts_pitch or getattr(config, "edge_tts_pitch", None) or "+0Hz").strip()
+
+    tts_url = resolve_tts_service_url(config)
+    if tts_url:
+        client = Node15VoiceClient(
+            tts_url,
+            token=resolve_tts_token(config),
+            timeout_sec=60.0,
+        )
+        audio = await client.tts(phrase, voice=voice, rate=rate, pitch=pitch)
+        return audio, "audio/mpeg"
+
+    raise RuntimeError("Aucun moteur TTS disponible pour l'apercu")

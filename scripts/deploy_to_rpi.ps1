@@ -203,15 +203,22 @@ Step "[5/8] Upload and extract code"
 scp -q $ArchivePath "${AppRemoteHost}:${RemoteDir}/vocalguard_release.tar.gz"
 ssh "$AppRemoteHost" "cd $RemoteDir && tar -xzf vocalguard_release.tar.gz && rm -f vocalguard_release.tar.gz" | Out-Null
 Remove-Item $ArchivePath -Force -ErrorAction SilentlyContinue
-ssh "$AppRemoteHost" "sudo chown -R ${AppServerUser}:${AppServerUser} $RemoteDir && sudo find $RemoteDir -type d -exec chmod 775 {} \; && sudo find $RemoteDir -type f -exec chmod 664 {} \;" | Out-Null
+# Evite find -exec chmod sur tout le tree (tres lent / peut bloquer sur gros caches).
+ssh "$AppRemoteHost" "sudo chown -R ${AppServerUser}:${AppServerUser} $RemoteDir" | Out-Null
 ssh "$AppRemoteHost" "cd $RemoteDir && chmod +x run.sh run_backend.sh scripts/*.sh 2>/dev/null || true" | Out-Null
 
-# data/ est exclu de l'archive (runtime) : pousser le catalogue intents seed
-$SeedLocal = Join-Path $ProjectDir "data\intents\kb_seed\conversation_v1.json"
-if (Test-Path $SeedLocal) {
-    ssh "$AppRemoteHost" "mkdir -p $RemoteDir/data/intents/kb_seed"
-    scp -q $SeedLocal "${AppRemoteHost}:$RemoteDir/data/intents/kb_seed/conversation_v1.json"
-    Info "Seed intents KB synchronise"
+# data/ est exclu de l'archive (runtime) : pousser les catalogues intents seed
+$SeedDir = Join-Path $ProjectDir "data\intents\kb_seed"
+$SeedInbound = Join-Path $SeedDir "conversation_v1.json"
+$SeedOutbound = Join-Path $SeedDir "outbound_commercial_v1.json"
+ssh "$AppRemoteHost" "mkdir -p $RemoteDir/data/intents/kb_seed"
+if (Test-Path $SeedInbound) {
+    scp -q $SeedInbound "${AppRemoteHost}:$RemoteDir/data/intents/kb_seed/conversation_v1.json"
+    Info "Seed intents inbound synchronise"
+}
+if (Test-Path $SeedOutbound) {
+    scp -q $SeedOutbound "${AppRemoteHost}:$RemoteDir/data/intents/kb_seed/outbound_commercial_v1.json"
+    Info "Seed intents outbound commercial synchronise"
 }
 
 Ok "Code uploaded"

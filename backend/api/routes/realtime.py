@@ -113,12 +113,17 @@ def _extract_ws_token(websocket: WebSocket) -> Optional[str]:
     return None
 
 
+def _is_local_name(hostname: str) -> bool:
+    """True pour la machine de dev (Next :3000 vers API :8000)."""
+    return (hostname or "").lower() in {"localhost", "127.0.0.1", "::1"}
+
+
 def _is_same_origin_ui(websocket: WebSocket) -> bool:
     """
-    True si le client est le front servi par la meme API (Origin == Host).
+    True si le client est le front VocalGuard.
 
-    Sans Origin (outils locaux / scripts), on autorise aussi : le dashboard LAN
-    et les tests ne portent pas de token API publique.
+    Same-origin (front servi par l'API) ou les deux cotes en localhost
+    (Next sur :3000, API sur :8000). Sans Origin (scripts), on autorise aussi.
 
     @param websocket Connexion WebSocket entrante.
     @returns True si l'UI locale peut s'abonner sans token.
@@ -130,7 +135,10 @@ def _is_same_origin_ui(websocket: WebSocket) -> bool:
     if not host:
         return False
     try:
-        return urlparse(origin).netloc.lower() == host.lower()
+        parsed = urlparse(origin)
+        if parsed.netloc.lower() == host.lower():
+            return True
+        return _is_local_name(parsed.hostname or "") and _is_local_name(host.split(":")[0])
     except Exception:
         return False
 
@@ -172,10 +180,13 @@ async def websocket_events(websocket: WebSocket) -> None:
     token_value = _extract_ws_token(websocket)
     if token_value:
         if not _validate_ws_api_token(token_value):
+            logger.warning("WebSocket /ws/events refuse: token invalide")
             await websocket.close(code=4401)
             return
     elif not _is_same_origin_ui(websocket):
-        # Prod / hors UI : pas de token et origine etrangere → refuse.
+        origin = (websocket.headers.get("origin") or "").strip()
+        host = (websocket.headers.get("host") or "").strip()
+        logger.warning("WebSocket /ws/events refuse: origine {} hote {}", origin or "-", host or "-")
         await websocket.close(code=4401)
         return
 
@@ -211,6 +222,31 @@ async def publish_osint_event(payload: dict = Body(...)) -> dict:
             timestamp=datetime.utcnow(),
             data=dict(payload.get("data") or {}),
             source="CeleryOSINT",
+        )
+    )
+    return {"accepted": True}
+
+
+@router.post("/events/prospect-phone", status_code=202)
+async def publish_prospect_phone_event(payload: dict = Body(...)) -> dict:
+    """
+    Permet au worker Celery ou a un process distant de pousser la progression enrichissement.
+    """
+    event_type_raw = str(payload.get("type") or "").strip()
+    allowed = (
+        EventType.PROSPECT_PHONE_ENRICH_PROGRESS.value,
+        EventType.PROSPECT_PHONE_ENRICH_ROW.value,
+        EventType.PROSPECT_PHONE_ENRICH_COMPLETED.value,
+    )
+    if event_type_raw not in allowed:
+        return {"accepted": False, "reason": "unknown_type"}
+
+    await event_bus.publish(
+        Event(
+            event_type=EventType(event_type_raw),
+            timestamp=datetime.utcnow(),
+            data=dict(payload.get("data") or {}),
+            source=str(payload.get("source") or "ProspectPhoneEnrich"),
         )
     )
     return {"accepted": True}

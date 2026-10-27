@@ -42,6 +42,20 @@ entreprise_email_links = Table(
     Column("email_id", Integer, ForeignKey("entreprise_emails.id", ondelete="CASCADE"), primary_key=True),
 )
 
+prospect_phone_category_links = Table(
+    "prospect_phone_category_links",
+    Base.metadata,
+    Column("prospect_phone_id", Integer, ForeignKey("prospect_phones.id", ondelete="CASCADE"), primary_key=True),
+    Column("category_id", Integer, ForeignKey("prospect_phone_categories.id", ondelete="CASCADE"), primary_key=True),
+)
+
+prospect_phone_google_type_links = Table(
+    "prospect_phone_google_type_links",
+    Base.metadata,
+    Column("prospect_phone_id", Integer, ForeignKey("prospect_phones.id", ondelete="CASCADE"), primary_key=True),
+    Column("google_type_id", Integer, ForeignKey("prospect_phone_google_types.id", ondelete="CASCADE"), primary_key=True),
+)
+
 
 class Caller(Base):
     """Modele pour les appelants (pas de JSON metier)."""
@@ -470,6 +484,158 @@ class EntreprisePhoneAnalysis(Base):
 
     entreprise = relationship("Entreprise", back_populates="phone_analyses")
     phone_profile = relationship("PhoneNumberProfile")
+
+
+class ProspectPhoneImportBatch(Base):
+    """Lot d'import Excel (fichier ville ProspectLab ou upload manuel)."""
+
+    __tablename__ = "prospect_phone_import_batches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    original_filename = Column(String(500), nullable=True)
+    source_city = Column(String(128), nullable=True, index=True)
+    source = Column(String(64), nullable=False, default="excel")
+
+    total_rows = Column(Integer, nullable=False, default=0)
+    imported_rows = Column(Integer, nullable=False, default=0)
+    skipped_with_website = Column(Integer, nullable=False, default=0)
+    skipped_invalid = Column(Integer, nullable=False, default=0)
+    skipped_duplicates = Column(Integer, nullable=False, default=0)
+
+    phase = Column(String(32), nullable=False, default="pending")  # pending, import, enrich, done, failed
+    enrich_total = Column(Integer, nullable=False, default=0)
+    enrich_done = Column(Integer, nullable=False, default=0)
+    enrich_failed = Column(Integer, nullable=False, default=0)
+    enrich_queued = Column(Integer, nullable=False, default=0)
+    last_error = Column(String(500), nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    prospects = relationship(
+        "ProspectPhone",
+        back_populates="import_batch",
+        passive_deletes=True,
+    )
+
+
+class ProspectPhoneGoogleType(Base):
+    """Type Google Places brut (colonne category anglaise du XLSX)."""
+
+    __tablename__ = "prospect_phone_google_types"
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(128), unique=True, nullable=False, index=True)
+    label = Column(String(255), nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    prospects = relationship(
+        "ProspectPhone",
+        secondary=prospect_phone_google_type_links,
+        back_populates="google_types",
+        collection_class=set,
+    )
+
+
+class ProspectPhoneCategory(Base):
+    """Categorie normalisee (libelle traduit Google Places)."""
+
+    __tablename__ = "prospect_phone_categories"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), unique=True, nullable=False, index=True)
+    slug = Column(String(255), unique=True, nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    prospects = relationship(
+        "ProspectPhone",
+        secondary=prospect_phone_category_links,
+        back_populates="categories",
+        collection_class=set,
+    )
+
+
+class ProspectPhone(Base):
+    """
+    Prospect normalise pour verification telephonique (sans site web).
+
+    Une ligne par numero unique (dedup sur phone_digits).
+    """
+
+    __tablename__ = "prospect_phones"
+    __table_args__ = (
+        Index("ix_prospect_phones_created_at", "created_at"),
+        Index("ix_prospect_phones_verification_status", "verification_status"),
+        UniqueConstraint("phone_digits", name="uq_prospect_phones_phone_digits"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    import_batch_id = Column(
+        Integer,
+        ForeignKey("prospect_phone_import_batches.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    name = Column(String(255), nullable=False, index=True)
+    phone_number = Column(String(64), nullable=True)
+    phone_digits = Column(String(64), nullable=True, index=True)
+
+    source_city = Column(String(128), nullable=True, index=True)
+    country = Column(String(128), nullable=True)
+    city = Column(String(128), nullable=True, index=True)
+    postal_code = Column(String(16), nullable=True, index=True)
+    address_1 = Column(String(500), nullable=True)
+    address_2 = Column(String(500), nullable=True)
+
+    longitude = Column(Float, nullable=True)
+    latitude = Column(Float, nullable=True)
+    rating = Column(Float, nullable=True)
+    reviews_count = Column(Integer, nullable=True)
+
+    website = Column(String(500), nullable=True)
+    google_categories_raw = Column(String(500), nullable=True)
+    category_translate_raw = Column(String(500), nullable=True)
+
+    phone_profile_id = Column(
+        Integer,
+        ForeignKey("phone_number_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    osint_status = Column(String(32), nullable=False, default="pending", index=True)
+    prospectlab_status = Column(String(32), nullable=False, default="pending", index=True)
+    prospectlab_entreprise_id = Column(Integer, nullable=True, index=True)
+    prospectlab_name = Column(String(255), nullable=True)
+    osint_company_name = Column(String(255), nullable=True)
+    osint_reputation = Column(String(32), nullable=True)
+    osint_operator = Column(String(128), nullable=True)
+    osint_region = Column(String(128), nullable=True)
+    name_match_status = Column(String(32), nullable=True, index=True)  # match, partial, mismatch, unknown
+    enriched_at = Column(DateTime, nullable=True)
+
+    verification_status = Column(String(32), nullable=False, default="pending")
+    verification_notes = Column(Text, nullable=True)
+    verified_at = Column(DateTime, nullable=True)
+    last_call_id = Column(Integer, ForeignKey("calls.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    import_batch = relationship("ProspectPhoneImportBatch", back_populates="prospects")
+    categories = relationship(
+        "ProspectPhoneCategory",
+        secondary=prospect_phone_category_links,
+        back_populates="prospects",
+        collection_class=set,
+    )
+    google_types = relationship(
+        "ProspectPhoneGoogleType",
+        secondary=prospect_phone_google_type_links,
+        back_populates="prospects",
+        collection_class=set,
+    )
+    phone_profile = relationship("PhoneNumberProfile")
+    last_call = relationship("Call")
 
 
 class Appointment(Base):

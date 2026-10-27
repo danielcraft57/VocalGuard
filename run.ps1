@@ -6,7 +6,8 @@
 param(
     [switch]$SingleWindow,
     [switch]$SkipRequirements,
-    [switch]$PromptRequirements
+    [switch]$PromptRequirements,
+    [switch]$SkipCelery
 )
 
 Write-Host "Démarrage de VocalGuard..." -ForegroundColor Green
@@ -290,10 +291,17 @@ if ($SingleWindow) {
     $celeryErr = Join-Path $PROJECT_ROOT "logs\celery.err.log"
 
     $backendProc = Start-Process -FilePath "powershell" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $backendLaunch) -WindowStyle Hidden -PassThru -RedirectStandardOutput $backendOut -RedirectStandardError $backendErr
-    $celeryProc = Start-Process -FilePath "powershell" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $celeryLaunch) -WindowStyle Hidden -PassThru -RedirectStandardOutput $celeryOut -RedirectStandardError $celeryErr
+    $celeryProc = $null
+    if (-not $SkipCelery) {
+        $celeryProc = Start-Process -FilePath "powershell" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", $celeryLaunch) -WindowStyle Hidden -PassThru -RedirectStandardOutput $celeryOut -RedirectStandardError $celeryErr
+    }
 
     Write-Host "Backend: http://localhost:8000 (arrière-plan)" -ForegroundColor Cyan
-    Write-Host "Celery: worker OSINT actif (arrière-plan)" -ForegroundColor Cyan
+    if ($SkipCelery) {
+        Write-Host "Celery: ignoré (-SkipCelery, pas de Redis requis)" -ForegroundColor Yellow
+    } else {
+        Write-Host "Celery: worker OSINT actif (arrière-plan)" -ForegroundColor Cyan
+    }
     Write-Host "Frontend: http://localhost:3000 (fenêtre courante)" -ForegroundColor Cyan
     Write-Host "Logs backend: logs\backend.log (erreurs: logs\backend.err.log)" -ForegroundColor DarkGray
     Write-Host "Logs celery: logs\celery.log (erreurs: logs\celery.err.log)" -ForegroundColor DarkGray
@@ -318,12 +326,19 @@ if ($SingleWindow) {
 } else {
     Start-Process -FilePath "powershell" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", $backendLaunch)
     Start-Process -FilePath "powershell" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", $frontendLaunch)
-    Start-Process -FilePath "powershell" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", $celeryLaunch)
+    if (-not $SkipCelery) {
+        Start-Process -FilePath "powershell" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-NoExit", "-Command", $celeryLaunch)
+    }
 
     Write-Host "Backend: http://localhost:8000" -ForegroundColor Cyan
     Write-Host "Frontend: http://localhost:3000" -ForegroundColor Cyan
-    Write-Host "Celery: worker OSINT actif (pool=solo)" -ForegroundColor Cyan
-    Write-Host "Trois fenêtres ont été ouvertes (backend + frontend + celery)." -ForegroundColor Green
+    if ($SkipCelery) {
+        Write-Host "Celery: ignoré (-SkipCelery)" -ForegroundColor Yellow
+        Write-Host "Deux fenêtres ouvertes (backend + frontend)." -ForegroundColor Green
+    } else {
+        Write-Host "Celery: worker OSINT actif (pool=solo)" -ForegroundColor Cyan
+        Write-Host "Trois fenêtres ont été ouvertes (backend + frontend + celery)." -ForegroundColor Green
+    }
     Write-Host "Appuie sur Ctrl+C dans cette fenêtre pour tout nettoyer." -ForegroundColor Yellow
 
     try {

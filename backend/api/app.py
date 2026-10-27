@@ -7,8 +7,10 @@ import logging
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, RedirectResponse
 from loguru import logger
@@ -27,6 +29,7 @@ from backend.api.routes import (
     quotes,
     clients,
     entreprises,
+    prospect_phones,
     settings as settings_routes,
     stats as stats_routes,
     block_rules as block_rules_routes,
@@ -74,6 +77,17 @@ def create_app(config: Config) -> FastAPI:
     )
     app.add_middleware(UiAuthMiddleware, config=config)
     app.state.config = config
+
+    @app.exception_handler(SQLAlchemyError)
+    async def sqlalchemy_error_handler(request: Request, exc: SQLAlchemyError) -> JSONResponse:
+        """Renvoie le message SQL au client (au lieu d'un 500 opaque)."""
+        from backend.core.recent_logs import push_recent_log
+
+        raw = getattr(exc, "orig", None)
+        detail = str(raw or exc)[:500]
+        push_recent_log("ERROR", f"{request.method} {request.url.path}: {detail}")
+        logger.exception("Erreur SQL sur {} {}", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": detail})
     
     # Inclure les routes
     app.include_router(calls.router, prefix="/api/v1", tags=["calls"])
@@ -86,6 +100,7 @@ def create_app(config: Config) -> FastAPI:
     app.include_router(quotes.router, prefix="/api/v1", tags=["quotes"])
     app.include_router(clients.router, prefix="/api/v1", tags=["clients"])
     app.include_router(entreprises.router, prefix="/api/v1", tags=["entreprises"])
+    app.include_router(prospect_phones.router, prefix="/api/v1", tags=["prospect-phones"])
     app.include_router(settings_routes.router, prefix="/api/v1", tags=["settings"])
     app.include_router(stats_routes.router, prefix="/api/v1", tags=["stats"])
     app.include_router(block_rules_routes.router, prefix="/api/v1", tags=["block-rules"])

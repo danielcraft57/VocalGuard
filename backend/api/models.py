@@ -500,6 +500,131 @@ class EntreprisePhoneAnalysisResponse(BaseModel):
         from_attributes = True
 
 
+ProspectPhoneVerificationStatus = Literal[
+    "pending",
+    "line_ok",
+    "line_fail",
+    "voicemail",
+    "company_ok",
+    "company_mismatch",
+    "skipped",
+]
+
+
+class ProspectPhoneResponse(BaseModel):
+    """Prospect normalise pour verification telephonique."""
+
+    id: int
+    name: str
+    phone_number: Optional[str] = None
+    phone_digits: Optional[str] = None
+    source_city: Optional[str] = None
+    country: Optional[str] = None
+    city: Optional[str] = None
+    postal_code: Optional[str] = None
+    address_1: Optional[str] = None
+    address_2: Optional[str] = None
+    longitude: Optional[float] = None
+    latitude: Optional[float] = None
+    rating: Optional[float] = None
+    reviews_count: Optional[int] = None
+    google_categories_raw: Optional[str] = None
+    category_translate_raw: Optional[str] = None
+    categories: List[str] = []
+    google_types: List[str] = []
+    website: Optional[str] = None
+    phone_profile_id: Optional[int] = None
+    osint_status: str = "pending"
+    prospectlab_status: str = "pending"
+    prospectlab_entreprise_id: Optional[int] = None
+    prospectlab_name: Optional[str] = None
+    osint_company_name: Optional[str] = None
+    osint_reputation: Optional[str] = None
+    osint_operator: Optional[str] = None
+    osint_region: Optional[str] = None
+    name_match_status: Optional[str] = None
+    enriched_at: Optional[datetime] = None
+    verification_status: ProspectPhoneVerificationStatus = "pending"
+    verification_notes: Optional[str] = None
+    verified_at: Optional[datetime] = None
+    last_call_id: Optional[int] = None
+    import_batch_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class ProspectPhoneListResponse(BaseModel):
+    """Liste paginee de prospects."""
+
+    total: int
+    skip: int
+    limit: int
+    items: List[ProspectPhoneResponse]
+
+
+class ProspectPhoneDetailResponse(BaseModel):
+    """Prospect + profil OSINT lie (si disponible)."""
+
+    prospect: ProspectPhoneResponse
+    osint_profile: Optional[PhoneNumberProfileResponse] = None
+
+
+class ProspectPhoneCreate(BaseModel):
+    """Creation manuelle d'un prospect."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    phone_number: Optional[str] = Field(None, max_length=64)
+    source_city: Optional[str] = Field(None, max_length=128)
+    city: Optional[str] = Field(None, max_length=128)
+    postal_code: Optional[str] = Field(None, max_length=16)
+    address_1: Optional[str] = Field(None, max_length=500)
+    address_2: Optional[str] = Field(None, max_length=500)
+    website: Optional[str] = Field(None, max_length=500)
+    country: Optional[str] = Field(None, max_length=128)
+    verification_status: ProspectPhoneVerificationStatus = "pending"
+    verification_notes: Optional[str] = Field(None, max_length=4000)
+
+
+class ProspectPhoneUpdate(BaseModel):
+    """Mise a jour d'un prospect (champs envoyes uniquement)."""
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    phone_number: Optional[str] = Field(None, max_length=64)
+    source_city: Optional[str] = Field(None, max_length=128)
+    city: Optional[str] = Field(None, max_length=128)
+    postal_code: Optional[str] = Field(None, max_length=16)
+    address_1: Optional[str] = Field(None, max_length=500)
+    address_2: Optional[str] = Field(None, max_length=500)
+    website: Optional[str] = Field(None, max_length=500)
+    country: Optional[str] = Field(None, max_length=128)
+    verification_status: Optional[ProspectPhoneVerificationStatus] = None
+    verification_notes: Optional[str] = Field(None, max_length=4000)
+    verified_at: Optional[datetime] = None
+    last_call_id: Optional[int] = None
+
+
+class ProspectPhoneImportSummary(BaseModel):
+    """Resume d'import Excel vers prospect_phones."""
+
+    batch_id: int
+    original_filename: Optional[str] = None
+    source_city: Optional[str] = None
+    total_rows: int = 0
+    imported_rows: int = 0
+    skipped_with_website: int = 0
+    skipped_invalid: int = 0
+    skipped_duplicates: int = 0
+    phase: str = "pending"
+    enrich_total: int = 0
+    enrich_done: int = 0
+    enrich_failed: int = 0
+    enrich_queued: int = 0
+    last_error: Optional[str] = None
+
+
 class PublicApiTokenCreate(BaseModel):
     """Creation d'un token API public."""
 

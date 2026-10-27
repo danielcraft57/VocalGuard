@@ -273,6 +273,135 @@ def _apply_lightweight_migrations(engine) -> None:
             )
             logger.info("Migration légère appliquée: table entreprise_email_links créée")
 
+        _migrate_prospect_phones_sqlite(conn, inspector, table_names)
+
+    _sqlite_add_missing_model_columns(engine)
+
+
+def _sqlite_type_sql(col) -> str:
+    """Type SQLite approximatif pour un ALTER TABLE ADD COLUMN."""
+    from sqlalchemy import Boolean, Date, DateTime, Float, Integer, String, Text, Time
+
+    t = col.type
+    if isinstance(t, Boolean):
+        return "BOOLEAN"
+    if isinstance(t, Integer):
+        return "INTEGER"
+    if isinstance(t, Float):
+        return "FLOAT"
+    if isinstance(t, DateTime):
+        return "DATETIME"
+    if isinstance(t, Date):
+        return "DATE"
+    if isinstance(t, Time):
+        return "TIME"
+    if isinstance(t, Text):
+        return "TEXT"
+    if isinstance(t, String):
+        return f"VARCHAR({t.length or 255})"
+    return "TEXT"
+
+
+def _sqlite_column_default_sql(col) -> str:
+    """Default SQL si la valeur est un scalaire (pas un callable)."""
+    default = getattr(col, "default", None)
+    arg = getattr(default, "arg", None) if default is not None else None
+    if arg is None or callable(arg):
+        server = getattr(col, "server_default", None)
+        server_arg = getattr(getattr(server, "arg", None), "text", None) if server is not None else None
+        if isinstance(server_arg, str) and server_arg.strip():
+            return f" DEFAULT {server_arg.strip()}"
+        return ""
+    if isinstance(arg, bool):
+        return f" DEFAULT {1 if arg else 0}"
+    if isinstance(arg, (int, float)):
+        return f" DEFAULT {arg}"
+    if isinstance(arg, str):
+        escaped = arg.replace("'", "''")
+        return f" DEFAULT '{escaped}'"
+    return ""
+
+
+def _sqlite_add_missing_model_columns(engine) -> None:
+    """
+    Aligne SQLite sur les modeles SQLAlchemy.
+
+    create_all cree les tables absentes mais n'ajoute pas les colonnes
+    sur une table deja la (cas Alembic non joue en local).
+    """
+    if engine.dialect.name != "sqlite":
+        return
+    inspector = inspect(engine)
+    existing = set(inspector.get_table_names())
+    added = 0
+    with engine.begin() as conn:
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing:
+                continue
+            have = {c["name"] for c in inspector.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in have or col.primary_key:
+                    continue
+                sql_type = _sqlite_type_sql(col)
+                default_sql = _sqlite_column_default_sql(col)
+                nullable = bool(col.nullable)
+                if not nullable and not default_sql:
+                    default_sql = " DEFAULT 0" if sql_type in ("INTEGER", "FLOAT", "BOOLEAN") else " DEFAULT ''"
+                null_sql = "" if not nullable else ""
+                if nullable:
+                    null_sql = ""
+                else:
+                    null_sql = " NOT NULL"
+                ddl = (
+                    f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" '
+                    f"{sql_type}{null_sql}{default_sql}"
+                )
+                conn.execute(text(ddl))
+                added += 1
+                logger.info("SQLite: colonne ajoutee {}.{}", table.name, col.name)
+    if added:
+        logger.info("SQLite: {} colonne(s) manquante(s) ajoutee(s)", added)
+
+
+def _migrate_prospect_phones_sqlite(conn, inspector, table_names: set) -> None:
+    """Ajoute les colonnes d'enrichissement si la table existait deja (create_all ne les ajoute pas)."""
+    if "prospect_phones" not in table_names:
+        return
+    cols = {col["name"] for col in inspector.get_columns("prospect_phones")}
+    additions = (
+        ("website", "ALTER TABLE prospect_phones ADD COLUMN website VARCHAR(500)"),
+        ("category_translate_raw", "ALTER TABLE prospect_phones ADD COLUMN category_translate_raw VARCHAR(500)"),
+        ("phone_profile_id", "ALTER TABLE prospect_phones ADD COLUMN phone_profile_id INTEGER"),
+        ("osint_status", "ALTER TABLE prospect_phones ADD COLUMN osint_status VARCHAR(32) NOT NULL DEFAULT 'pending'"),
+        ("prospectlab_status", "ALTER TABLE prospect_phones ADD COLUMN prospectlab_status VARCHAR(32) NOT NULL DEFAULT 'pending'"),
+        ("prospectlab_entreprise_id", "ALTER TABLE prospect_phones ADD COLUMN prospectlab_entreprise_id INTEGER"),
+        ("prospectlab_name", "ALTER TABLE prospect_phones ADD COLUMN prospectlab_name VARCHAR(255)"),
+        ("osint_company_name", "ALTER TABLE prospect_phones ADD COLUMN osint_company_name VARCHAR(255)"),
+        ("osint_reputation", "ALTER TABLE prospect_phones ADD COLUMN osint_reputation VARCHAR(32)"),
+        ("osint_operator", "ALTER TABLE prospect_phones ADD COLUMN osint_operator VARCHAR(128)"),
+        ("osint_region", "ALTER TABLE prospect_phones ADD COLUMN osint_region VARCHAR(128)"),
+        ("name_match_status", "ALTER TABLE prospect_phones ADD COLUMN name_match_status VARCHAR(32)"),
+        ("enriched_at", "ALTER TABLE prospect_phones ADD COLUMN enriched_at DATETIME"),
+    )
+    for name, ddl in additions:
+        if name not in cols:
+            conn.execute(text(ddl))
+            logger.info("Migration sqlite: prospect_phones.{}", name)
+
+    if "prospect_phone_import_batches" in table_names:
+        batch_cols = {col["name"] for col in inspector.get_columns("prospect_phone_import_batches")}
+        for name, ddl in (
+            ("phase", "ALTER TABLE prospect_phone_import_batches ADD COLUMN phase VARCHAR(32) NOT NULL DEFAULT 'pending'"),
+            ("enrich_total", "ALTER TABLE prospect_phone_import_batches ADD COLUMN enrich_total INTEGER NOT NULL DEFAULT 0"),
+            ("enrich_done", "ALTER TABLE prospect_phone_import_batches ADD COLUMN enrich_done INTEGER NOT NULL DEFAULT 0"),
+            ("enrich_failed", "ALTER TABLE prospect_phone_import_batches ADD COLUMN enrich_failed INTEGER NOT NULL DEFAULT 0"),
+            ("enrich_queued", "ALTER TABLE prospect_phone_import_batches ADD COLUMN enrich_queued INTEGER NOT NULL DEFAULT 0"),
+            ("last_error", "ALTER TABLE prospect_phone_import_batches ADD COLUMN last_error VARCHAR(500)"),
+        ):
+            if name not in batch_cols:
+                conn.execute(text(ddl))
+                logger.info("Migration sqlite: prospect_phone_import_batches.{}", name)
+
 
 def get_db() -> Session:
     """

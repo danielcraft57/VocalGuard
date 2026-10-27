@@ -11,6 +11,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from loguru import logger
+from pydantic import BaseModel, Field
 
 from backend.api.dependencies import get_config
 from backend.core.config import Config
@@ -329,6 +330,39 @@ async def get_elevenlabs_voices(config: Config = Depends(get_config)) -> dict[st
     Si la clef n'a pas ``voices_read``, retourne le catalogue curate VocalGuard.
     """
     return list_elevenlabs_voices(config)
+
+
+@router.get("/settings/incoming-call/elevenlabs/keys")
+async def get_elevenlabs_keys_status(force: bool = False) -> dict[str, Any]:
+    """
+    Statut du pool multi-clefs (quotas, reset, clef active).
+
+    Les clefs sont masquees (jamais renvoyees en clair).
+    """
+    from backend.voice.elevenlabs_key_pool import pool_status
+
+    return pool_status(force=force)
+
+
+class ElevenLabsKeyActivateBody(BaseModel):
+    """Activation manuelle d'une clef du pool."""
+
+    fingerprint: str = Field(..., min_length=6, max_length=64)
+
+
+@router.post("/settings/incoming-call/elevenlabs/keys/activate")
+async def activate_elevenlabs_key(body: ElevenLabsKeyActivateBody) -> dict[str, Any]:
+    """
+    Force la clef active du pool (par empreinte).
+
+    @param body Fingerprint sha256 tronque.
+    """
+    from backend.voice.elevenlabs_key_pool import pool_status, set_active_fingerprint
+
+    chosen = set_active_fingerprint(body.fingerprint.strip())
+    if chosen is None:
+        raise HTTPException(status_code=404, detail="Clef inconnue dans le pool")
+    return pool_status(force=False)
 
 
 @router.post("/settings/incoming-call/elevenlabs/preview")

@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { AppRouterCacheProvider } from "@mui/material-nextjs/v16-appRouter";
 import { CssBaseline, ThemeProvider as MuiThemeProvider } from "@mui/material";
 import { ThemeProvider, useTheme } from "../contexts/ThemeContext";
 import { createVocalGuardTheme } from "../theme/vocalguardTheme";
@@ -27,8 +28,10 @@ function MuiBridge({ children }: { children: React.ReactNode }) {
  */
 export function ThemeProviderWrapper({ children }: { children: React.ReactNode }) {
   return (
-    <ThemeProvider>
-      <MuiBridge>{children}</MuiBridge>
-    </ThemeProvider>
+    <AppRouterCacheProvider>
+      <ThemeProvider>
+        <MuiBridge>{children}</MuiBridge>
+      </ThemeProvider>
+    </AppRouterCacheProvider>
   );
 }

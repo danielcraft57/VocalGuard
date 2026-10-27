@@ -134,7 +134,15 @@ export interface PhoneNumberProfile {
   is_company: boolean;
   name?: string | null;
   company_name?: string | null;
+  company_siren?: string | null;
+  company_siret?: string | null;
+  company_activity?: string | null;
+  company_address?: string | null;
   reputation?: string | null;
+  spam_type?: string | null;
+  spam_score?: number | null;
+  is_robocall?: boolean;
+  sources?: string[];
   is_spam: boolean;
   is_scam: boolean;
   is_commercial: boolean;

@@ -96,7 +96,7 @@ export function KbTchatchePanel(): React.ReactElement {
       setBootstrapping(false);
     }
 
-    const intentCache = loadIntentsCache();
+    const intentCache = loadIntentsCache("inbound");
     if (intentCache?.intents?.length) {
       setIntents(intentCache.intents);
     }
@@ -123,10 +123,10 @@ export function KbTchatchePanel(): React.ReactElement {
       else setBootstrapping(true);
 
       try {
-        let rows = loadIntentsCache()?.intents;
-        if (!rows?.length || !isIntentsCacheFresh(loadIntentsCache())) {
-          rows = await fetchKbIntents(false, ac.signal);
-          if (!ac.signal.aborted) saveIntentsCache(rows);
+        let rows = loadIntentsCache("inbound")?.intents;
+        if (!rows?.length || !isIntentsCacheFresh(loadIntentsCache("inbound"))) {
+          rows = await fetchKbIntents(false, ac.signal, "inbound");
+          if (!ac.signal.aborted) saveIntentsCache("inbound", rows);
         }
         if (cancelled || ac.signal.aborted) return;
         setIntents(rows);
@@ -343,9 +343,9 @@ export function KbTchatchePanel(): React.ReactElement {
 
   const reloadIntents = useCallback(async () => {
     try {
-      const rows = await fetchKbIntents(false);
+      const rows = await fetchKbIntents(false, undefined, "inbound");
       setIntents(rows);
-      saveIntentsCache(rows);
+      saveIntentsCache("inbound", rows);
     } catch {
       /* ignore */
     }

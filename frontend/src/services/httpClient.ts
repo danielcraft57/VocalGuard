@@ -83,7 +83,15 @@ export async function getJson<T>(path: string, signal?: AbortSignal): Promise<T>
   const res = await fetch(`${baseUrl}${path}`, { cache: "no-store", signal });
 
   if (!res.ok) {
-    throw new Error(`Erreur API GET ${path}: ${res.status}`);
+    const text = await res.text().catch(() => "");
+    let detail = text.replace(/\s+/g, " ").trim().slice(0, 400);
+    try {
+      const body = JSON.parse(text) as { detail?: unknown };
+      if (typeof body.detail === "string") detail = body.detail;
+    } catch {
+      // corps non JSON
+    }
+    throw new Error(detail || `Erreur API GET ${path}: ${res.status}`);
   }
 
   return (await res.json()) as T;

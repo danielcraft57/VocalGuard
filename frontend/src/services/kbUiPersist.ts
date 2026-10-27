@@ -9,22 +9,40 @@
 import type { KbIntent } from "./kbApi";
 import type { ChatSession } from "../components/kb/chatHistory";
 
-const INTENTS_KEY = "vg_kb_intents_cache_v1";
-const KB_UI_KEY = "vg_kb_ui_state_v1";
+const INTENTS_KEY = "vg_kb_intents_cache_v2";
+const KB_UI_KEY = "vg_kb_ui_state_v2";
 const SIM_UI_KEY = "vg_sim_ui_state_v1";
 const CHATS_KEY = "vg_kb_chats_cache_v1";
 
 /** TTL intents en session (ms) - au-dela on refresh silencieusement. */
 export const INTENTS_TTL_MS = 5 * 60 * 1000;
 
-type IntentsCache = {
+/** Profils catalogue KB (collections Qdrant). */
+export type KbProfile = "inbound" | "outbound_commercial";
+
+export type KbVoicePrefs = {
+  tts_provider: "edge" | "elevenlabs";
+  edge_tts_voice: string;
+  edge_tts_rate: string;
+  edge_tts_pitch: string;
+  tts_voice_gain_db: number;
+  elevenlabs_voice_id: string;
+};
+
+type IntentsCacheEntry = {
   intents: KbIntent[];
   savedAt: number;
+};
+
+type IntentsCacheStore = {
+  byProfile: Partial<Record<KbProfile, IntentsCacheEntry>>;
 };
 
 export type KbUiState = {
   filterQ: string;
   groupFilter: string;
+  profile: KbProfile;
+  voiceByProfile: Partial<Record<KbProfile, KbVoicePrefs>>;
 };
 
 export type SimulatorUiState = {
@@ -38,8 +56,18 @@ type ChatsCache = {
   savedAt: number;
 };
 
+/** Prefs voix par defaut (proche incoming-audio). */
+export const DEFAULT_KB_VOICE_PREFS: KbVoicePrefs = {
+  tts_provider: "edge",
+  edge_tts_voice: "fr-FR-VivienneMultilingualNeural",
+  edge_tts_rate: "+0%",
+  edge_tts_pitch: "+0Hz",
+  tts_voice_gain_db: -6,
+  elevenlabs_voice_id: "JBFqnCBsd6RMkjVDRZzb"
+};
+
 /** Cache memoire (meme onglet SPA). */
-let memoryIntents: IntentsCache | null = null;
+let memoryIntents: IntentsCacheStore | null = null;
 let memoryChats: ChatsCache | null = null;
 
 function readJson<T>(key: string): T | null {
@@ -63,27 +91,50 @@ function writeJson(key: string, value: unknown): void {
 }
 
 /**
- * Lit le cache intents (memoire puis session).
+ * Prefs voix pour un profil (merge avec defauts).
  *
+ * @param state Etat UI.
+ * @param profile Catalogue.
+ * @returns Prefs completes.
+ */
+export function voicePrefsForProfile(
+  state: KbUiState,
+  profile: KbProfile
+): KbVoicePrefs {
+  return { ...DEFAULT_KB_VOICE_PREFS, ...(state.voiceByProfile?.[profile] || {}) };
+}
+
+/**
+ * Lit le cache intents pour un profil (memoire puis session).
+ *
+ * @param profile Catalogue.
  * @returns Cache ou null.
  */
-export function loadIntentsCache(): IntentsCache | null {
-  if (memoryIntents?.intents?.length) return memoryIntents;
-  const fromSession = readJson<IntentsCache>(INTENTS_KEY);
-  if (fromSession?.intents?.length) {
-    memoryIntents = fromSession;
-    return fromSession;
+export function loadIntentsCache(profile: KbProfile): IntentsCacheEntry | null {
+  const fromMem = memoryIntents?.byProfile?.[profile];
+  if (fromMem?.intents?.length) return fromMem;
+  const store = readJson<IntentsCacheStore>(INTENTS_KEY);
+  if (store?.byProfile?.[profile]?.intents?.length) {
+    memoryIntents = store;
+    return store.byProfile[profile]!;
   }
   return null;
 }
 
 /**
- * Ecrit le cache intents.
+ * Ecrit le cache intents pour un profil.
  *
+ * @param profile Catalogue.
  * @param intents Liste API.
  */
-export function saveIntentsCache(intents: KbIntent[]): void {
-  const payload: IntentsCache = { intents, savedAt: Date.now() };
+export function saveIntentsCache(profile: KbProfile, intents: KbIntent[]): void {
+  const prev = memoryIntents || readJson<IntentsCacheStore>(INTENTS_KEY) || { byProfile: {} };
+  const payload: IntentsCacheStore = {
+    byProfile: {
+      ...prev.byProfile,
+      [profile]: { intents, savedAt: Date.now() }
+    }
+  };
   memoryIntents = payload;
   writeJson(INTENTS_KEY, payload);
 }
@@ -95,7 +146,7 @@ export function saveIntentsCache(intents: KbIntent[]): void {
  * @param ttlMs Duree de vie.
  */
 export function isIntentsCacheFresh(
-  cache: IntentsCache | null,
+  cache: IntentsCacheEntry | null,
   ttlMs: number = INTENTS_TTL_MS
 ): boolean {
   if (!cache?.intents?.length) return false;
@@ -103,22 +154,26 @@ export function isIntentsCacheFresh(
 }
 
 /**
- * Etat UI page KB (filtres).
+ * Etat UI page KB (filtres + profil + voix).
  *
  * @returns Etat ou defaut.
  */
 export function loadKbUiState(): KbUiState {
   const stored = readJson<KbUiState>(KB_UI_KEY);
+  const profile: KbProfile =
+    stored?.profile === "outbound_commercial" ? "outbound_commercial" : "inbound";
   return {
     filterQ: stored?.filterQ ?? "",
-    groupFilter: stored?.groupFilter ?? "all"
+    groupFilter: stored?.groupFilter ?? "all",
+    profile,
+    voiceByProfile: stored?.voiceByProfile ?? {}
   };
 }
 
 /**
- * Sauve filtres KB.
+ * Sauve etat KB.
  *
- * @param state Filtres.
+ * @param state Etat complet.
  */
 export function saveKbUiState(state: KbUiState): void {
   writeJson(KB_UI_KEY, state);

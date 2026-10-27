@@ -24,11 +24,12 @@ import {
  * @returns Etat telephonie ou null.
  */
 export function useTelephonyStatus(pollMs = 8000): TelephonyStatus | null {
-  const [tel, setTel] = useState<TelephonyStatus | null>(() =>
-    loadUiCache<TelephonyStatus>(UI_CACHE_KEYS.telephonyStatus)
-  );
+  const [tel, setTel] = useState<TelephonyStatus | null>(null);
 
   useEffect(() => {
+    const cached = loadUiCache<TelephonyStatus>(UI_CACHE_KEYS.telephonyStatus);
+    if (cached) setTel(cached);
+
     let cancelled = false;
     let current: AbortController | null = null;
 

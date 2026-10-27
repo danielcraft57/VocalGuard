@@ -1,22 +1,33 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import Link from "next/link";
-import { Button, Stack, Typography } from "@mui/material";
+import { Button, Stack, Tab, Tabs, Typography } from "@mui/material";
+import ForumIcon from "@mui/icons-material/Forum";
+import CampaignIcon from "@mui/icons-material/Campaign";
 import { AppLayout } from "../../components/AppLayout";
 import { KbTchatchePanel } from "../../components/kb/KbTchatchePanel";
 import { KbVectorEngineChip } from "../../components/kb/KbVectorEngineChip";
+import { CommercialSimulatorPanel } from "../../components/CommercialSimulatorPanel";
 import { VgPageHeader } from "../../components/mui/VgPageHeader";
 
+type SimTab = "inbound" | "outbound";
+
 /**
- * Simulateur d'appel : Tchatche + historique des conversations.
+ * Simulateur d'appel : entrant (tchatche) ou commercial sortant (HP).
  */
 export default function SimulatorPage(): React.ReactElement {
+  const [tab, setTab] = useState<SimTab>("outbound");
+
   return (
     <AppLayout title="Simulateur d'appel" hidePageHeader>
       <VgPageHeader
         title="Simulateur d'appel"
-        subtitle="Tchatche comme un appelant : intents, Qdrant, historique des conversations."
+        subtitle={
+          tab === "outbound"
+            ? "Commercial sortant : QCM 1-5 et voix sur les haut-parleurs (sans modem)."
+            : "Entrant : tchatche comme un appelant (pipeline repondeur)."
+        }
         action={
           <Stack direction="row" spacing={1} sx={{ flexWrap: "wrap", gap: 1, alignItems: "center" }}>
             <KbVectorEngineChip />
@@ -26,11 +37,44 @@ export default function SimulatorPage(): React.ReactElement {
           </Stack>
         }
       />
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Tape ce que dirait le prospect / appelant. Les reponses viennent de la KB
-        (meme pipeline que le repondeur conversation).
-      </Typography>
-      <KbTchatchePanel />
+
+      <Tabs
+        value={tab}
+        onChange={(_, v: SimTab) => setTab(v)}
+        sx={{ mb: 2 }}
+      >
+        <Tab
+          value="outbound"
+          icon={<CampaignIcon fontSize="small" />}
+          iconPosition="start"
+          label="Commercial sortant"
+        />
+        <Tab
+          value="inbound"
+          icon={<ForumIcon fontSize="small" />}
+          iconPosition="start"
+          label="Entrant / Tchatche"
+        />
+      </Tabs>
+
+      {tab === "outbound" ? (
+        <>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Clique « Ouverture » pour les phrases de presentation, ou simule le
+            prospect puis choisis avec le clavier 1-5. Prochaine etape : micro PC
+            + STT node15.
+          </Typography>
+          <CommercialSimulatorPanel />
+        </>
+      ) : (
+        <>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            Tape ce que dirait le prospect / appelant. Les reponses viennent de
+            la KB (meme pipeline que le repondeur conversation).
+          </Typography>
+          <KbTchatchePanel />
+        </>
+      )}
     </AppLayout>
   );
 }

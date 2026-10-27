@@ -80,11 +80,20 @@ def curated_elevenlabs_voices(*, fr_first: bool = True) -> list[dict[str, Any]]:
 
 def resolve_elevenlabs_api_key(config: Config) -> Optional[str]:
     """
-    Lit la clef API depuis la config / env.
+    Lit la clef API active (pool multi-clefs ou clef unique).
 
     @param config Configuration VocalGuard.
     @returns Clef ou None.
     """
+    try:
+        from backend.voice.elevenlabs_key_pool import resolve_active_api_key
+
+        pooled = resolve_active_api_key()
+        if pooled:
+            return pooled
+    except Exception as exc:
+        logger.debug("Pool ElevenLabs ignore: {}", exc)
+
     key = getattr(config, "elevenlabs_api_key", None)
     if key:
         return str(key).strip() or None

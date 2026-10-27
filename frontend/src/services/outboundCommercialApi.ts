@@ -122,6 +122,15 @@ export async function fetchCommercialPresentation(): Promise<CommercialPhrasesRe
 }
 
 /**
+ * URL de lecture d'un WAV commercial (HP navigateur).
+ *
+ * @param basename Sans extension.
+ */
+export function getCommercialVoiceUrl(basename: string): string {
+  return `${getApiBaseUrl()}/kb/outbound-commercial/voice/${encodeURIComponent(basename)}`;
+}
+
+/**
  * Prefetch voix sortantes (Edge ou ElevenLabs).
  *
  * @param force Ignore cache.

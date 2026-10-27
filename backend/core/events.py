@@ -50,6 +50,14 @@ class EventType(str, Enum):
     ENTREPRISE_IMPORT_COMPLETED = "entreprise.import.completed"
     ENTREPRISE_IMPORT_FAILED = "entreprise.import.failed"
 
+    PROSPECT_PHONE_IMPORT_STARTED = "prospect_phone.import.started"
+    PROSPECT_PHONE_IMPORT_PROGRESS = "prospect_phone.import.progress"
+    PROSPECT_PHONE_IMPORT_COMPLETED = "prospect_phone.import.completed"
+    PROSPECT_PHONE_IMPORT_FAILED = "prospect_phone.import.failed"
+    PROSPECT_PHONE_ENRICH_PROGRESS = "prospect_phone.enrich.progress"
+    PROSPECT_PHONE_ENRICH_ROW = "prospect_phone.enrich.row"
+    PROSPECT_PHONE_ENRICH_COMPLETED = "prospect_phone.enrich.completed"
+
     # OSINT (tâches Celery)
     OSINT_PROFILE_COMPLETED = "osint.profile.completed"
     OSINT_PROFILE_FAILED = "osint.profile.failed"

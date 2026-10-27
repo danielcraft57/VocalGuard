@@ -9,11 +9,14 @@ import {
   chooseCommercialPhrase,
   fetchCommercialPhrases,
   fetchCommercialPresentation,
+  getCommercialVoiceUrl,
   type CommercialPhrase,
   type CommercialSuggestion
 } from "../services/outboundCommercialApi";
 
 type Step = "intents" | "phrases" | "presentation";
+
+export type CommercialPlaybackMode = "modem" | "speakers";
 
 type Props = {
   open: boolean;
@@ -21,6 +24,10 @@ type Props = {
   connected: boolean;
   suggestions: CommercialSuggestion[];
   onClearSuggestions?: () => void;
+  /** modem = ligne telephonique ; speakers = HP du PC (simulateur). */
+  playbackMode?: CommercialPlaybackMode;
+  /** Message si aucune suggestion (defaut = attente STT). */
+  emptyHint?: string;
 };
 
 const listBtn = (active: boolean): React.CSSProperties => ({
@@ -53,7 +60,9 @@ export function OutboundCommercialChoicesPanel({
   callId,
   connected,
   suggestions,
-  onClearSuggestions
+  onClearSuggestions,
+  playbackMode = "modem",
+  emptyHint
 }: Props): React.ReactElement | null {
   const [step, setStep] = useState<Step>("intents");
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
@@ -61,6 +70,7 @@ export function OutboundCommercialChoicesPanel({
   const [busy, setBusy] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
   const [presentationLoaded, setPresentationLoaded] = useState(false);
+  const audioRef = React.useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     if (!open) {
@@ -102,13 +112,35 @@ export function OutboundCommercialChoicesPanel({
       setBusy(true);
       setStatusMsg(null);
       try {
+        const playOnModem =
+          playbackMode === "modem" && Boolean(callId) && connected;
         const res = await chooseCommercialPhrase(
           selectedTag,
           variantIndex,
           callId,
-          Boolean(callId) && connected
+          playOnModem
         );
-        if (res.played) {
+
+        if (playbackMode === "speakers") {
+          if (!res.wav_basename) {
+            setStatusMsg("Pas de basename WAV pour cette phrase");
+          } else {
+            try {
+              if (!audioRef.current) audioRef.current = new Audio();
+              const el = audioRef.current;
+              el.pause();
+              el.src = getCommercialVoiceUrl(res.wav_basename);
+              await el.play();
+              setStatusMsg(`HP : ${res.text.slice(0, 80)}…`);
+            } catch (playErr) {
+              setStatusMsg(
+                playErr instanceof Error
+                  ? playErr.message
+                  : "Lecture HP impossible (WAV manquant ?)"
+              );
+            }
+          }
+        } else if (res.played) {
           setStatusMsg(`Joue : ${res.text.slice(0, 80)}…`);
         } else if (res.play_error) {
           setStatusMsg(res.play_error);
@@ -125,7 +157,7 @@ export function OutboundCommercialChoicesPanel({
         setBusy(false);
       }
     },
-    [selectedTag, callId, connected, onClearSuggestions]
+    [selectedTag, callId, connected, onClearSuggestions, playbackMode]
   );
 
   const loadPresentation = useCallback(async () => {
@@ -249,7 +281,8 @@ export function OutboundCommercialChoicesPanel({
 
       {showIntents && suggestions.length === 0 ? (
         <div style={{ fontSize: "0.75rem", color: "#94a3b8" }}>
-          En attente de la parole du prospect (STT) pour proposer 5 situations…
+          {emptyHint ||
+            "En attente de la parole du prospect (STT) pour proposer 5 situations…"}
         </div>
       ) : null}
 

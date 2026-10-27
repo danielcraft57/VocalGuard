@@ -705,7 +705,20 @@ class CallManager:
                 getattr(self.config, "edge_tts_pitch", "?"),
                 getattr(self.config, "edge_tts_rate", "?"),
             )
-            await self._warmup_ivr_cache()
+            skip_ivr_warmup = os.getenv("VG_SKIP_IVR_WARMUP", "").strip().lower() in (
+                "1",
+                "true",
+                "yes",
+            )
+            if self.config.use_telephony_daemon:
+                skip_ivr_warmup = True
+            if skip_ivr_warmup:
+                logger.info(
+                    "Warmup cache IVR ignore (modem sur daemon telephonie ou VG_SKIP_IVR_WARMUP). "
+                    "Accueil ElevenLabs / modem : genere sur node14, pas sur cette API."
+                )
+            else:
+                await self._warmup_ivr_cache()
 
         logger.info(
             "Gestionnaire d'appels initialisé (STT: %s, TTS: %s)",
@@ -1134,9 +1147,29 @@ class CallManager:
         return None
 
     async def _warmup_ivr_cache(self) -> None:
-        """Pre-genere les WAV d'accueil / au revoir pour supprimer l'attente edge-tts a l'appel."""
+        """Pre-genere les WAV d'accueil / au revoir (Edge ou ElevenLabs selon reglages audio)."""
         settings = self._incoming_settings()
         refresh_modem_voice_assets(self.config, settings)
+        provider = str(
+            getattr(settings.audio, "tts_provider", None) or "edge"
+        ).strip().lower()
+
+        if provider == "elevenlabs":
+            try:
+                await self.regenerate_greeting_cache()
+                logger.info("Warmup accueil: cache modem regenere via ElevenLabs")
+            except Exception as exc:
+                logger.warning(
+                    "Warmup accueil ElevenLabs ignore ({}). Verifie ELEVENLABS_API_KEY.",
+                    exc,
+                )
+            beep_path = self._ensure_ivr_wav_dir() / "voicemail_beep.wav"
+            if not beep_path.is_file() or not beep_path.stat().st_size:
+                write_beep_wav_8k(beep_path, profile=getattr(self.modem, "voice_profile", None))
+            await self._warmup_track_greeting_cache()
+            self._refresh_early_greeting_wav()
+            return
+
         greeting = await self._ivr_cache.ensure(self._greeting_text(), "voicemail_greeting")
         goodbye_text = self._voicemail_goodbye_text()
         goodbye = await self._ivr_cache.ensure(goodbye_text, "voicemail_goodbye")

@@ -43,15 +43,14 @@ export interface TopbarProps {
  * Bandeau superieur Material : menu, switch mode ligne, titre, pastille modem.
  */
 export const Topbar: React.FC<TopbarProps> = ({ title, onMenuClick }) => {
-  const cachedSettings = loadUiCache<SettingsSnapshot>(UI_CACHE_KEYS.settingsSnapshot);
-  const [mode, setMode] = useState<IncomingLineMode>(
-    () => cachedSettings?.incoming_line_mode || "voicemail"
-  );
+  const [mode, setMode] = useState<IncomingLineMode>("voicemail");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tel = useTelephonyStatus(8000);
 
   useEffect(() => {
+    const cached = loadUiCache<SettingsSnapshot>(UI_CACHE_KEYS.settingsSnapshot);
+    if (cached?.incoming_line_mode) setMode(cached.incoming_line_mode);
     const ac = new AbortController();
     fetchSettings(ac.signal)
       .then((s) => {
