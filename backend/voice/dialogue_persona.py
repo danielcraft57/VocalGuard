@@ -20,6 +20,8 @@ ONESHOT_TAGS = frozenset(
         "remerciements",
         "silence_attente",
         "hors_sujet",
+        "out_are_you_ai",
+        "out_trivia_trap",
     }
 )
 
@@ -34,6 +36,23 @@ FOLLOW_UP_BOOST: Dict[str, Tuple[str, ...]] = {
     "parler_direction": ("presence_demande", "absent_laisser_message", "rappel_callback"),
     "parler_humain": ("absent_laisser_message", "rappel_callback", "prendre_coordonnees"),
     "presence_demande": ("absent_laisser_message", "rappel_callback", "prendre_coordonnees"),
+    # Appel commercial sortant : quiz -> diagnostic -> audit -> creneau.
+    "out_presentation": ("out_go_ahead",),
+    "out_who_are_you": ("out_go_ahead",),
+    "out_go_ahead": ("out_qualify_website",),
+    "out_qualify_website": ("out_qualify_leads", "out_diag_confident", "out_objection_facebook"),
+    "out_qualify_leads": ("out_propose_audit", "out_closing_audit", "out_msg_audit_perso"),
+    "out_diag_confident": ("out_propose_audit", "out_closing_audit", "out_msg_audit_perso"),
+    "out_objection_facebook": ("out_propose_audit", "out_go_ahead"),
+    "out_value_pitch": ("out_propose_audit", "out_closing_slot"),
+    "out_propose_audit": ("out_closing_slot", "out_closing_link"),
+    "out_closing_audit": ("out_closing_slot", "out_closing_link"),
+    "out_msg_audit_perso": ("out_closing_slot", "out_closing_link"),
+    "out_closing_slot": ("out_close_success",),
+    "out_closing_link": ("out_close_success",),
+    "out_callback_later": ("out_close_success",),
+    "out_are_you_ai": ("out_go_ahead",),
+    "out_trivia_trap": ("out_go_ahead",),
 }
 
 # Salutations / fillers detectes cote utilisateur.
@@ -358,9 +377,65 @@ def reshape_predictions(
         if tag and recent_tags and tag == last:
             malus += 0.20
 
-        # Suite naturelle apres salutation
+        # Suite naturelle apres salutation / quiz commercial
         if last in FOLLOW_UP_BOOST and tag in FOLLOW_UP_BOOST[last]:
             bonus += 0.18
+            if last.startswith("out_"):
+                bonus += 0.22
+        if last in (
+            "out_go_ahead",
+            "out_qualify_website",
+            "out_qualify_leads",
+            "out_diag_confident",
+            "out_propose_audit",
+            "out_closing_audit",
+            "out_objection_facebook",
+        ) and tag in ("out_not_interested", "out_goodbye"):
+            if not re.search(
+                r"pas\s+interess|ne\s+rappelez|arretez|non\s+merci",
+                user_text or "",
+                re.I,
+            ):
+                malus += 0.4
+        if last == "out_qualify_website":
+            if re.search(
+                r"super|nickel|parfait|bien visible|tres bien|en un clic",
+                user_text or "",
+                re.I,
+            ) and tag == "out_diag_confident":
+                bonus += 0.35
+            if re.search(
+                r"sais\s+pas|je\s+ne\s+sais|pas\s+vraiment|\bnon\b|pas\s+visible",
+                user_text or "",
+                re.I,
+            ) and tag == "out_qualify_leads":
+                bonus += 0.35
+        if re.search(r"\b(facebook|instagram|insta)\b", user_text or "", re.I):
+            if tag == "out_objection_facebook":
+                bonus += 0.55
+            if tag in ("out_not_interested", "out_objection_has_site"):
+                malus += 0.35
+        if re.search(
+            r"\b(robot|machine|ordi|chatgpt|repondeur|\bia\b|"
+            r"intelligence artificielle|pas humain|un bot|ordinateur)\b",
+            user_text or "",
+            re.I,
+        ):
+            if tag == "out_are_you_ai":
+                bonus += 0.55
+            if tag in ("out_objection_spam", "out_who_are_you"):
+                malus += 0.3
+        if re.search(
+            r"\b(decimale|capitale|afghanistan|kaboul|jupiter|saturne|"
+            r"racine carree|combien font|kilometres?|wikipedia|"
+            r"question piege|pour tester|\bpi)\b",
+            user_text or "",
+            re.I,
+        ):
+            if tag == "out_trivia_trap":
+                bonus += 0.55
+            if tag in ("out_unclear", "out_who_are_you", "out_go_ahead"):
+                malus += 0.3
         # Ice breaker seul → pousse le menu. Ice breaker + motif → intents utiles.
         if greeting_again and ice_only and tag in ("aide_menu", "services_info", "prise_rdv"):
             bonus += 0.25

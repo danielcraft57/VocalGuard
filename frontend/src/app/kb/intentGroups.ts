@@ -45,17 +45,17 @@ export const OUTBOUND_GROUPS: IntentGroup[] = [
   {
     id: "qualification",
     label: "Qualification",
-    hint: "Site, leads, valeur"
+    hint: "Quiz, diagnostic, valeur"
   },
   {
     id: "objections",
     label: "Objections",
-    hint: "Pas le temps, deja un site, prix, spam"
+    hint: "Facebook, IA, questions piege, prix, spam"
   },
   {
     id: "closing",
     label: "Closing",
-    hint: "Audit, creneau, lien, rappel"
+    hint: "Audit, creneau, succes, rappel"
   },
   {
     id: "autre",
@@ -135,16 +135,22 @@ const OUTBOUND_TAG_GROUP: Record<string, IntentGroupId> = {
   out_go_ahead: "presentation",
   out_qualify_website: "qualification",
   out_qualify_leads: "qualification",
+  out_diag_confident: "qualification",
   out_value_pitch: "qualification",
+  out_propose_audit: "closing",
   out_busy: "objections",
   out_objection_no_time: "objections",
   out_objection_has_site: "objections",
+  out_objection_facebook: "objections",
   out_objection_price: "objections",
   out_objection_spam: "objections",
+  out_are_you_ai: "objections",
+  out_trivia_trap: "objections",
   out_callback_later: "closing",
   out_closing_audit: "closing",
   out_closing_slot: "closing",
   out_closing_link: "closing",
+  out_close_success: "closing",
   out_not_interested: "autre",
   out_goodbye: "autre",
   out_unclear: "autre"

@@ -1,7 +1,7 @@
 {
   "version": 1,
   "source": "seed",
-  "description": "KB appel commercial sortant DanielCraft - argumentaire oral, 5 formulations par intent.",
+  "description": "KB appel commercial sortant DanielCraft - ton chaleureux, un peu taquin, mini-jeu oral, 5 formulations par intent.",
   "profile": "outbound_commercial",
   "intents": [
     {
@@ -16,15 +16,14 @@
         "oui allô",
         "oui bonjour",
         "hello",
-        "oui c est moi",
-        "je vous ecoute"
+        "oui c est moi"
       ],
       "responses": [
-        "Bonjour, c'est l'assistante de danielcraft.fr. J'appelle pour DanielCraft - on aide les boites locales a etre mieux trouvees en ligne. Vous avez trente secondes ?",
-        "Allo, assistante danielcraft.fr. Je vous contacte pour voir si un site plus clair pourrait vous ramener des demandes. Je fais tres court.",
-        "Bonjour, je suis l'assistante de DanielCraft, sur danielcraft.fr. L'idee c'est simple : plus de visibilite locale, plus de contacts. Ca vous va si je pose deux questions ?",
-        "Oui bonjour - assistante danielcraft.fr. On travaille avec des entreprises du coin sur le site et le referencement local. Je voulais juste verifier si ca peut vous servir.",
-        "Bonjour, DanielCraft au telephone via danielcraft.fr. Je ne vous vends rien de force : je regarde juste si un mini point sur votre presence web a du sens pour vous."
+        "Bonjour ! Je suis Marie, je travaille chez DanielCraft. Je vous appelle pour que les clients du coin vous trouvent sur leur téléphone. Vous me donnez trente secondes ?",
+        "Bonjour, je suis Marie, de DanielCraft. Deux questions rapides, sans bavardage, pour que vos voisins vous trouvent quand ils cherchent un professionnel sur leur téléphone. Ça vous tente ?",
+        "Bonjour, c'est Marie, je travaille chez DanielCraft. L'idée est simple : que les gens du quartier vous appellent plutôt que le concurrent. On fait un échange rapide ?"
+        "Oui bonjour, je suis Marie, je travaille chez DanielCraft. Pas de gros discours : un mini-quiz pour que les clients du coin vous trouvent plus facilement. Prêt ?",
+        "Bonjour ! Je suis Marie, chez DanielCraft. Je ne vous embête pas longtemps : deux questions, et vous voyez si ça peut vous ramener des appels du coin. Ça vous va ?"
       ]
     },
     {
@@ -39,14 +38,18 @@
         "c est pour quoi",
         "quel est le sujet",
         "qui est a l appareil",
-        "d ou vous appelez"
+        "d ou vous appelez",
+        "vous travaillez ou",
+        "tu travailles ou",
+        "c est quoi votre boulot",
+        "vous etes de quelle boite"
       ],
       "responses": [
-        "Je suis l'assistante de danielcraft.fr, pour DanielCraft. On aide les entreprises a attirer plus de clients via un site clair et le referencement local.",
-        "Assistante danielcraft.fr - on s'occupe de presence en ligne pour les boites locales. Concretement : mieux vous faire trouver, transformer les visites en demandes.",
-        "C'est l'assistante DanielCraft, sur danielcraft.fr. Pas une usine a spam : on regarde si un site plus propre peut vous ramener des contacts.",
-        "Vous parlez a l'assistante de danielcraft.fr. On travaille surtout site web et visibilite locale, pour des entreprises comme la votre.",
-        "DanielCraft, danielcraft.fr. Moi je gere les appels : l'idee c'est de voir vite si on peut vous aider a etre plus visibles en ligne."
+        "Je suis Marie, je travaille chez DanielCraft. On aide les artisans et les entreprises locales pour que les clients du coin vous trouvent sur leur téléphone.",
+        "Je suis Marie, je travaille chez DanielCraft. Concrètement : quand quelqu'un cherche votre métier à côté de chez lui, c'est vous qu'il appelle, pas le voisin.",
+        "Je suis Marie, de DanielCraft. Pas de démarchage agressif, promis. On regarde si une mise au propre du site peut vous ramener des appels du quartier. Curieux ?",
+        "Je suis Marie, je travaille chez DanielCraft. Site clair, présence locale, et surtout : facile à joindre depuis un téléphone. Rien de magique.",
+        "Je suis Marie, je travaille chez DanielCraft. Je gère les premiers échanges : voir vite si vos clients du coin peuvent mieux vous trouver, sans vous forcer une vente."
       ]
     },
     {
@@ -61,14 +64,21 @@
         "j ai une minute",
         "oui dites moi",
         "ok rapide",
-        "dites"
+        "dites",
+        "ok",
+        "vas y",
+        "pret",
+        "deal",
+        "trente secondes",
+        "ca me va",
+        "je vous accorde"
       ],
       "responses": [
-        "Parfait, je reste court. Vous avez deja un site, ou vous comptez surtout sur le bouche a oreille et les reseaux ?",
-        "Top. Premiere question simple : est-ce que des gens vous trouvent facilement en ligne quand ils cherchent votre metier dans le coin ?",
-        "Merci. Je vais droit au but - aujourd'hui, d'ou viennent surtout vos nouveaux clients ?",
-        "Super. Vous etes plutot content de votre presence web, ou vous sentez que ca pourrait mieux convertir ?",
-        "Ok, on y va. Vous recevez des demandes via votre site, ou c'est encore surtout le telephone et le reseau ?"
+        "Première question : si je tape votre activité plus votre ville sur Google, là, depuis mon téléphone, vous sortez dans les premiers, ou on tombe sur vos concurrents ?",
+        "C'est parti, question une. Google, votre métier, votre ville, tout de suite sur un téléphone : c'est vous en haut, ou vos concurrents ?",
+        "Mini-quiz, première question. Si un client du coin tape votre activité et votre ville là maintenant, il vous trouve, ou le voisin ?",
+        "D'accord, on enchaîne. Question une : activité plus ville sur Google, depuis un téléphone. Premiers résultats, ou on voit surtout les autres ?",
+        "Allez, question une, toute simple : vous sortez dans les premiers sur Google dans votre ville, ou ce sont les concurrents qui prennent la place ?"
       ]
     },
     {
@@ -86,11 +96,11 @@
         "je suis en client"
       ],
       "responses": [
-        "Je comprends. Une seule question alors : gagner plus de contacts en ligne, c'est une priorite cette annee pour vous ?",
-        "Pas de souci, je coupe court. Je vous rappelle au creneau qui vous arrange - vous preferez matin ou fin de journee ?",
-        "Ok, je ne vous retiens pas. Je vous laisse mon sujet en une phrase : mini regard gratuit sur votre presence web, quand vous avez deux minutes.",
-        "Compris. Je note de rappeler plus tard. Quel jour vous irait le mieux ?",
-        "Je respecte ca. Je vous envoie juste le lien danielcraft.fr et on en reparle quand vous etes dispo - ca vous va ?"
+        "Je ne vous prends pas la journée. Une seule question alors : si je tape votre activité et votre ville sur Google depuis un téléphone, c'est vous en premier, ou vos concurrents ?",
+        "D'accord, je fais très court. Je vous propose un rappel au créneau qui vous arrange : plutôt matin calme ou fin de journée ?",
+        "Compris. Je vous laisse le sujet en une phrase : mini regard gratuit sur danielcraft.fr, quand vous avez deux minutes.",
+        "Pas de souci. Je note de revenir plus tard. Quel jour vous irait le mieux pour un échange rapide ?",
+        "Je respecte le rythme. Je vous envoie juste danielcraft.fr, et on en reparle quand vous êtes disponible. Ça vous va ?"
       ]
     },
     {
@@ -100,20 +110,25 @@
       "priority": 80,
       "wav_basename": "out_kb_out_qualify_website",
       "patterns": [
+        "je ne sais pas trop",
+        "je sais pas trop",
+        "je pense que oui",
+        "c est pas parfait",
+        "on est premier",
+        "les concurrents",
+        "on sort pas",
+        "dans les premiers",
+        "sur google oui",
+        "sur google non",
         "j ai un site",
-        "on a un site",
-        "notre site",
-        "site internet",
-        "page facebook",
-        "pas de site",
-        "pas encore de site"
+        "on a un site"
       ],
       "responses": [
-        "Ok, et ce site - vous avez l'impression qu'il vous amene vraiment des demandes, ou c'est plus une vitrine ?",
-        "D'accord. Est-ce qu'il est a jour, facile a appeler depuis le mobile, avec vos horaires bien visibles ?",
-        "Compris. Souvent le site existe, mais les gens ne trouvent pas le bon numero ou l'info utile. Ca vous parle ?",
-        "Parfait qu'il y en ait un. Est-ce que vous savez a peu pres combien de contacts il vous ramene par mois ?",
-        "Si vous n'en avez pas encore, on peut aussi partir tres simple - une page claire qui explique ce que vous faites et comment vous joindre."
+        "Deuxième question : vos horaires et votre numéro, ils sont bien visibles en un clic pour quelqu'un dans sa voiture qui cherche à vous joindre ?",
+        "Question deux, toujours sans bavardage : un client au volant, il voit vos horaires et votre téléphone en un clic, ou il doit chercher ?",
+        "D'accord, deuxième et dernière. Horaires plus numéro : clairs tout de suite sur le téléphone, ou cachés un peu trop loin ?",
+        "Mini-quiz, question deux. Quelqu'un dans sa voiture, il vous appelle en un clic, ou il galère à trouver le numéro ?",
+        "Dernière question. Sur mobile : horaires et téléphone bien visibles, ou le client doit faire défiler et chercher ?"
       ]
     },
     {
@@ -123,19 +138,49 @@
       "priority": 78,
       "wav_basename": "out_kb_out_qualify_leads",
       "patterns": [
+        "je ne sais pas",
+        "je sais pas",
+        "non",
+        "pas vraiment",
+        "c est pas visible",
+        "on trouve pas le numero",
+        "horaires caches",
+        "pas en un clic",
+        "ca marche moyen",
         "pas assez de clients",
-        "manque de demandes",
-        "je cherche des clients",
-        "besoin de leads",
-        "le telephone ne sonne pas",
-        "ca marche moyen"
+        "le telephone ne sonne pas"
       ],
       "responses": [
-        "Ok, c'est exactement le sujet. L'idee chez DanielCraft c'est de rendre votre boite plus facile a trouver quand quelqu'un cherche localement.",
-        "Je vois. Souvent ce n'est pas qu'il n'y a pas de clients - c'est qu'ils tombent sur quelqu'un d'autre en ligne. On peut regarder ca calmement.",
-        "D'accord. Vous aimeriez surtout plus d'appels, plus de messages, ou les deux ?",
-        "Compris. On peut commencer petit : clarifier votre offre en ligne et etre mieux place sur les recherches du coin.",
-        "C'est note. Un mini point sur votre presence web suffit souvent a voir s'il y a du potentiel - sans engagement."
+        "C'est super classique, vous n'êtes pas le seul. C'est exactement ce qu'on démêle chez DanielCraft.",
+        "Normal, vous n'êtes vraiment pas le seul. C'est exactement le genre de détail qu'on démêle chez DanielCraft.",
+        "D'accord, merci d'être franc. C'est super classique : on le voit souvent, et c'est exactement ce qu'on clarifie.",
+        "Vous n'êtes pas le seul à dire ça. Chez DanielCraft, on démêle justement la visibilité et le numéro trop caché.",
+        "Classique, et ce n'est pas un reproche. C'est exactement ce qu'on regarde, sans jargon, chez DanielCraft."
+      ]
+    },
+    {
+      "tag": "out_diag_confident",
+      "profile": "outbound_commercial",
+      "niveau": 2,
+      "priority": 79,
+      "wav_basename": "out_kb_out_diag_confident",
+      "patterns": [
+        "oui mon site est super",
+        "mon site est nickel",
+        "c est parfait",
+        "on est bien visible",
+        "oui ils sont visibles",
+        "oui en un clic",
+        "tout est clair",
+        "ca marche tres bien",
+        "on est bien place"
+      ],
+      "responses": [
+        "Très bien. Et il charge vite sur mobile ? Parce que si ça met plus de trois secondes à s'afficher, les clients quittent la page.",
+        "Très bien. Petite question derrière : sur téléphone, ça s'affiche en moins de trois secondes, ou ça met du temps à s'afficher ?",
+        "Parfait. Et la vitesse mobile : plus de trois secondes, et les gens du coin passent au concurrent. Ça s'affiche rapidement chez vous ?",
+        "Tant mieux. Dernier détail : sur un téléphone, votre page, elle s'affiche tout de suite, ou il faut attendre ?",
+        "D'accord, vous êtes confiant. Et sur mobile, ça charge vite ? Trois secondes, c'est déjà trop pour quelqu'un dans sa voiture."
       ]
     },
     {
@@ -152,11 +197,37 @@
         "expliquez"
       ],
       "responses": [
-        "En gros : un site plus clair, une meilleure presence locale, et des pages qui donnent envie de vous appeler. On vise des contacts utiles, pas du bruit.",
-        "DanielCraft, c'est du concret - etre trouve, comprendre vite ce que vous faites, et passer a l'action. On reste simple, pas de usine a gaz.",
-        "On regarde votre situation, on corrige ce qui freine - texte, mobile, referencement local - et on vise plus de demandes qualifies.",
-        "L'approche c'est courte et utile : on part de ce que vous avez deja, on ameliore ce qui compte pour vos clients, on mesure ce qui rentre.",
-        "Pas de discours magique. On clarifie votre offre en ligne et on vous aide a etre visible la ou vos clients cherchent deja."
+        "Pas de grand discours. On jette un œil, et je vous fais un diagnostic gratuit, en français, sans jargon : visibilité locale et vitesse du site.",
+        "On ne vous vend pas un site là maintenant. D'abord un diagnostic gratuit sous 48 heures, clair, sans jargon informatique.",
+        "L'étape suivante est gratuite : un regard sur votre visibilité locale et la vitesse mobile. Ensuite vous décidez.",
+        "Chez DanielCraft, on commence par démêler : Google local, numéro en un clic, vitesse sur téléphone. Gratuit, sans engagement.",
+        "Concret : un diagnostic en français, sous 48 heures. Pas de devis à 1132 euros d'entrée. Juste les faits, ensuite vous voyez."
+      ]
+    },
+    {
+      "tag": "out_propose_audit",
+      "profile": "outbound_commercial",
+      "niveau": 4,
+      "priority": 84,
+      "wav_basename": "out_kb_out_propose_audit",
+      "patterns": [
+        "ok",
+        "d accord",
+        "je vois",
+        "interessant",
+        "et ensuite",
+        "et donc",
+        "comment ca se passe",
+        "diagnostic gratuit",
+        "sans jargon",
+        "vous pouvez regarder ca"
+      ],
+      "responses": [
+        "Écoutez, pas de grand discours. Je vous fais un diagnostic gratuit, clair, en français, sans jargon informatique : visibilité locale et vitesse du site, sous 48 heures.",
+        "Ce que je vous propose, c'est exactement le positionnement DanielCraft : un diagnostic gratuit, lisible, sans jargon informatique. On jette un œil, vous gardez la main.",
+        "On ne vend rien là. Un diagnostic gratuit sous 48 heures, en français, sans jargon : est-ce que les clients du coin vous trouvent, et est-ce que ça charge sur téléphone.",
+        "L'étape suivante, c'est l'arme du site : diagnostic gratuit, clair, sans jargon informatique. Visibilité locale plus vitesse. Ensuite seulement, s'il y a un levier.",
+        "Diagnostic gratuit, en français, sans jargon. Pas de devis d'entrée. Juste les faits sur votre visibilité locale et la vitesse du site, sous 48 heures."
       ]
     },
     {
@@ -173,11 +244,11 @@
         "rappelez une autre fois"
       ],
       "responses": [
-        "Je comprends, vraiment. Je propose juste un mini echange de dix minutes, a un moment que vous choisissez.",
-        "Ok. Je ne vous prends pas une heure - un creneau court, et si ca ne colle pas on arrete la.",
-        "Pas de souci. Je vous note un rappel, et je prepare trois points max pour aller vite.",
-        "Je respecte votre planning. Vous preferez que je rappelle mardi matin ou en fin d'apres-midi ?",
-        "Compris. Je vous laisse danielcraft.fr, et vous me dites quand c'est plus calme - ca marche ?"
+        "Je comprends. Proposition : dix minutes, à un moment que vous choisissez. Si ça ne colle pas, on arrête là.",
+        "D'accord. Je ne vous prends pas une heure : un créneau court, et si ce n'est pas pertinent, on s'arrête là, sans rancune.",
+        "Pas de souci. Je vous note un rappel avec trois points max, histoire d'aller vite.",
+        "Je respecte votre planning. Mardi matin ou fin d'après-midi, qu'est-ce qui vous fait moins grincer des dents ?",
+        "Compris. Je vous laisse danielcraft.fr, et vous me dites quand c'est plus calme. Ça vous va ?"
       ]
     },
     {
@@ -194,11 +265,11 @@
         "c est recent mon site"
       ],
       "responses": [
-        "Tant mieux s'il y en a un. La question c'est surtout : est-ce qu'il vous amene des demandes, ou il dort un peu ?",
-        "Ok, on ne repart pas de zero. Souvent on ameliore ce qui existe - clarte, mobile, appels - sans tout casser.",
-        "Je comprends. Un site recent peut quand meme rater des details qui font la difference. Un regard exterieur ca aide parfois.",
-        "Pas de probleme. Si tout tourne bien, je m'arrete. Si vous sentez que ca pourrait mieux convertir, on peut juste jeter un oeil.",
-        "D'accord. On peut faire un mini audit gratuit sur ce que vous avez - et vous gardez ce qui marche."
+        "Tant mieux s'il y en a un. La vraie question : il vous amène des demandes, ou il dort un peu en attendant ?",
+        "D'accord, on ne repart pas de zéro. Souvent on améliore ce qui existe : clarté, mobile, appels, sans tout casser.",
+        "Je comprends. Un site récent peut quand même rater des détails qui font la différence. Un regard extérieur, ça aide parfois.",
+        "Pas de problème. Si tout tourne bien, je m'arrête là. Si vous sentez que ça pourrait mieux convertir, on jette un œil ensemble.",
+        "D'accord. Mini-audit gratuit sur ce que vous avez : vous gardez ce qui marche, on cherche le reste."
       ]
     },
     {
@@ -215,11 +286,11 @@
         "je peux pas me le permettre"
       ],
       "responses": [
-        "Je comprends pour le budget. On part souvent d'un besoin precis, pas d'une grosse facture d'entree. On peut en parler sans pression.",
-        "La question prix depend vraiment de ce qu'il faut. Avant de parler chiffre, on regarde ce qui freine vos contacts - ca evite de surpayer.",
-        "Ok. L'idee c'est que ca rapporte plus que ca coute. Un mini point gratuit permet deja de voir si ca vaut le coup.",
-        "Je ne vais pas vous balancer un tarif dans le vide. On clarifie l'objectif, ensuite on voit une option adaptee.",
-        "Compris. On peut rester tres leger au debut - clarifier l'essentiel en ligne - et avancer seulement si ca a du sens pour vous."
+        "Budget, je comprends. On part souvent d'un besoin précis, pas d'une grosse facture d'entrée. On en parle sans pression.",
+        "Le prix dépend de ce qu'il faut vraiment. Avant les chiffres, on regarde ce qui freine vos contacts : ça évite de surpayer.",
+        "L'idée, c'est que ça rapporte plus que ça coûte. Un mini point gratuit permet déjà de voir si ça vaut le coup.",
+        "Je ne vais pas vous balancer un tarif dans le vide. On clarifie l'objectif, ensuite une option adaptée.",
+        "Compris. On peut rester très léger au début, clarifier l'essentiel en ligne, et avancer seulement si ça a du sens."
       ]
     },
     {
@@ -233,15 +304,103 @@
         "j en ai marre du demarchage",
         "vous vendez quoi encore",
         "pas de pub",
-        "stop demarchage",
-        "vous etes un robot"
+        "stop demarchage"
       ],
       "responses": [
-        "Je comprends. Je ne suis pas la pour vous spammer - juste verifier si un mini regard gratuit sur votre presence web peut vous servir.",
-        "Ok, je respecte. Si ce n'est pas pertinent, on arrete la, sans relance lourde.",
-        "La pub vous embete, compris. Chez DanielCraft on propose surtout un regard utile, sans forcing.",
-        "Pas de souci. Vous me dites stop et c'est clos de mon cote.",
-        "Je suis une vraie assistante pour danielcraft.fr. Si le sujet ne vous parle pas, on coupe net - pas de problem."
+        "Je vous entends. Je ne suis pas là pour vous relancer sans cesse, juste voir si un mini regard gratuit sur votre présence web peut servir. Sinon on s'arrête.",
+        "D'accord, je comprends. Si ce n'est pas pertinent, on arrête là, sans relance lourde.",
+        "La pub vous ennuie, je comprends. Chez DanielCraft, on propose surtout un regard utile, sans insister.",
+        "Pas de souci. Vous dites stop, c'est clos de mon côté. Point.",
+        "Je suis Marie, je travaille chez DanielCraft. Si le sujet ne vous parle pas, on coupe net, promis. Sinon, trente secondes et on voit."
+      ]
+    },
+    {
+      "tag": "out_are_you_ai",
+      "profile": "outbound_commercial",
+      "niveau": 3,
+      "priority": 92,
+      "wav_basename": "out_kb_out_are_you_ai",
+      "patterns": [
+        "vous etes un robot",
+        "t es un robot",
+        "vous etes une ia",
+        "intelligence artificielle",
+        "je parle a une machine",
+        "vous etes un ordi",
+        "vous etes un ordinateur",
+        "chatgpt",
+        "c est un bot",
+        "t es une machine",
+        "vous etes humain",
+        "c est un repondeur",
+        "vous etes une machine",
+        "c est une ia",
+        "je parle a un ordinateur",
+        "c est pas un humain"
+      ],
+      "responses": [
+        "Je suis Marie, je travaille chez DanielCraft, assistante vocale. Je ne vais pas vous réciter Wikipédia. Je suis là pour voir si les clients du coin vous trouvent sur leur téléphone. On reprend le mini-quiz ?",
+        "Oui, c'est une assistante vocale DanielCraft. Pas un questionnaire de culture générale. Par contre, visibilité locale, je suis dans mon sujet. Deux questions, sans bavardage ?",
+        "Machine, IA, ordinateur : appelez ça comme vous voulez. Moi, c'est Marie, pour DanielCraft. Je ne prétends pas tout savoir. Je prétends juste clarifier si Google vous envoie des appels. On continue ?",
+        "Bonne question. Je ne suis pas un humain au bout du fil, je ne vais pas le cacher. Je ne joue pas à Pi non plus. Mini-quiz visibilité, ou on raccroche, vous choisissez.",
+        "Assistante vocale DanielCraft, pas une encyclopédie. Si vous testez si je suis vraie, je perds. Si on parle de vos clients sur Google, je suis utile. Ça vous va ?"
+      ]
+    },
+    {
+      "tag": "out_trivia_trap",
+      "profile": "outbound_commercial",
+      "niveau": 3,
+      "priority": 90,
+      "wav_basename": "out_kb_out_trivia_trap",
+      "patterns": [
+        "decimale de pi",
+        "vingt ieme decimale",
+        "capitale de l afghanistan",
+        "c est quoi la capitale",
+        "distance vers jupiter",
+        "distance de jupiter",
+        "combien de kilometres",
+        "racine carree",
+        "question piege",
+        "pour voir si vous etes vrai",
+        "pour tester",
+        "tu connais la capitale",
+        "score du match",
+        "population de la chine",
+        "wikipedia"
+      ],
+      "responses": [
+        "Je n'ai pas la réponse. Ni Pi, ni Jupiter, ni les capitales. Je ne joue pas à ça. Par contre, visibilité locale, je suis dans le vrai sujet. On y revient ?"
+        "Question piège, je la laisse aux encyclopédies. Moi, je ne connais pas la vingtième décimale de Pi, et je ne vais pas inventer. Mini-quiz Google, ou on coupe ?",
+        "Franchement, je ne sais pas. Et je ne vais pas inventer. Je suis une assistante vocale DanielCraft, pas un jeu télévisé. On reprend sur vos clients du coin ?"
+        "Beau test. Perdu pour moi. Gagné pour vous : je ne raconte pas de bêtises. On parle de votre magasin sur Google, c'est tout ce que je fais bien.",
+        "Ça, je n'ai pas la réponse, point. Pas de Wikipédia dans la tête. Deux questions sur votre visibilité, et on arrête de jouer au quiz culture."
+      ]
+    },
+    {
+      "tag": "out_objection_facebook",
+      "profile": "outbound_commercial",
+      "niveau": 3,
+      "priority": 86,
+      "wav_basename": "out_kb_out_objection_facebook",
+      "patterns": [
+        "on a facebook",
+        "c est sur facebook",
+        "facebook suff",
+        "page facebook",
+        "on n a pas besoin de site",
+        "les clients sont sur facebook",
+        "instagram suff",
+        "on fait tout sur facebook",
+        "pas de site on a facebook",
+        "facebook ca marche"
+      ],
+      "responses": [
+        "C'est super, Facebook ça marche bien pour vos habitués. Le vrai sujet, c'est le client chaud : celui qui a une urgence, qui tape votre métier plus la ville sur Google, et qui n'est pas encore sur votre page.",
+        "Facebook, c'est super. Vos clients vous y suivent, tant mieux. Par contre, celui qui a une fuite, une panne, un besoin là maintenant, il cherche sur Google, pas dans son fil d'actualité.",
+        "C'est super d'être actif là-dessus. Facebook garde les gens qui vous connaissent déjà. Google, c'est celui qui a une urgence dans le coin et qui n'a pas encore votre numéro.",
+        "Top, vous êtes présent. Le piège, c'est de croire que ça suffit : le client chaud tape une urgence sur son téléphone, et il appelle le premier qu'il trouve, souvent un concurrent.",
+        "C'est super. On ne touche pas à votre Facebook. On regarde juste si le client pressé, celui qui cherche une urgence sur Google, tombe bien sur vous."
       ]
     },
     {
@@ -260,11 +419,11 @@
         "je suis en conges"
       ],
       "responses": [
-        "Avec plaisir. Je note un rappel - vous preferez en debut de matinee ou en fin de journee ?",
-        "Ok, je vous rappelle. Quel jour vous arrange le mieux cette semaine ?",
-        "C'est note. Je vous laisse tranquille pour l'instant et je reviens au creneau que vous choisissez.",
-        "Parfait. Je programme un rappel court, dix minutes max, quand vous etes dispo.",
-        "D'accord. Je vous rappelle plus tard - si entre-temps vous voulez jeter un oeil, c'est sur danielcraft.fr."
+        "Avec plaisir. Je note un rappel : plutôt début de matinée ou fin de journée ?",
+        "D'accord, je reviens. Quel jour vous arrange le mieux cette semaine pour un échange court ?",
+        "C'est noté. Je vous laisse tranquille et je reviens au créneau que vous choisissez.",
+        "Parfait. Rappel court, dix minutes max, quand vous êtes disponible.",
+        "D'accord. Je vous rappelle plus tard. Entre-temps, danielcraft.fr si vous voulez jeter un œil."
       ]
     },
     {
@@ -279,14 +438,20 @@
         "un avis",
         "ca m interesse",
         "pourquoi pas",
-        "on peut voir"
+        "on peut voir",
+        "d accord",
+        "ok et donc",
+        "et ensuite",
+        "ca charge vite",
+        "ca rame",
+        "plus de trois secondes"
       ],
       "responses": [
-        "Super. Je vous propose un mini audit gratuit - on regarde vite fait ce qui freine, et je vous dis clairement s'il y a un levier.",
-        "Parfait. On part sur un regard court de votre presence en ligne, sans engagement. Je vous envoie ensuite deux ou trois pistes concretes.",
-        "Ok. Je note votre accord pour un mini point. Vous preferez qu'on le fasse au telephone ou que je vous envoie un resume apres coup ?",
-        "Top. L'audit reste leger : site, infos cles, facilité a vous joindre. Ensuite vous decidez librement.",
-        "Bien. Je lance ca de mon cote et on se reparle avec des faits, pas du blabla."
+        "Écoutez, pas de grand discours. Ce que je vous propose, c'est qu'on jette un coup d'œil à tout ça. Diagnostic gratuit, en français, sans jargon informatique : visibilité locale et vitesse du site.",
+        "Pas de discours inutile. Je vous fais un diagnostic gratuit sous 48 heures, en français, de votre visibilité locale et de la vitesse du site. Sans engagement.",
+        "On jette un œil, c'est tout. Diagnostic gratuit sous 48 heures, sans jargon : est-ce que les clients du coin vous trouvent, et est-ce que ça charge sur téléphone.",
+        "Ce qui compte, c'est l'étape suivante, gratuite : un diagnostic clair, en français, visibilité locale plus vitesse mobile. Vous gardez la main.",
+        "On ne parle pas tarif là. D'abord un diagnostic gratuit sous 48 heures, lisible, sans jargon. Ensuite seulement, s'il y a un levier, on en parle."
       ]
     },
     {
@@ -302,14 +467,18 @@
         "disponibilite",
         "je suis dispo",
         "planifions",
-        "rendez vous"
+        "rendez vous",
+        "ok pour l audit",
+        "allez y",
+        "envoyez moi ca",
+        "pourquoi pas"
       ],
       "responses": [
-        "Parfait. On bloque un petit creneau - mardi matin ou mercredi apres-midi, qu'est-ce qui vous va le mieux ?",
-        "Ok, je vous propose quinze minutes. Vous avez un jour cette semaine ou c'est plus calme ?",
-        "Super. Je note le rendez-vous et je vous confirme. Preferez-vous telephone ou visio courte ?",
-        "C'est bon pour moi. Donnez-moi juste un creneau, je m'adapte.",
-        "Nickel. On fixe ca maintenant pour pas que ca se perde - quel jour vous arrange ?"
+        "Pour vous envoyer ça, je vous l'envoie par e-mail, ou on fixe un appel de quinze minutes vers midi, ou en fin de journée, quand vous êtes moins pressé au magasin ?",
+        "Deux options simples : je vous envoie le diagnostic par mail, ou on se prend quinze minutes vers midi ou en fin de journée. Qu'est-ce qui vous arrange ?",
+        "Je vous l'envoie par e-mail, ou on fixe quinze minutes quand le magasin est plus calme : midi, ou fin de journée ?",
+        "Pour valider la suite : mail, ou un appel de quinze minutes vers midi ou en fin de journée. Vous choisissez.",
+        "Pas de question vague : mail du diagnostic, ou quinze minutes au téléphone quand vous êtes moins pressé. Midi ou fin de journée ?"
       ]
     },
     {
@@ -327,11 +496,11 @@
         "envoie moi ca"
       ],
       "responses": [
-        "Avec plaisir. Je vous pointe vers danielcraft.fr - vous regardez tranquillement, et on en reparle si ca vous parle.",
-        "Ok. Je vous laisse le site danielcraft.fr. Si une question vient, vous me le dites au prochain appel.",
-        "Parfait. Le plus simple c'est danielcraft.fr - presentation claire, sans prise de tete.",
-        "Je note. Vous jetez un oeil de votre cote, et si vous voulez un mini audit apres, on le fait.",
-        "C'est envoye dans l'esprit : danielcraft.fr. Je ne vous harcele pas derriere - vous gardez la main."
+        "Avec plaisir. danielcraft.fr : vous regardez tranquillement, et on en reparle si ça vous parle.",
+        "D'accord. Le site danielcraft.fr. Une question après, vous me le dites au prochain appel.",
+        "Parfait. Le plus simple : danielcraft.fr, présentation claire, sans prise de tête.",
+        "Je note. Vous jetez un œil, et si vous voulez un mini-audit après, on le fait.",
+        "C'est danielcraft.fr. Je ne vous harcèle pas derrière : vous gardez la main."
       ]
     },
     {
@@ -350,11 +519,39 @@
         "ne rappelez pas"
       ],
       "responses": [
-        "Pas de probleme. Merci d'avoir pris l'appel, je ne vous retiens pas. Bonne journee.",
-        "Ok, je respecte. Je coupe ici, sans relance. Passez une bonne journee.",
-        "Compris, on arrete la. Merci pour votre franchise, et bonne continuation.",
-        "D'accord. Je note que ce n'est pas le moment. Bonne journee a vous.",
-        "Aucun souci. Je vous laisse tranquille. Bonne journee."
+        "Pas de souci, j'en reste là. Merci d'avoir décroché, bonne journée.",
+        "D'accord, je respecte. Je coupe ici, sans relance. Bonne journée à vous.",
+        "Compris, on arrête là. Merci pour votre franchise, et bonne continuation.",
+        "D'accord. Ce n'est pas le moment, note prise. Bonne journée.",
+        "Aucun problème. Je vous laisse tranquille. Bonne journée."
+      ]
+    },
+    {
+      "tag": "out_close_success",
+      "profile": "outbound_commercial",
+      "niveau": 4,
+      "priority": 45,
+      "wav_basename": "out_kb_out_close_success",
+      "action": "hangup",
+      "patterns": [
+        "par mail",
+        "par e-mail",
+        "par email",
+        "quinze minutes",
+        "entre midi",
+        "fin de journee",
+        "c est note",
+        "envoyez le diagnostic",
+        "on se cale",
+        "c est bon pour moi",
+        "merci c est parfait"
+      ],
+      "responses": [
+        "Parfait, je vous l'envoie. Merci, et bonne journée au magasin.",
+        "C'est noté. Je vous envoie le diagnostic, et je vous laisse. Bonne journée au magasin.",
+        "Parfait. Mail ou appel, c'est convenu. Bonne journée au magasin.",
+        "Super, on avance comme ça. Merci pour votre temps, bonne journée au magasin.",
+        "C'est dans la boîte. Je vous laisse travailler. Bonne journée au magasin."
       ]
     },
     {
@@ -372,11 +569,11 @@
         "je raccroche"
       ],
       "responses": [
-        "Merci a vous, bonne journee. Au revoir.",
-        "Parfait, je vous souhaite une bonne journee. Au revoir.",
+        "Merci à vous, bonne journée. Au revoir.",
+        "Parfait, bonne journée. Au revoir.",
         "Merci pour votre temps. Bonne continuation, au revoir.",
-        "Ok, on se salue ici. Bonne journee, au revoir.",
-        "Merci, et a bientot peut-etre. Au revoir."
+        "D'accord, on se salue ici. Bonne journée, au revoir.",
+        "Merci, et à bientôt peut-être. Au revoir."
       ]
     },
     {
@@ -394,11 +591,87 @@
         "ca coupe"
       ],
       "responses": [
-        "Pardon, je reformule. J'appelle de danielcraft.fr pour voir si on peut vous aider a etre mieux visibles en ligne. Vous m'entendez ?",
-        "Desole, je recommence plus lentement. C'est l'assistante DanielCraft - presence web locale, contacts. Ok pour vous ?",
-        "Je crois que ca a coupe. Je suis l'assistante de danielcraft.fr. On peut reprendre en deux phrases ?",
-        "Pardon. Je fais plus court : site plus clair, plus de chances d'etre trouve localement. Ca vous parle ?",
-        "Ok, je repete. DanielCraft, danielcraft.fr - un mini point sur votre presence en ligne, sans pression."
+        "Pardon, je reformule. Je suis Marie, je travaille chez DanielCraft. Pour que les clients du coin vous trouvent sur leur téléphone. Vous m'entendez ?",
+        "Désolée, plus lentement. Je suis Marie, je travaille chez DanielCraft. L'idée : que vos voisins vous trouvent quand ils cherchent un professionnel sur leur téléphone. D'accord pour vous ?",
+        "Je crois que ça a coupé. C'est Marie, chez DanielCraft. On reprend en deux phrases ?",
+        "Pardon. Version courte : que les gens du quartier vous trouvent et vous appellent. Ça vous parle ?",
+        "D'accord, je répète. Je suis Marie, je travaille chez DanielCraft. Un mini point pour que les clients du coin vous trouvent, sans pression."
+      ]
+    },
+    {
+      "tag": "out_msg_local_pitch",
+      "profile": "outbound_commercial",
+      "niveau": 2,
+      "priority": 77,
+      "wav_basename": "out_kb_out_msg_local_pitch",
+      "patterns": [
+        "visibilite locale",
+        "etre trouve dans le coin",
+        "google maps",
+        "clients du quartier",
+        "recherches locales",
+        "etre visible ici",
+        "etre visible sur google",
+        "visibilite google",
+        "trouver des clients locaux"
+      ],
+      "responses": [
+        "Pour {{entreprise}}{{#if_ville}} à {{ville}}{{/if_ville}}, le jeu, c'est que les clients du coin vous trouvent sur leur téléphone{{#if_metier}} quand ils cherchent un {{metier}}{{/if_metier}}. On regarde ça sans pression.",
+        "L'idée pour {{entreprise}} : que les gens du quartier vous appellent, pas le concurrent. {{#if_website}}J'ai {{website}} sous les yeux.{{/if_website}}",
+        "{{prenom}}, on ne vise pas le monde entier : juste que les clients du coin trouvent {{entreprise}} sur leur téléphone{{#if_ville}} autour de {{ville}}{{/if_ville}}.",
+        "Petite question pour {{entreprise}} : quand un voisin cherche votre métier sur son téléphone, est-ce que c'est vous qu'il trouve, ou presque ?",
+        "Pour {{entreprise}}{{#if_ville}} à {{ville}}{{/if_ville}}, une page claire vaut parfois mieux qu'un gros budget pub. Curieux de voir où vous en êtes ?"
+      ]
+    },
+    {
+      "tag": "out_msg_site_perso",
+      "profile": "outbound_commercial",
+      "niveau": 2,
+      "priority": 76,
+      "wav_basename": "out_kb_out_msg_site_perso",
+      "patterns": [
+        "notre site marche pas",
+        "personne trouve notre site",
+        "site trop vieux",
+        "vitrine en ligne",
+        "le site convertit pas",
+        "on a une page mais rien",
+        "notre vitrine web",
+        "le site ne ramene rien"
+      ],
+      "responses": [
+        "{{#if_website}}J'ai jeté un œil à {{website}}. {{/if_website}}Pour {{entreprise}}, la question : ça ramène des demandes, ou c'est une vitrine qui dort ?",
+        "D'accord. Souvent le site existe mais le téléphone et les horaires se cachent sur mobile. Ça vous parle pour {{entreprise}} ?",
+        "{{#if_ville}}À {{ville}}, {{/if_ville}}les gens cherchent vite. Si {{entreprise}} n'est pas clair en trois secondes, ils passent au suivant. On peut corriger ça tout doucement.",
+        "Pour {{entreprise}}, je parie que le site est là, mais qu'il ne convertit pas assez. Envie de vérifier ensemble ?",
+        "{{#if_website}}Sur {{website}}, {{/if_website}}deux clics pour vous appeler, c'est parfois tout ce qu'il faut. On regarde si c'est le cas pour {{entreprise}} ?"
+      ]
+    },
+    {
+      "tag": "out_msg_audit_perso",
+      "profile": "outbound_commercial",
+      "niveau": 4,
+      "priority": 82,
+      "wav_basename": "out_kb_out_msg_audit_perso",
+      "patterns": [
+        "audit gratuit",
+        "mini diagnostic",
+        "vous pouvez regarder notre site",
+        "un avis sur notre page",
+        "regardez notre vitrine",
+        "diagnostic presence web",
+        "faire un audit",
+        "je veux un audit",
+        "audit de notre presence",
+        "audit web",
+        "mini audit gratuit"
+      ],
+      "responses": [
+        "Pas de grand discours. Diagnostic gratuit sous 48 heures, en français, pour {{entreprise}}{{#if_ville}} à {{ville}}{{/if_ville}}{{#if_website}} ({{website}}){{/if_website}} : visibilité locale et vitesse du site.",
+        "Pour {{entreprise}}, je vous fais un diagnostic gratuit, sans jargon : Google local, numéro en un clic, vitesse mobile. Ensuite vous décidez.",
+        "{{prenom}}, on jette un œil à {{entreprise}}. Gratuit, en français, sous 48 heures. Si ça n'apporte rien, on s'arrête là.",
+        "Très bien pour {{entreprise}} : diagnostic gratuit sous 48 heures{{#if_website}} sur {{website}}{{/if_website}}. Pas de devis d'entrée, juste les faits.",
+        "Mini-diagnostic pour {{entreprise}}{{#if_ville}} à {{ville}}{{/if_ville}} : visibilité locale et vitesse. Gratuit, sans jargon informatique."
       ]
     }
   ]

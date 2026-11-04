@@ -73,6 +73,10 @@ class ChatBody(BaseModel):
     recent_replies: List[str] = Field(default_factory=list)
     recent_tags: List[str] = Field(default_factory=list)
     recent_user_texts: List[str] = Field(default_factory=list)
+    profile: Optional[str] = Field(
+        default=None,
+        description="inbound | outbound_commercial (defaut inbound)",
+    )
 
 
 class PrefetchBody(BaseModel):
@@ -449,7 +453,7 @@ async def kb_chat(body: ChatBody, request: Request) -> Dict[str, Any]:
     try:
         intent_repo.ensure_seeded(db, _base_path(request))
         preds, engine = intent_repo.predict_intent_scores_detailed(
-            db, predict_text, top_k=body.top_k
+            db, predict_text, top_k=body.top_k, profile=body.profile
         )
         source = engine
 

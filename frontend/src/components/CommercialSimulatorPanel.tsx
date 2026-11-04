@@ -71,9 +71,9 @@ export function CommercialSimulatorPanel(): React.ReactElement {
           ) : null}
         </Stack>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          Tape ce que dirait le prospect. Puis choisis une situation (1-5) et une
-          phrase : elle sort sur les haut-parleurs du PC (WAV prefetche Edge /
-          ElevenLabs).
+          Tape ce que dirait le prospect. Marie enquiquine un peu et propose un
+          mini-jeu de questions. Puis choisis situation et phrase (1-5) pour
+          entendre la voix sur les HP.
         </Typography>
         <TextField
           label="Parole du prospect"

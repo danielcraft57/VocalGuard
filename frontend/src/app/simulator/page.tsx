@@ -60,9 +60,13 @@ export default function SimulatorPage(): React.ReactElement {
       {tab === "outbound" ? (
         <>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-            Clique « Ouverture » pour les phrases de presentation, ou simule le
-            prospect puis choisis avec le clavier 1-5. Prochaine etape : micro PC
-            + STT node15.
+            Tchat commercial : tu joues le prospect, Marie répond (DanielCraft,
+            un peu taquin, mini-jeu). En dessous, le co-pilote QCM 1-5 pour
+            tester les voix sur les HP.
+          </Typography>
+          <KbTchatchePanel profile="outbound_commercial" />
+          <Typography variant="subtitle2" sx={{ mt: 3, mb: 1, fontWeight: 600 }}>
+            Co-pilote voix (clavier 1-5)
           </Typography>
           <CommercialSimulatorPanel />
         </>

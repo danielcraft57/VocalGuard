@@ -150,7 +150,8 @@ export async function chatKb(
   text: string,
   recentReplies: string[] = [],
   recentTags: string[] = [],
-  recentUserTexts: string[] = []
+  recentUserTexts: string[] = [],
+  profile: "inbound" | "outbound_commercial" = "inbound"
 ): Promise<KbChatReply> {
   const res = await fetch(`${getApiBaseUrl()}/kb/chat`, {
     method: "POST",
@@ -158,6 +159,7 @@ export async function chatKb(
     body: JSON.stringify({
       text,
       top_k: 8,
+      profile,
       recent_replies: recentReplies.slice(-12),
       recent_tags: recentTags.slice(-12),
       recent_user_texts: recentUserTexts.slice(-12)

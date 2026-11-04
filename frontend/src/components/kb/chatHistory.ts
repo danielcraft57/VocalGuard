@@ -10,6 +10,10 @@ const WELCOME_KEY = "vg_kb_chat_welcome_v1";
 export const DEFAULT_CHAT_WELCOME =
   "Bonjour, vous etes bien sur la messagerie. Comment puis-je vous aider ?";
 
+/** Accueil tchat commercial sortant (prospect simule). */
+export const DEFAULT_COMMERCIAL_CHAT_WELCOME =
+  "Bonjour ! Je suis Marie, je travaille chez DanielCraft. Je vous appelle pour que les clients du coin vous trouvent sur leur téléphone. Prêt pour deux questions ?";
+
 export type ChatMsg = {
   id: string;
   role: "user" | "bot";

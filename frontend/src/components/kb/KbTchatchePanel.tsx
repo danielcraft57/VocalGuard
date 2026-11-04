@@ -46,6 +46,7 @@ import { KbSoftSyncBar, KbTchatcheSkeleton } from "./KbSkeleton";
 import {
   createSession,
   DEFAULT_CHAT_WELCOME,
+  DEFAULT_COMMERCIAL_CHAT_WELCOME,
   loadChatSessions,
   loadChatWelcome,
   saveChatSessions,
@@ -56,16 +57,29 @@ import {
   type ChatMsg,
   type ChatSession
 } from "./chatHistory";
+import type { KbProfile } from "../../services/kbUiPersist";
+
+type KbTchatchePanelProps = {
+  /** Catalogue KB utilise pour predict et edition (defaut entrant). */
+  profile?: KbProfile;
+};
 
 /**
  * Simulateur Tchatche avec historique BDD (+ miroir local).
  *
+ * @param props Profil KB optionnel.
  * @returns Panneau React.
  */
-export function KbTchatchePanel(): React.ReactElement {
+export function KbTchatchePanel({
+  profile = "inbound"
+}: KbTchatchePanelProps): React.ReactElement {
   const [intents, setIntents] = useState<KbIntent[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [welcomeText, setWelcomeText] = useState(DEFAULT_CHAT_WELCOME);
+  const [welcomeText, setWelcomeText] = useState(
+    profile === "outbound_commercial"
+      ? DEFAULT_COMMERCIAL_CHAT_WELCOME
+      : DEFAULT_CHAT_WELCOME
+  );
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSession, setActiveSession] = useState<ChatSession | null>(null);
   const [chatInput, setChatInput] = useState("");
@@ -96,12 +110,12 @@ export function KbTchatchePanel(): React.ReactElement {
       setBootstrapping(false);
     }
 
-    const intentCache = loadIntentsCache("inbound");
+    const intentCache = loadIntentsCache(profile);
     if (intentCache?.intents?.length) {
       setIntents(intentCache.intents);
     }
     setHydrated(true);
-  }, []);
+  }, [profile]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -123,20 +137,31 @@ export function KbTchatchePanel(): React.ReactElement {
       else setBootstrapping(true);
 
       try {
-        let rows = loadIntentsCache("inbound")?.intents;
-        if (!rows?.length || !isIntentsCacheFresh(loadIntentsCache("inbound"))) {
-          rows = await fetchKbIntents(false, ac.signal, "inbound");
-          if (!ac.signal.aborted) saveIntentsCache("inbound", rows);
+        let rows = loadIntentsCache(profile)?.intents;
+        if (!rows?.length || !isIntentsCacheFresh(loadIntentsCache(profile))) {
+          rows = await fetchKbIntents(false, ac.signal, profile);
+          if (!ac.signal.aborted) saveIntentsCache(profile, rows);
         }
         if (cancelled || ac.signal.aborted) return;
         setIntents(rows);
-        const salutation = rows.find((i) => i.tag === "salutation");
+        const openerTag =
+          profile === "outbound_commercial" ? "out_presentation" : "salutation";
+        const opener = rows.find((i) => i.tag === openerTag);
+        const defaultWelcome =
+          profile === "outbound_commercial"
+            ? DEFAULT_COMMERCIAL_CHAT_WELCOME
+            : DEFAULT_CHAT_WELCOME;
         if (
-          salutation?.responses?.[0] &&
+          opener?.responses?.[0] &&
           loadChatWelcome() === DEFAULT_CHAT_WELCOME &&
           !loadSimulatorUiState().welcomeText
         ) {
-          setWelcomeText(salutation.responses[0]);
+          setWelcomeText(opener.responses[0]);
+        } else if (
+          profile === "outbound_commercial" &&
+          !loadSimulatorUiState().welcomeText
+        ) {
+          setWelcomeText(defaultWelcome);
         }
       } catch (e) {
         if (isAbortError(e) || ac.signal.aborted) return;
@@ -184,8 +209,8 @@ export function KbTchatchePanel(): React.ReactElement {
       cancelled = true;
       ac.abort();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- hydrate once
-  }, [hydrated]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- hydrate + profil KB
+  }, [hydrated, profile]);
 
   const persistToDb = useCallback(async (session: ChatSession) => {
     try {
@@ -282,7 +307,8 @@ export function KbTchatchePanel(): React.ReactElement {
         text,
         working.recentReplies,
         working.recentTags,
-        working.recentUserTexts || []
+        working.recentUserTexts || [],
+        profile
       );
       const botMsg: ChatMsg = {
         id: `b-${Date.now()}`,

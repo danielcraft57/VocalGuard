@@ -202,3 +202,108 @@ def test_insult_triggers_persona_and_escalates():
     )
     assert third["persona_reason"] == "insult"
     assert third.get("action") == "hangup_soft"
+
+
+def test_outbound_quiz_q1_then_q2():
+    """Apres le feu vert, un 'je sais pas trop' enchaine sur la question 2, pas l'accroche."""
+    preds = [
+        {"tag": "out_presentation", "score": 0.4},
+        {"tag": "out_go_ahead", "score": 0.2},
+        {"tag": "out_qualify_website", "score": 0.15},
+        {"tag": "out_qualify_leads", "score": 0.15},
+        {"tag": "out_not_interested", "score": 0.1},
+    ]
+    out = reshape_predictions(
+        preds, recent_tags=["out_go_ahead"], user_text="je sais pas trop"
+    )
+    assert out[0]["tag"] == "out_qualify_website"
+
+
+def test_outbound_quiz_q2_unknown_goes_to_diag():
+    """Apres la question 2, un 'non' va au diagnostic, pas a la fin d'appel."""
+    preds = [
+        {"tag": "out_not_interested", "score": 0.45},
+        {"tag": "out_qualify_leads", "score": 0.2},
+        {"tag": "out_diag_confident", "score": 0.15},
+        {"tag": "out_qualify_website", "score": 0.2},
+    ]
+    out = reshape_predictions(
+        preds, recent_tags=["out_qualify_website"], user_text="non pas vraiment"
+    )
+    assert out[0]["tag"] == "out_qualify_leads"
+
+
+def test_outbound_site_super_goes_to_mobile_speed():
+    """'Mon site est super' apres le quiz pousse la question vitesse mobile."""
+    preds = [
+        {"tag": "out_qualify_leads", "score": 0.3},
+        {"tag": "out_diag_confident", "score": 0.2},
+        {"tag": "out_closing_audit", "score": 0.2},
+        {"tag": "out_qualify_website", "score": 0.3},
+    ]
+    out = reshape_predictions(
+        preds,
+        recent_tags=["out_qualify_website"],
+        user_text="oui mon site est super",
+    )
+    assert out[0]["tag"] == "out_diag_confident"
+
+
+def test_outbound_facebook_objection_beats_not_interested():
+    """Facebook suffit : on valide, on ne raccroche pas."""
+    preds = [
+        {"tag": "out_not_interested", "score": 0.4},
+        {"tag": "out_objection_has_site", "score": 0.25},
+        {"tag": "out_objection_facebook", "score": 0.15},
+        {"tag": "out_qualify_leads", "score": 0.2},
+    ]
+    out = reshape_predictions(
+        preds,
+        recent_tags=["out_qualify_website"],
+        user_text="on a facebook ca suffit",
+    )
+    assert out[0]["tag"] == "out_objection_facebook"
+
+
+def test_outbound_diag_then_propose_audit():
+    """Apres le diagnostic, on propose l'audit gratuit, pas un creneau tout de suite."""
+    preds = [
+        {"tag": "out_closing_slot", "score": 0.35},
+        {"tag": "out_propose_audit", "score": 0.2},
+        {"tag": "out_goodbye", "score": 0.25},
+        {"tag": "out_qualify_leads", "score": 0.2},
+    ]
+    out = reshape_predictions(
+        preds, recent_tags=["out_qualify_leads"], user_text="ok je vois"
+    )
+    assert out[0]["tag"] == "out_propose_audit"
+
+
+def test_outbound_are_you_ai_beats_spam():
+    """Robot / IA : on assume, on ne pretend pas etre humain."""
+    preds = [
+        {"tag": "out_objection_spam", "score": 0.4},
+        {"tag": "out_who_are_you", "score": 0.25},
+        {"tag": "out_are_you_ai", "score": 0.15},
+        {"tag": "out_go_ahead", "score": 0.2},
+    ]
+    out = reshape_predictions(
+        preds, recent_tags=["out_presentation"], user_text="vous etes une ia ou une machine"
+    )
+    assert out[0]["tag"] == "out_are_you_ai"
+
+
+def test_outbound_trivia_trap_beats_unclear():
+    """Question piege : on avoue qu'on ne sait pas, on ne bluffe pas."""
+    preds = [
+        {"tag": "out_unclear", "score": 0.35},
+        {"tag": "out_go_ahead", "score": 0.25},
+        {"tag": "out_trivia_trap", "score": 0.15},
+        {"tag": "out_who_are_you", "score": 0.25},
+    ]
+    out = reshape_predictions(
+        preds,
+        recent_tags=["out_go_ahead"],
+        user_text="c est quoi la vingtieme decimale de pi",
+    )
+    assert out[0]["tag"] == "out_trivia_trap"
