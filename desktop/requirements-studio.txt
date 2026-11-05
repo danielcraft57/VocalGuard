@@ -1,0 +1,8 @@
+# GUI Commercial Studio (build .exe separe du serveur)
+PySide6>=6.6.0,<7.0.0
+pyinstaller>=6.3.0,<7.0.0
+Pillow>=10.0.0
+httpx>=0.28.0,<1.0.0
+numpy>=1.26.0
+sounddevice==0.5.5
+webrtcvad-wheels>=2.0.10.post4
