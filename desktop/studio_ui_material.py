@@ -218,6 +218,78 @@ QPushButton#FabHangup {{
 QPushButton#FabHangup:hover {{
     background: #a5241e;
 }}
+QPushButton#FabCallRound {{
+    background-color: #4f378b;
+    color: #eaddff;
+    border: none;
+    border-radius: 36px;
+    font-size: 14px;
+    font-weight: 700;
+    min-width: 72px;
+    max-width: 72px;
+    min-height: 72px;
+    max-height: 72px;
+}}
+QPushButton#FabCallRound:hover {{
+    background-color: #6750a4;
+}}
+QPushButton#FabCallRound:disabled {{
+    background-color: {c.surface_highest};
+    color: {c.outline};
+}}
+QPushButton#FabHangupRound {{
+    background-color: #8c1d18;
+    color: #ffdad6;
+    border: none;
+    border-radius: 36px;
+    font-size: 13px;
+    font-weight: 700;
+    min-width: 72px;
+    max-width: 72px;
+    min-height: 72px;
+    max-height: 72px;
+}}
+QPushButton#FabHangupRound:hover {{
+    background-color: #b3261e;
+}}
+QPushButton#FabHangupRound:disabled {{
+    background-color: {c.surface_highest};
+    color: {c.outline};
+}}
+QPushButton#FabPttRound {{
+    background-color: {c.primary_container};
+    color: {c.on_primary_container};
+    border: none;
+    border-radius: 36px;
+    font-size: 13px;
+    font-weight: 700;
+    min-width: 72px;
+    max-width: 72px;
+    min-height: 72px;
+    max-height: 72px;
+}}
+QPushButton#FabPttRound:hover {{
+    background-color: #5a4196;
+}}
+QPushButton#FabPttRound:pressed {{
+    background-color: #7c5cbf;
+}}
+QPushButton#FabPttRound:disabled {{
+    background-color: {c.surface_highest};
+    color: {c.outline};
+}}
+QLabel#CallTimer {{
+    color: {c.call_live};
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 2px;
+}}
+QLabel#DialLetters {{
+    color: {c.outline};
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 1.4px;
+}}
 QPushButton#IconGhost {{
     background: rgba(255,255,255,0.06);
     border: none;
@@ -345,6 +417,64 @@ QFrame#PanelCard {{
 QWidget#ChatTimelineInner {{
     background-color: {c.surface};
 }}
+QLineEdit#NumberDisplay {{
+    background: transparent;
+    border: none;
+    color: {c.on_surface};
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: 1.2px;
+    padding: 8px 4px;
+    selection-background-color: {c.primary_container};
+}}
+QPushButton#DialPadKey {{
+    background-color: {c.surface_highest};
+    border: none;
+    border-radius: 28px;
+    color: {c.on_surface};
+    font-size: 22px;
+    font-weight: 600;
+    min-width: 72px;
+    min-height: 56px;
+}}
+QPushButton#DialPadKey:hover {{
+    background-color: {c.primary_container};
+    color: {c.on_primary_container};
+}}
+QPushButton#DialPadKey:pressed {{
+    background-color: {c.primary};
+    color: {c.on_primary};
+}}
+QPushButton#DialPadKey:disabled {{
+    background-color: {c.surface};
+    color: {c.outline};
+}}
+QPushButton#PttBtn {{
+    background-color: {c.primary_container};
+    color: {c.on_primary_container};
+    border: none;
+    border-radius: 28px;
+    font-size: 15px;
+    font-weight: 700;
+    min-width: 140px;
+    min-height: 56px;
+}}
+QPushButton#PttBtn:hover {{
+    background-color: #5a4196;
+}}
+QPushButton#PttBtn:pressed {{
+    background-color: #7c5cbf;
+}}
+QPushButton#PttBtn:disabled {{
+    background-color: {c.surface_highest};
+    color: {c.outline};
+}}
+QFrame#MeterTrack {{
+    background-color: {c.surface_highest};
+    border-radius: 8px;
+    min-height: 8px;
+    max-height: 10px;
+}}
 """
 
 
@@ -375,6 +505,7 @@ class CallAvatarWidget(QWidget):
         self._pulse = 0.0
         self._live = False
         self._speaking = False
+        self._letter = "M"
         self.setFixedSize(132, 132)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -397,6 +528,15 @@ class CallAvatarWidget(QWidget):
     def set_speaking(self, speaking: bool) -> None:
         """Marie parle (halo chaud)."""
         self._speaking = speaking
+        self.update()
+
+    def set_letter(self, letter: str) -> None:
+        """
+        Lettre affichee au centre de l'avatar.
+
+        @param letter Un caractere (defaut M).
+        """
+        self._letter = (letter or "M")[:1].upper()
         self.update()
 
     def _tick(self) -> None:
@@ -435,7 +575,87 @@ class CallAvatarWidget(QWidget):
         p.setPen(QColor(MaterialColors.on_primary_container))
         font = QFont("Segoe UI", 24, QFont.Weight.DemiBold)
         p.setFont(font)
-        p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "M")
+        p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, self._letter)
+
+
+class LevelMeterBar(QWidget):
+    """
+    Barre de niveau Material (ligne ou micro).
+
+    @param parent Widget parent.
+    """
+
+    def __init__(self, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._level = 0.0
+        self.setFixedHeight(10)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    def set_level(self, value: float) -> None:
+        """
+        Niveau 0..1.
+
+        @param value RMS normalise.
+        """
+        self._level = max(0.0, min(1.0, float(value)))
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: ANN001
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(54, 52, 59))
+        p.drawRoundedRect(0, 0, w, h, 5, 5)
+        fill_w = max(0, int(w * self._level))
+        if fill_w > 0:
+            g = QLinearGradient(0, 0, w, 0)
+            g.setColorAt(0.0, QColor(79, 55, 139))
+            g.setColorAt(0.55, QColor(125, 211, 252))
+            g.setColorAt(1.0, QColor(134, 239, 172))
+            p.setBrush(g)
+            p.drawRoundedRect(0, 0, fill_w, h, 5, 5)
+
+
+class DialPadButton(QPushButton):
+    """
+    Touche de pave telephonique (chiffre + lettres ABC).
+
+    @param digit Touche (0-9, *, #).
+    @param letters Sous-titre type clavier (ABC, DEF...).
+    @param parent Widget parent.
+    """
+
+    def __init__(
+        self,
+        digit: str,
+        letters: str = "",
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.digit = digit
+        self.setObjectName("DialPadKey")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setMinimumSize(88, 64)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(4, 8, 4, 8)
+        lay.setSpacing(0)
+        d = QLabel(digit)
+        d.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        d.setStyleSheet(
+            "background: transparent; border: none; color: #e6e1e5; "
+            "font-size: 22px; font-weight: 600;"
+        )
+        lay.addWidget(d)
+        sub = QLabel(letters or " ")
+        sub.setObjectName("DialLetters")
+        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sub.setStyleSheet(
+            "background: transparent; border: none; color: #938f99; "
+            "font-size: 9px; font-weight: 600; letter-spacing: 1.4px;"
+        )
+        lay.addWidget(sub)
 
 
 class MotionWaveform(QWidget):

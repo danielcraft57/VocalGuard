@@ -1,0 +1,1 @@
+"""Composants UI Prospector (maquettes)."""

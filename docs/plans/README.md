@@ -11,6 +11,8 @@ Index des documents de planification (aout 2026). Ces plans couvrent l'integrati
 | [03_UI_MATERIAL_DESIGN.md](03_UI_MATERIAL_DESIGN.md) | Design system MUI, pages, composants, navigation |
 | [04_ROADMAP_INTEGREE.md](04_ROADMAP_INTEGREE.md) | Planning sprints backend + frontend, tests, criteres de succes |
 
+Maquettes bureau **Prospector** (cockpit, softphone, file campagne, pilotage, appel entrant) : placer les JPG sous `assets/desktop-prospector/` en local ; le dossier est ignore par git.
+
 ## Contexte
 
 - Etude Call Attendant existante : [../CALLATTENDANT_ETUDE.md](../CALLATTENDANT_ETUDE.md)

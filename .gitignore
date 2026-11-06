@@ -57,6 +57,8 @@ env.example
 config/.env
 config/config.yaml
 config/intents_ivr.yaml
+prospector.env
+desktop/prospector.env
 
 # Caches divers
 .pytest_cache/
@@ -83,6 +85,11 @@ french_phone_data/
 .vscode/
 .idea/
 .cursor/
+
+# Maquettes UI (Prospector bureau, JPG lourds — garder en local)
+docs/plans/assets/desktop-prospector/
+docs/plans/assets/_drafts/
+docs/plans/assets/**/*.tmp
 
 # Consignes locales pour agents IA (Cursor, etc.) — personnaliser sans versionner
 AGENTS.md
