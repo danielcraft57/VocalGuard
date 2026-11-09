@@ -16,12 +16,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator, List, Optional
 
-from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile, WebSocket
 from fastapi.responses import Response
 from loguru import logger
 from pydantic import BaseModel, Field
 
 from backend.stt_service import engine as stt_engine
+from backend.stt_service.ws_transcribe import websocket_transcribe
 from backend.voice.audio_utils import load_wav_as_16k16bit_pcm
 
 
@@ -65,6 +66,39 @@ class IntentPredictResponse(BaseModel):
     """Scores d'intents."""
 
     top_predictions: List[dict] = Field(default_factory=list)
+
+
+class OutboundCommercialPredictRequest(BaseModel):
+    """Predict commercial sortant (Qdrant + persona) cote node15."""
+
+    text: str = Field(default="", description="Parole prospect (STT).")
+    top_k: int = Field(default=8, ge=1, le=32)
+    recent_tags: List[str] = Field(default_factory=list)
+    recent_replies: List[str] = Field(default_factory=list)
+    force_tag: Optional[str] = Field(
+        default=None,
+        description="Force un intent (ex. out_presentation).",
+    )
+    variant_index: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=4,
+        description="Variante WAV 0..4 (sinon rotation anti-repetition).",
+    )
+
+
+class OutboundCommercialPredictResponse(BaseModel):
+    """Intent choisi + basename WAV modem."""
+
+    text: str = Field(default="")
+    engine: str = Field(default="")
+    tag: Optional[str] = Field(default=None)
+    score: float = Field(default=0.0)
+    reply: str = Field(default="")
+    variant_index: int = Field(default=0)
+    wav_basename: Optional[str] = Field(default=None)
+    top_predictions: List[dict] = Field(default_factory=list)
+    profile: str = Field(default="outbound_commercial")
 
 
 class TtsRequest(BaseModel):
@@ -112,7 +146,7 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="VocalGuard STT", version="1.2.0", lifespan=_lifespan)
+app = FastAPI(title="VocalGuard STT", version="1.3.0", lifespan=_lifespan)
 
 
 @app.get("/health")
@@ -134,7 +168,7 @@ async def health() -> dict:
         "model_loaded": stt_engine.model_loaded(),
         "model": stt_engine.model_display(),
         "model_path": stt_engine.model_display(),
-        "features": ["transcribe", "intent-predict", "tts", "greeting-mix"],
+        "features": ["transcribe", "transcribe-ws", "intent-predict", "tts", "greeting-mix"],
         "qdrant_url": qdrant_url or None,
         "qdrant_ok": qdrant_ok,
     }
@@ -191,6 +225,18 @@ async def transcribe_file(
             pass
 
 
+@app.websocket("/ws/v1/transcribe")
+async def ws_transcribe(websocket: WebSocket) -> None:
+    """
+    Transcription streaming (PCM 16 kHz) vers Whisper.
+
+    Voir ``backend.stt_service.ws_transcribe`` pour le protocole.
+
+    @param websocket Connexion client (node14 ou test).
+    """
+    await websocket_transcribe(websocket)
+
+
 @app.post("/v1/intent-predict", response_model=IntentPredictResponse)
 async def intent_predict(
     body: IntentPredictRequest,
@@ -220,6 +266,49 @@ async def intent_predict(
             top_k=body.top_k,
         )
         return IntentPredictResponse(top_predictions=preds)
+    finally:
+        db.close()
+
+
+@app.post(
+    "/v1/outbound-commercial/predict",
+    response_model=OutboundCommercialPredictResponse,
+)
+async def outbound_commercial_predict(
+    body: OutboundCommercialPredictRequest,
+    x_stt_token: Optional[str] = Header(None, alias="X-STT-Token"),
+) -> OutboundCommercialPredictResponse:
+    """
+    Classifie un intent commercial via Qdrant (node15) et retourne le basename WAV.
+
+    @param body Texte STT + historique dialogue optionnel.
+    @param x_stt_token Token interne optionnel.
+    @returns Tag, phrase et ``wav_basename`` pour fetch HTTP sur node14.
+    """
+    _check_token(x_stt_token)
+    from backend.database import database as db_module
+    from backend.services import outbound_commercial_engine as commercial
+
+    if db_module.SessionLocal is None:
+        raise HTTPException(
+            status_code=503,
+            detail="DATABASE_URL non configuree sur le service STT.",
+        )
+    db = db_module.SessionLocal()
+    try:
+        result = await asyncio.to_thread(
+            commercial.predict_outbound_reply,
+            db,
+            body.text,
+            top_k=body.top_k,
+            recent_tags=body.recent_tags,
+            recent_replies=body.recent_replies,
+            force_tag=body.force_tag,
+            variant_index=body.variant_index,
+        )
+        return OutboundCommercialPredictResponse(**result)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     finally:
         db.close()
 

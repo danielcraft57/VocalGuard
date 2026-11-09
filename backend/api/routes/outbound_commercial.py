@@ -19,6 +19,7 @@ from backend.database import database as db_module
 from backend.services import intent_repository as intent_repo
 from backend.services import outbound_commercial_engine as commercial
 from backend.services.kb_tts_prefetch import prefetch_intent_voices
+from backend.voice.elevenlabs_client import ELEVENLABS_VOICE_MATILDA
 from backend.voice.qdrant_intents import PROFILE_OUTBOUND_COMMERCIAL
 from backend.voice.synthesis import VoiceSynthesis
 
@@ -54,9 +55,24 @@ class PrefetchOutboundBody(BaseModel):
     force: bool = False
     tags: Optional[list[str]] = None
     tts_provider: Optional[str] = Field(
-        default=None,
-        description="edge | elevenlabs (defaut config)",
+        default="elevenlabs",
+        description="edge | elevenlabs (defaut elevenlabs / Matilda).",
     )
+    elevenlabs_voice_id: Optional[str] = Field(
+        default=ELEVENLABS_VOICE_MATILDA,
+        description="Voix ElevenLabs (defaut Matilda).",
+    )
+
+
+class PredictOutboundBody(BaseModel):
+    """Predict commercial (Postgres node14 + Qdrant node15)."""
+
+    text: str = Field(default="", description="Parole prospect STT.")
+    top_k: int = Field(default=8, ge=1, le=32)
+    recent_tags: list[str] = Field(default_factory=list)
+    recent_replies: list[str] = Field(default_factory=list)
+    force_tag: Optional[str] = Field(default=None, max_length=100)
+    variant_index: Optional[int] = Field(default=None, ge=0, le=4)
 
 
 def _db():
@@ -96,6 +112,59 @@ def _safe_wav_path(base: Path, basename: str) -> Path:
     if not str(path).startswith(str(ivr)):
         raise HTTPException(status_code=400, detail="Chemin refuse")
     return path
+
+
+@router.get("/studio-config")
+async def studio_desktop_config(request: Request) -> Dict[str, Any]:
+    """
+    Config STT pour le client bureau Commercial Studio (LAN).
+
+    Renvoie le meme token que node14 utilise deja pour parler a node15 (Whisper).
+    Reservé au reseau local VocalGuard ; ne pas exposer sur Internet.
+
+    @returns stt_url, stt_token (peut etre vide si non configure).
+    """
+    config = _config(request)
+    stt_url = (getattr(config, "stt_service_url", None) or "http://node15.lan:8100").strip()
+    token = (getattr(config, "stt_internal_token", None) or "").strip()
+    return {
+        "stt_url": stt_url.rstrip("/"),
+        "stt_token": token,
+        "hint": (
+            "Token HTTP interne node15 (Whisper). "
+            "Identique a STT_INTERNAL_TOKEN sur node14 et node15."
+        ),
+    }
+
+
+@router.post("/predict")
+async def predict_outbound_commercial(
+    body: PredictOutboundBody,
+    request: Request,
+) -> Dict[str, Any]:
+    """
+    Predict intent commercial : Postgres local + vecteurs Qdrant (node15).
+
+    Utilise par Commercial Studio apres STT Whisper sur node15.
+
+    @param body Texte + historique dialogue.
+    @returns Tag, phrase, wav_basename, engine (qdrant).
+    """
+    db = _db()
+    try:
+        return commercial.predict_outbound_reply(
+            db,
+            body.text,
+            top_k=body.top_k,
+            recent_tags=body.recent_tags,
+            recent_replies=body.recent_replies,
+            force_tag=body.force_tag,
+            variant_index=body.variant_index,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        db.close()
 
 
 @router.get("/voice/{basename}")
@@ -292,7 +361,8 @@ async def regenerate_outbound_voices(
             force=body.force,
             tags=body.tags,
             profile=PROFILE_OUTBOUND_COMMERCIAL,
-            tts_provider=body.tts_provider,
+            tts_provider=body.tts_provider or "elevenlabs",
+            elevenlabs_voice_id=body.elevenlabs_voice_id or ELEVENLABS_VOICE_MATILDA,
         )
         return {"ok": True, **stats}
     finally:

@@ -123,7 +123,7 @@ def default_enrich_parallel(config: Config) -> int:
     """
     Nombre de requetes OSINT paralleles (sync sans Celery).
 
-    Defaut 6 si OSINT_SERVICE_URL (ex. node15), sinon 1.
+    Defaut 2 si OSINT_SERVICE_URL (ex. node15), sinon 1.
     """
     raw = (os.getenv("PROSPECT_PHONE_ENRICH_PARALLEL") or "").strip()
     if raw.isdigit():
@@ -132,7 +132,7 @@ def default_enrich_parallel(config: Config) -> int:
         getattr(config, "osint_service_url", None)
         or (os.getenv("OSINT_SERVICE_URL") or "").strip()
     )
-    return 6 if url else 1
+    return 2 if url else 1
 
 
 def notify_prospect_phone_realtime(config: Config, event_type: str, data: Dict[str, Any]) -> None:
@@ -464,6 +464,7 @@ class ProspectPhoneEnrichmentService:
             updated += 1
 
         batches_touched: Dict[int, ProspectPhoneImportBatch] = {}
+        batches_finished: List[int] = []
         if rows:
             batch_ids = {r.import_batch_id for r in rows if r.import_batch_id}
             for bid in batch_ids:
@@ -478,8 +479,26 @@ class ProspectPhoneEnrichmentService:
                     processed = (batch.enrich_done or 0) + (batch.enrich_failed or 0)
                     if processed >= (batch.enrich_total or 0):
                         batch.phase = "done"
+                        batches_finished.append(bid)
                     batches_touched[bid] = batch
         self._db.commit()
+
+        for bid in batches_finished:
+            batch = batches_touched.get(bid)
+            if batch is None:
+                continue
+            notify_prospect_phone_realtime(
+                self._config,
+                EventType.PROSPECT_PHONE_ENRICH_COMPLETED.value,
+                {
+                    "batch_id": bid,
+                    "phase": "done",
+                    "enrich_total": batch.enrich_total,
+                    "enrich_done": batch.enrich_done,
+                    "enrich_failed": batch.enrich_failed,
+                    "enrich_queued": batch.enrich_queued,
+                },
+            )
 
         if updated:
             for prospect in rows:

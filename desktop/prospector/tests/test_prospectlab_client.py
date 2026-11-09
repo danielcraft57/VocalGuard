@@ -28,6 +28,15 @@ def test_list_groupes_parsing():
     rows = real.list_groupes()
     assert rows[0]["nom"] == "Camp A"
 
+    wrapped = ProspectLabClient(base_url="http://test/api/public", token="tok")
+    wrapped._request = lambda method, path, **kw: {  # type: ignore
+        "success": True,
+        "count": 1,
+        "data": [{"id": 2, "nom": "Enveloppe", "entreprises_count": 0}],
+    }
+    rows2 = wrapped.list_groupes()
+    assert rows2[0]["nom"] == "Enveloppe"
+
 
 def test_iter_groupe_entreprises_pages():
     """Pagination groupe entreprises."""

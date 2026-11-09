@@ -325,7 +325,7 @@ class StatusFooter(QFrame):
         self.setFixedHeight(36)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(16, 0, 16, 0)
-        self.lbl_modem = QLabel("Modem USB — en attente")
+        self.lbl_modem = QLabel("Modem USB — scan…")
         self.lbl_headset = QLabel("Sonnerie casque")
         self.lbl_stt = QLabel("Transcription Whisper prete")
         for w in (self.lbl_modem, self.lbl_headset, self.lbl_stt):
@@ -333,23 +333,52 @@ class StatusFooter(QFrame):
             lay.addWidget(w)
         lay.addStretch()
         self._mode: ThemeMode = "light"
+        self._listen_active = False
+        self._modem_connected = False
+        self._modem_port = ""
 
     def refresh_theme(self, mode: ThemeMode) -> None:
         """Met a jour les couleurs inline du footer."""
         self._mode = mode
         t = tokens_for(mode)
-        for w in (self.lbl_modem, self.lbl_headset, self.lbl_stt):
-            if w is self.lbl_modem and "en ecoute" in w.text():
-                w.setStyleSheet(f"color: {t.success}; font-size: 11px; font-weight: 600;")
-            else:
-                w.setStyleSheet(f"color: {t.on_surface_variant}; font-size: 11px;")
+        self._apply_modem_footer_style()
+        for w in (self.lbl_headset, self.lbl_stt):
+            w.setStyleSheet(f"color: {t.on_surface_variant}; font-size: 11px;")
 
-    def set_listen_active(self, active: bool) -> None:
-        """Met a jour l'etat ecoute."""
+    def set_modem_hardware_state(self, *, connected: bool, port: str = "") -> None:
+        """
+        Affiche si le modem USB est vu par le systeme (scan serie).
+
+        @param connected Au moins un port COM disponible.
+        @param port Port selectionne (ex. COM4) si connecte.
+        """
+        self._modem_connected = connected
+        self._modem_port = (port or "").strip()
+        self._apply_modem_footer_style()
+
+    def _apply_modem_footer_style(self) -> None:
+        """Reconstruit le libelle et la couleur du statut modem."""
         t = tokens_for(self._mode)
-        if active:
+        if self._listen_active:
             self.lbl_modem.setText("Modem USB en ecoute")
             self.lbl_modem.setStyleSheet(f"color: {t.success}; font-size: 11px; font-weight: 600;")
-        else:
-            self.lbl_modem.setText("Modem USB — en attente")
-            self.lbl_modem.setStyleSheet(f"color: {t.on_surface_variant}; font-size: 11px;")
+            return
+        if self._modem_connected and self._modem_port:
+            self.lbl_modem.setText(f"Modem USB — {self._modem_port} connecte")
+            self.lbl_modem.setStyleSheet(f"color: {t.success}; font-size: 11px; font-weight: 600;")
+            return
+        if self._modem_connected:
+            self.lbl_modem.setText("Modem USB — connecte (choisis le port COM)")
+            self.lbl_modem.setStyleSheet(f"color: {t.warning}; font-size: 11px; font-weight: 600;")
+            return
+        self.lbl_modem.setText("Modem USB — non branche")
+        self.lbl_modem.setStyleSheet(f"color: {t.error}; font-size: 11px; font-weight: 600;")
+
+    def set_listen_active(self, active: bool) -> None:
+        """
+        Met a jour l'etat ecoute entrants (prioritaire sur le scan materiel).
+
+        @param active True si le worker ecoute le modem.
+        """
+        self._listen_active = active
+        self._apply_modem_footer_style()

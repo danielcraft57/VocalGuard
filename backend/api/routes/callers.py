@@ -20,6 +20,7 @@ async def get_callers(
     limit: int = Query(100, ge=1, le=1000),
     is_blocked: Optional[bool] = None,
     is_whitelisted: Optional[bool] = None,
+    phone_number: Optional[str] = Query(None, description="Recherche exacte par numero"),
     caller_repo: CallerRepository = Depends(get_caller_repository)
 ):
     """
@@ -30,11 +31,20 @@ async def get_callers(
         limit: Nombre maximum d'enregistrements à retourner
         is_blocked: Filtrer par statut de blocage
         is_whitelisted: Filtrer par statut de liste blanche
+        phone_number: Numero exact (prioritaire sur skip/limit)
         caller_repo: Repository des appelants
         
     Returns:
         Liste des appelants
     """
+    if phone_number:
+        caller = caller_repo.get_by_phone_number(phone_number.strip())
+        if not caller:
+            digits = "".join(ch for ch in phone_number if ch.isdigit())
+            if len(digits) >= 9:
+                caller = caller_repo.get_by_phone_number(digits[-9:])
+        return [CallerResponse.model_validate(caller)] if caller else []
+
     filters = {}
     if is_blocked is not None:
         filters["is_blocked"] = is_blocked
@@ -145,11 +155,16 @@ async def add_to_whitelist(
     """
     await block_service.whitelist_caller(payload.phone_number)
     caller = caller_repo.get_by_phone_number(payload.phone_number)
-    if caller and (payload.name is not None or payload.notes is not None):
+    if caller and (payload.name is not None or payload.notes is not None or payload.greeting_tts_text is not None):
         caller_repo.update(
             caller.id,
             name=payload.name if payload.name is not None else caller.name,
             notes=payload.notes if payload.notes is not None else caller.notes,
+            greeting_tts_text=(
+                payload.greeting_tts_text
+                if payload.greeting_tts_text is not None
+                else caller.greeting_tts_text
+            ),
         )
         caller = caller_repo.get_by_id(caller.id)
     if not caller:
@@ -169,11 +184,16 @@ async def add_to_blocklist(
     """
     await block_service.block_caller(payload.phone_number, reason=payload.notes)
     caller = caller_repo.get_by_phone_number(payload.phone_number)
-    if caller and (payload.name is not None or payload.notes is not None):
+    if caller and (payload.name is not None or payload.notes is not None or payload.greeting_tts_text is not None):
         caller_repo.update(
             caller.id,
             name=payload.name if payload.name is not None else caller.name,
             notes=payload.notes if payload.notes is not None else caller.notes,
+            greeting_tts_text=(
+                payload.greeting_tts_text
+                if payload.greeting_tts_text is not None
+                else caller.greeting_tts_text
+            ),
         )
         caller = caller_repo.get_by_id(caller.id)
     if not caller:

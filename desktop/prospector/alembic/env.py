@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 import sys
-from logging.config import fileConfig
 from pathlib import Path
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-ROOT = Path(__file__).resolve().parents[3]
+if getattr(sys, "frozen", False):
+    _meipass = getattr(sys, "_MEIPASS", None)
+    ROOT = Path(_meipass) if _meipass else Path(__file__).resolve().parents[3]
+else:
+    ROOT = Path(__file__).resolve().parents[3]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -20,7 +24,12 @@ load_prospector_env()
 
 config = context.config
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    try:
+        from logging.config import fileConfig
+
+        fileConfig(config.config_file_name)
+    except ModuleNotFoundError:
+        logging.basicConfig(level=logging.INFO)
 
 target_metadata = ProspectorBase.metadata
 

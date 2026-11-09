@@ -21,7 +21,7 @@
       "responses": [
         "Bonjour ! Je suis Marie, je travaille chez DanielCraft. Je vous appelle pour que les clients du coin vous trouvent sur leur téléphone. Vous me donnez trente secondes ?",
         "Bonjour, je suis Marie, de DanielCraft. Deux questions rapides, sans bavardage, pour que vos voisins vous trouvent quand ils cherchent un professionnel sur leur téléphone. Ça vous tente ?",
-        "Bonjour, c'est Marie, je travaille chez DanielCraft. L'idée est simple : que les gens du quartier vous appellent plutôt que le concurrent. On fait un échange rapide ?"
+        "Bonjour, c'est Marie, je travaille chez DanielCraft. L'idée est simple : que les gens du quartier vous appellent plutôt que le concurrent. On fait un échange rapide ?",
         "Oui bonjour, je suis Marie, je travaille chez DanielCraft. Pas de gros discours : un mini-quiz pour que les clients du coin vous trouvent plus facilement. Prêt ?",
         "Bonjour ! Je suis Marie, chez DanielCraft. Je ne vous embête pas longtemps : deux questions, et vous voyez si ça peut vous ramener des appels du coin. Ça vous va ?"
       ]
@@ -370,9 +370,9 @@
         "wikipedia"
       ],
       "responses": [
-        "Je n'ai pas la réponse. Ni Pi, ni Jupiter, ni les capitales. Je ne joue pas à ça. Par contre, visibilité locale, je suis dans le vrai sujet. On y revient ?"
+        "Je n'ai pas la réponse. Ni Pi, ni Jupiter, ni les capitales. Je ne joue pas à ça. Par contre, visibilité locale, je suis dans le vrai sujet. On y revient ?",
         "Question piège, je la laisse aux encyclopédies. Moi, je ne connais pas la vingtième décimale de Pi, et je ne vais pas inventer. Mini-quiz Google, ou on coupe ?",
-        "Franchement, je ne sais pas. Et je ne vais pas inventer. Je suis une assistante vocale DanielCraft, pas un jeu télévisé. On reprend sur vos clients du coin ?"
+        "Franchement, je ne sais pas. Et je ne vais pas inventer. Je suis une assistante vocale DanielCraft, pas un jeu télévisé. On reprend sur vos clients du coin ?",
         "Beau test. Perdu pour moi. Gagné pour vous : je ne raconte pas de bêtises. On parle de votre magasin sur Google, c'est tout ce que je fais bien.",
         "Ça, je n'ai pas la réponse, point. Pas de Wikipédia dans la tête. Deux questions sur votre visibilité, et on arrête de jouer au quiz culture."
       ]

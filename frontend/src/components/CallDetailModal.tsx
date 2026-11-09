@@ -37,6 +37,7 @@ import {
   type TranscriptCue
 } from "../utils/transcriptCues";
 import { CallSoundtrackBar } from "./CallSoundtrackBar";
+import { CallContactManagePanel } from "./CallContactManagePanel";
 
 const WORD_COLORS = ["#4ade80", "#38bdf8", "#fbbf24", "#c084fc", "#fb7185"];
 
@@ -495,7 +496,10 @@ export function CallDetailModal({
           sx: {
             overflow: "hidden",
             backgroundImage: "none",
-            bgcolor: "background.paper"
+            bgcolor: "background.paper",
+            maxHeight: "min(92vh, 920px)",
+            display: "flex",
+            flexDirection: "column"
           }
         }
       }}
@@ -545,7 +549,19 @@ export function CallDetailModal({
             </IconButton>
           </Box>
 
-          <DialogContent sx={{ px: { xs: 0, sm: 0 }, pt: 0, pb: 1 }}>
+          <DialogContent
+            sx={{
+              px: { xs: 0, sm: 0 },
+              pt: 0,
+              pb: 1,
+              overflowY: "auto",
+              flex: 1,
+              minHeight: 0,
+              scrollbarWidth: "none",
+              msOverflowStyle: "none",
+              "&::-webkit-scrollbar": { display: "none", width: 0, height: 0 }
+            }}
+          >
             {(liveTranscript || liveBelief.length > 0 || liveCommit) && (
               <Box sx={{ px: { xs: 2, sm: 3 }, pb: 2 }}>
                 <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 0.75 }}>
@@ -688,6 +704,13 @@ export function CallDetailModal({
                   </Typography>
                 </Collapse>
               </Box>
+            ) : null}
+
+            {call.phone_number ? (
+              <CallContactManagePanel
+                phoneNumber={call.phone_number}
+                initialName={call.caller_name || call.osint?.name || call.osint?.company_name}
+              />
             ) : null}
 
             <Box sx={{ mx: { xs: 2, sm: 3 }, mt: 2 }}>

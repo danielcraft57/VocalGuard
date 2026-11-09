@@ -122,10 +122,10 @@ class ProspectorSounds:
         *,
         fade_ms: float = 12.0,
     ) -> np.ndarray:
-        n = int(_PLAY_RATE * duration_s)
-        t = np.arange(n, dtype=np.float64) / _PLAY_RATE
+        n = int(AUDIO_RATE * duration_s)
+        t = np.arange(n, dtype=np.float64) / AUDIO_RATE
         wave = np.sin(2 * math.pi * freq * t)
-        fade_n = max(1, int(_PLAY_RATE * fade_ms / 1000.0))
+        fade_n = max(1, int(AUDIO_RATE * fade_ms / 1000.0))
         env = np.ones(n, dtype=np.float64)
         env[:fade_n] = np.linspace(0.0, 1.0, fade_n)
         env[-fade_n:] = np.linspace(1.0, 0.0, fade_n)
@@ -174,7 +174,7 @@ class ProspectorSounds:
         last_err: Optional[Exception] = None
         for candidate in output_device_candidates(dev):
             try:
-                sd.play(audio, _PLAY_RATE, device=candidate)
+                sd.play(audio, AUDIO_RATE, device=candidate)
                 sd.wait()
                 return
             except Exception as exc:
@@ -191,9 +191,9 @@ class ProspectorSounds:
             chunk = self._concat(
                 [
                     self._tone(440.0, 0.35),
-                    np.zeros(int(_PLAY_RATE * 0.12), dtype=np.float32),
+                    np.zeros(int(AUDIO_RATE * 0.12), dtype=np.float32),
                     self._tone(480.0, 0.35),
-                    np.zeros(int(_PLAY_RATE * 0.35), dtype=np.float32),
+                    np.zeros(int(AUDIO_RATE * 0.35), dtype=np.float32),
                 ]
             )
             self._play_buffer(chunk)

@@ -23,12 +23,30 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from backend.core.config import Config  # noqa: E402
-from backend.core.modem_handler import ModemHandler  # noqa: E402
-from backend.voice.audio_utils import pcm_s16le_16k_to_modem  # noqa: E402
+from backend.core.modem_handler import ModemHandler, _unescape_dle_pcm  # noqa: E402
+from backend.voice.audio_utils import pcm_modem_to_s16le_16k, pcm_s16le_16k_to_modem  # noqa: E402
 
 RATE = 16000
 CHANNELS = 1
 FRAMES_PER_BUFFER = 320
+
+
+def scale_pcm_s16le(pcm: bytes, gain: float) -> bytes:
+    """
+    Attenue ou amplifie un buffer PCM s16le mono.
+
+    @param pcm Donnees brutes.
+    @param gain Facteur 0.05..1.5.
+    @returns PCM ajuste.
+    """
+    g = max(0.05, min(1.5, float(gain)))
+    if g >= 0.999:
+        return pcm
+    if not pcm:
+        return pcm
+    arr = np.frombuffer(pcm, dtype=np.int16).astype(np.float32)
+    scaled = np.clip(arr * g, -32768.0, 32767.0).astype(np.int16)
+    return scaled.tobytes()
 
 DTMF_FREQS = {
     "1": (697, 1209),
@@ -60,16 +78,21 @@ def list_com_ports() -> list[tuple[str, str]]:
         return []
 
 
-def u8_pcm_to_s16le(raw_u8: bytes) -> bytes:
-    """Convertit PCM 8-bit unsigned en s16le."""
-    out = bytearray(len(raw_u8) * 2)
-    j = 0
-    for b in raw_u8:
-        s16 = (b - 128) << 8
-        out[j] = s16 & 0xFF
-        out[j + 1] = (s16 >> 8) & 0xFF
-        j += 2
-    return bytes(out)
+def u8_pcm_to_s16le(raw_u8: bytes, *, headroom: float = 0.92) -> bytes:
+    """
+    Convertit PCM 8-bit unsigned centré (128) en s16le avec marge anti-clipping.
+
+    @param raw_u8 Trame modem VRX.
+    @param headroom Facteur < 1 pour laisser de la tete avant saturation int16.
+    @returns PCM s16le mono.
+    """
+    if not raw_u8:
+        return b""
+    hr = max(0.5, min(1.0, float(headroom)))
+    u = np.frombuffer(raw_u8, dtype=np.uint8).astype(np.float32)
+    x = (u - 128.0) / 128.0
+    x = np.clip(x * hr, -1.0, 1.0)
+    return (x * 32767.0).astype(np.int16).tobytes()
 
 
 def generate_dtmf_u8(digit: str, duration_ms: int = 180, level: float = 0.55) -> bytes:
@@ -137,6 +160,48 @@ async def send_dtmf_with_fallback(modem: ModemHandler, digit: str) -> bool:
         return bool(ok1 or ok2)
 
 
+class _VrxDownlinkAssembler:
+    """
+    Regroupe les octets VRX et convertit en s16le 16 kHz (moins de clics entre trames).
+    """
+
+    def __init__(self, modem: ModemHandler) -> None:
+        self._modem = modem
+        self._pending = bytearray()
+
+    def feed(self, chunk: bytes) -> bytes:
+        """
+        Ajoute une trame modem et renvoie du PCM 16 kHz pret pour casque / WAV.
+
+        @param chunk Octets bruts ``read_outgoing_vrx_chunk``.
+        @returns PCM mono s16le 16 kHz (peut etre vide si tampon insuffisant).
+        """
+        if not chunk:
+            return b""
+        self._pending.extend(_unescape_dle_pcm(chunk))
+        profile = self._modem.voice_profile
+        width = max(1, int(profile.sample_width))
+        min_bytes = max(width * 128, int(profile.bytes_per_sec) // 20)
+        if len(self._pending) < min_bytes:
+            return b""
+        take = len(self._pending)
+        if width == 2:
+            take -= take % 2
+        if take <= 0:
+            return b""
+        block = bytes(self._pending[:take])
+        del self._pending[:take]
+        return pcm_modem_to_s16le_16k(block, profile)
+
+    def flush(self) -> bytes:
+        """Vide le tampon restant en fin d'appel."""
+        if not self._pending:
+            return b""
+        block = bytes(self._pending)
+        self._pending.clear()
+        return pcm_modem_to_s16le_16k(block, self._modem.voice_profile)
+
+
 class LiveAudioBridge:
     """
     Pont modem VRX/VTX <-> micro / casque PC.
@@ -156,22 +221,29 @@ class LiveAudioBridge:
         on_mic_level: Optional[Callable[[float], None]] = None,
         on_uplink_pcm: Optional[Callable[[bytes], None]] = None,
         on_downlink_pcm: Optional[Callable[[bytes], None]] = None,
+        on_ptt_pcm: Optional[Callable[[bytes], None]] = None,
+        line_gain: float = 0.22,
+        mic_gain: float = 0.85,
     ) -> None:
         self.modem = modem
         self.input_device_index = input_device_index
         self.output_device_index = output_device_index
+        self.line_gain = max(0.05, min(1.0, float(line_gain)))
+        self.mic_gain = max(0.05, min(1.5, float(mic_gain)))
         self.uplink_burst_ms = max(120, int(uplink_burst_ms))
         self.push_to_talk = push_to_talk
         self.on_line_level = on_line_level
         self.on_mic_level = on_mic_level
         self.on_uplink_pcm = on_uplink_pcm
         self.on_downlink_pcm = on_downlink_pcm
+        self.on_ptt_pcm = on_ptt_pcm
         self.running = False
         self.tx_enabled = not push_to_talk
         self._ptt_lock = asyncio.Lock()
         self._tasks: list[asyncio.Task] = []
         self._in_stream = None
         self._out_stream = None
+        self._downlink = _VrxDownlinkAssembler(modem)
 
     async def start(self) -> bool:
         """Demarre les boucles audio."""
@@ -225,11 +297,15 @@ class LiveAudioBridge:
                         arr = np.frombuffer(data, dtype=np.int16)
                         rms = float(np.sqrt(np.mean(arr.astype(np.float64) ** 2))) / 32768.0
                         self.on_mic_level(min(1.0, rms * 4.0))
-                    if self.on_uplink_pcm and data:
-                        self.on_uplink_pcm(bytes(data))
+                    raw = bytes(data)
+                    if self.on_ptt_pcm and raw:
+                        self.on_ptt_pcm(raw)
+                    if self.on_uplink_pcm and raw:
+                        self.on_uplink_pcm(raw)
                     if len(pending) >= burst_bytes_target:
-                        uplink = pcm_s16le_16k_to_modem(bytes(pending), self.modem.voice_profile)
+                        burst = scale_pcm_s16le(bytes(pending), self.mic_gain)
                         pending.clear()
+                        uplink = pcm_s16le_16k_to_modem(burst, self.modem.voice_profile)
                         await self.modem.half_duplex_send_uplink_u8(uplink)
             except Exception:
                 pass
@@ -245,6 +321,9 @@ class LiveAudioBridge:
             except asyncio.CancelledError:
                 pass
         self._tasks.clear()
+        tail = self._downlink.flush()
+        if tail and self.on_downlink_pcm:
+            self.on_downlink_pcm(tail)
         self._close_audio()
 
     def _close_audio(self) -> None:
@@ -262,18 +341,21 @@ class LiveAudioBridge:
     async def _downlink_loop(self) -> None:
         while self.running:
             try:
-                chunk = await self.modem.read_outgoing_vrx_chunk(1024)
+                chunk = await self.modem.read_outgoing_vrx_chunk(2048)
                 if not chunk:
                     await asyncio.sleep(0.01)
                     continue
-                pcm16 = u8_pcm_to_s16le(chunk)
+                pcm16 = self._downlink.feed(chunk)
+                if not pcm16:
+                    continue
                 if self.on_line_level and pcm16:
                     arr = np.frombuffer(pcm16, dtype=np.int16)
                     rms = float(np.sqrt(np.mean(arr.astype(np.float64) ** 2))) / 32768.0
                     self.on_line_level(min(1.0, rms * 4.0))
                 if self.on_downlink_pcm and pcm16:
                     self.on_downlink_pcm(pcm16)
-                await asyncio.to_thread(self._out_stream.write, pcm16)
+                out_pcm = scale_pcm_s16le(pcm16, self.line_gain)
+                await asyncio.to_thread(self._out_stream.write, out_pcm)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -299,8 +381,9 @@ class LiveAudioBridge:
                     self.on_uplink_pcm(bytes(data))
                 if len(pending) < burst_bytes_target:
                     continue
-                uplink = pcm_s16le_16k_to_modem(bytes(pending), self.modem.voice_profile)
+                burst = scale_pcm_s16le(bytes(pending), self.mic_gain)
                 pending.clear()
+                uplink = pcm_s16le_16k_to_modem(burst, self.modem.voice_profile)
                 await self.modem.half_duplex_send_uplink_u8(uplink)
             except asyncio.CancelledError:
                 raise
@@ -323,8 +406,13 @@ async def run_modem_call(
     on_mic_level: Optional[Callable[[float], None]] = None,
     on_uplink_pcm: Optional[Callable[[bytes], None]] = None,
     on_downlink_pcm: Optional[Callable[[bytes], None]] = None,
+    on_ptt_pcm: Optional[Callable[[bytes], None]] = None,
     push_to_talk: bool = True,
     ptt_ms: int = 1200,
+    line_gain: float = 0.22,
+    mic_gain: float = 0.85,
+    on_voice_ready: Optional[Callable[[], None]] = None,
+    record_start_delay_s: float = 0.0,
 ) -> None:
     """
     Session complete : init modem, dial, audio live, DTMF jusqu'a raccrochage.
@@ -365,8 +453,14 @@ async def run_modem_call(
         vrx_opened = await modem.start_outgoing_vrx_stream(already_in_voice_mode=False)
         if not vrx_opened:
             on_status("Audio ligne indisponible — DTMF seulement.")
+        elif on_voice_ready is not None:
+            delay = max(0.0, float(record_start_delay_s))
+            if delay > 0:
+                await asyncio.sleep(delay)
+            on_voice_ready()
 
         if vrx_opened:
+            ptt_cb = (on_ptt_pcm if on_ptt_pcm is not None else on_uplink_pcm) if push_to_talk else None
             bridge = LiveAudioBridge(
                 modem,
                 input_device_index=input_device,
@@ -374,8 +468,11 @@ async def run_modem_call(
                 push_to_talk=push_to_talk,
                 on_line_level=on_line_level,
                 on_mic_level=on_mic_level,
-                on_uplink_pcm=on_uplink_pcm,
+                on_uplink_pcm=None if push_to_talk else on_uplink_pcm,
                 on_downlink_pcm=on_downlink_pcm,
+                on_ptt_pcm=ptt_cb,
+                line_gain=line_gain,
+                mic_gain=mic_gain,
             )
             if not await bridge.start():
                 on_status("Casque/micro indisponible — DTMF seulement.")

@@ -10,7 +10,7 @@ WorkingDirectory=/opt/vocalguard-stt
 EnvironmentFile=-/opt/vocalguard-stt/.env.stt
 Environment=LD_LIBRARY_PATH=/opt/vocalguard-stt/whisper.cpp/build/bin
 ExecStart=/opt/vocalguard-stt/whisper.cpp/build/bin/whisper-server \
-  -m /opt/vocalguard-stt/whisper-models/ggml-small-q5_1.bin \
+  -m /opt/vocalguard-stt/whisper-models/ggml-base-q5_1.bin \
   -l fr \
   -t 4 \
   -bs 1 \

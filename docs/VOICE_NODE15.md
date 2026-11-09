@@ -3,7 +3,7 @@
 ## Architecture
 
 - **node14** : telephonie, VAD tour (`TurnVad`), belief intents, play WAV modem sous `ivr_wav/kb_*.wav` (entrant) et `out_kb_*.wav` (commercial sortant).
-- **node15** : `POST /v1/transcribe?mode=live|final`, `POST /v1/intent-predict`, `POST /v1/tts`, `POST /v1/greeting-mix` (TTS + mix intro).
+- **node15** : `POST /v1/transcribe?mode=live|final`, `WS /ws/v1/transcribe` (PCM 16 kHz vers Whisper, partiel / final), `POST /v1/intent-predict`, `POST /v1/tts`, `POST /v1/greeting-mix` (TTS + mix intro).
 - **Qdrant** (node15, sans Docker) : collections `intents_inbound` et `intents_outbound_commercial` (vecteurs 384, Cosine). Service systemd `qdrant`, HTTP `:6333`.
 - **Postgres** (node14) : tables `intents` (+ `profile`), `intent_patterns`, `intent_responses`, `intent_embeddings` (+ colonne `embedding` pgvector en fallback), `call_leads`.
 - Seed inbound : `data/intents/kb_seed/conversation_v1.json`.
@@ -34,6 +34,13 @@ QDRANT_URL=http://node15.lan:6333
 
 `TTS_SERVICE_URL` pilote la synthese distante (accueil incoming-audio, mix, prefetch KB).
 Si omis, repli sur `STT_SERVICE_URL` (meme daemon).
+
+## WebSocket Whisper
+
+`ws://node15.lan:8100/ws/v1/transcribe?mode=live`
+
+Le client envoie du PCM s16le 16 kHz (binaire), puis un JSON `{"op":"transcribe"}` (partiel, fenetre 4 s), `{"op":"final"}`, `{"op":"reset"}` ou `{"op":"end"}`.
+Si `STT_INTERNAL_TOKEN` est defini : query `token` ou header `X-STT-Token`. Le POST `/v1/transcribe` reste en place.
 
 L'apercu / regeneration incoming-audio appelle `POST /v1/greeting-mix` : TTS + mix jingle/piste
 (+ bip) sur node15, avec upload de l'intro locale. Repli mix local si node15 KO.

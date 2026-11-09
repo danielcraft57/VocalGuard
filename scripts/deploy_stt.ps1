@@ -27,6 +27,7 @@ $ModelMap = @{
     "tiny"  = "ggml-tiny-q5_1.bin"
     "base"  = "ggml-base-q5_1.bin"
     "small" = "ggml-small-q5_1.bin"
+    "medium" = "ggml-medium-q5_0.bin"
 }
 $WhisperModelKey = $WhisperModel.Trim().ToLowerInvariant()
 if ($ModelMap.ContainsKey($WhisperModelKey)) {

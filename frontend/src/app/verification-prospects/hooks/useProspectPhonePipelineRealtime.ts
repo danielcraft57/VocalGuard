@@ -232,11 +232,22 @@ export function useProspectPhonePipelineRealtime(opts: {
         void syncBatch();
       }
       if (payload.type === "prospect_phone.enrich.completed") {
-        markTerminal({
-          phase: "done",
-          logLine: "Import et analyse termines.",
-          activeProspect: null,
-        });
+        const phase = String(data.phase || "");
+        const queued = Number(data.enrich_queued) || 0;
+        if (phase === "done" && queued <= 0) {
+          markTerminal({
+            phase: "done",
+            enrichPercent: 100,
+            logLine: "Import et analyse termines.",
+            activeProspect: null,
+          });
+        } else {
+          onStateRef.current({
+            phase: "enrich",
+            logLine: queued > 0 ? "OSINT Celery en cours…" : "Analyse OSINT en cours…",
+            enrichPercent: enrichPercentFromPayload(data),
+          });
+        }
         void syncBatch();
       }
       if (payload.type === "prospect_phone.import.failed") {

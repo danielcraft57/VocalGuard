@@ -56,6 +56,9 @@ type ChatsCache = {
   savedAt: number;
 };
 
+/** ElevenLabs Matilda (Marie commercial). */
+export const ELEVENLABS_VOICE_MATILDA = "XrExE9yKIg1WjnnlVkGX";
+
 /** Prefs voix par defaut (proche incoming-audio). */
 export const DEFAULT_KB_VOICE_PREFS: KbVoicePrefs = {
   tts_provider: "edge",
@@ -64,6 +67,16 @@ export const DEFAULT_KB_VOICE_PREFS: KbVoicePrefs = {
   edge_tts_pitch: "+0Hz",
   tts_voice_gain_db: -6,
   elevenlabs_voice_id: "JBFqnCBsd6RMkjVDRZzb"
+};
+
+/** Commercial sortant : Matilda + fallback Edge femme. */
+export const DEFAULT_OUTBOUND_KB_VOICE_PREFS: KbVoicePrefs = {
+  tts_provider: "elevenlabs",
+  edge_tts_voice: "fr-FR-DeniseNeural",
+  edge_tts_rate: "+0%",
+  edge_tts_pitch: "+0Hz",
+  tts_voice_gain_db: -6,
+  elevenlabs_voice_id: ELEVENLABS_VOICE_MATILDA
 };
 
 /** Cache memoire (meme onglet SPA). */
@@ -101,7 +114,26 @@ export function voicePrefsForProfile(
   state: KbUiState,
   profile: KbProfile
 ): KbVoicePrefs {
-  return { ...DEFAULT_KB_VOICE_PREFS, ...(state.voiceByProfile?.[profile] || {}) };
+  const base =
+    profile === "outbound_commercial"
+      ? DEFAULT_OUTBOUND_KB_VOICE_PREFS
+      : DEFAULT_KB_VOICE_PREFS;
+  const merged = { ...base, ...(state.voiceByProfile?.[profile] || {}) };
+  if (
+    profile === "outbound_commercial" &&
+    (!merged.elevenlabs_voice_id ||
+      merged.elevenlabs_voice_id === "JBFqnCBsd6RMkjVDRZzb")
+  ) {
+    merged.elevenlabs_voice_id = ELEVENLABS_VOICE_MATILDA;
+    merged.tts_provider = "elevenlabs";
+  }
+  if (
+    profile === "outbound_commercial" &&
+    merged.edge_tts_voice.includes("Henri")
+  ) {
+    merged.edge_tts_voice = "fr-FR-DeniseNeural";
+  }
+  return merged;
 }
 
 /**

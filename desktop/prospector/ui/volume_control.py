@@ -100,7 +100,10 @@ class VolumeControlPanel(QFrame):
         self.control.volume_changed.connect(self.volume_changed.emit)
         self.control.mute_changed.connect(self.mute_changed.emit)
         self.control.test_requested.connect(self.test_requested.emit)
-        outer.addWidget(self.control)
+        row = QHBoxLayout()
+        row.addWidget(self.control)
+        row.addStretch()
+        outer.addLayout(row)
 
     def set_volume_percent(self, percent: int) -> None:
         """Sync depuis le moteur son."""

@@ -287,6 +287,8 @@ class CallManager:
         self._pending_call_duration_sec: Optional[int] = None
         self._call_db_finalized: bool = False
         self._modem_recover_lock = asyncio.Lock()
+        self._cid_backfill_call_id: Optional[int] = None
+        self._cid_backfill_until: float = 0.0
 
         # Mode audio modem: voix série (Conexant) ou ALSA. USE_MODEM_VOICE_MODE=0 force ALSA (evite ton aigu).
         _voice_env = os.environ.get("USE_MODEM_VOICE_MODE", "").strip().lower()
@@ -300,6 +302,149 @@ class CallManager:
         
         # Enregistrer les handlers d'événements
         self._setup_event_handlers()
+
+    def _cid_backfill_window_sec(self) -> float:
+        """
+        Duree (s) pour accepter un NMBR= tardif apres fin d'appel sans numero.
+
+        @returns Secondes (defaut 45).
+        """
+        try:
+            raw = getattr(self.config, "cid_backfill_sec", 45.0)
+            return max(5.0, float(raw or 45.0))
+        except (TypeError, ValueError):
+            return 45.0
+
+    def _register_cid_backfill(self, call_id: int) -> None:
+        """
+        Garde un appel ouvert au rattrapage CID (NMBR= en retard).
+
+        @param call_id Identifiant appel sans numero en base.
+        """
+        if not call_id:
+            return
+        self._cid_backfill_call_id = int(call_id)
+        self._cid_backfill_until = time.monotonic() + self._cid_backfill_window_sec()
+        self._log_call("cid_backfill_arme", backfill_id=call_id)
+
+    def _clear_cid_backfill(self, call_id: Optional[int] = None) -> None:
+        """
+        Desarme le rattrapage CID pour un appel ou globalement.
+
+        @param call_id Si fourni, clear seulement si c'est l'appel suivi.
+        """
+        if call_id is not None and self._cid_backfill_call_id != int(call_id):
+            return
+        self._cid_backfill_call_id = None
+        self._cid_backfill_until = 0.0
+
+    def _cid_backfill_target_id(self) -> Optional[int]:
+        """
+        ID appel eligible au rattrapage (actif ou fenetre post-appel).
+
+        @returns call_id ou None.
+        """
+        if self._cid_backfill_call_id and time.monotonic() <= self._cid_backfill_until:
+            return self._cid_backfill_call_id
+        if self._cid_backfill_call_id:
+            self._clear_cid_backfill()
+        return None
+
+    async def _apply_caller_id_to_call(
+        self,
+        call_id: int,
+        *,
+        caller_id: Optional[str] = None,
+        caller_name: Optional[str] = None,
+        late: bool = False,
+    ) -> bool:
+        """
+        Ecrit numero / nom sur un appel et journalise le rattrapage eventuel.
+
+        @param call_id Appel cible.
+        @param caller_id Numero NMBR= normalise ou brut.
+        @param caller_name Nom NAME=.
+        @param late True si NMBR= arrive apres creation sans numero.
+        @returns True si un numero a ete enregistre.
+        """
+        row = self.call_service.call_repo.get_by_id(call_id)
+        if not row:
+            return False
+        had_phone = bool(row.phone_number)
+        phone_arg = caller_id
+        name_arg = caller_name
+        if phone_arg is None and not had_phone:
+            phone_arg = self._pending_cid
+        if name_arg is None and not row.caller_name:
+            name_arg = self._pending_cname
+        if phone_arg is None and name_arg is None:
+            return False
+        updated = await self.call_service.set_call_caller_info(
+            call_id,
+            phone_number=phone_arg,
+            caller_name=name_arg,
+        )
+        if not updated:
+            return False
+        if updated.phone_number and not had_phone:
+            self._clear_cid_backfill(call_id)
+            self._log_call(
+                "cid_rattrape" if late else "cid_applique",
+                db_id=call_id,
+                phone=updated.phone_number,
+            )
+            logger.info(
+                "Caller ID {} pour appel #{} ({})",
+                "rattrape" if late else "applique",
+                call_id,
+                updated.phone_number,
+            )
+            return True
+        return False
+
+    async def _try_backfill_caller_id(
+        self,
+        caller_id: Optional[str] = None,
+        caller_name: Optional[str] = None,
+    ) -> bool:
+        """
+        Rattache un NMBR= tardif a l'appel actif ou a la fenetre post-appel.
+
+        @param caller_id Numero modem.
+        @param caller_name Nom modem.
+        @returns True si au moins un appel a ete mis a jour.
+        """
+        if not normalize_cid_value(caller_id) and not normalize_cid_value(caller_name):
+            return False
+        targets: list[int] = []
+        if self.current_call_id:
+            targets.append(int(self.current_call_id))
+        backfill = self._cid_backfill_target_id()
+        if backfill and backfill not in targets:
+            targets.append(backfill)
+        applied = False
+        for call_id in targets:
+            row = self.call_service.call_repo.get_by_id(call_id)
+            if not row:
+                continue
+            if row.phone_number and normalize_cid_value(caller_id) is None:
+                if caller_name and not row.caller_name:
+                    await self._apply_caller_id_to_call(
+                        call_id,
+                        caller_name=caller_name,
+                        late=True,
+                    )
+                continue
+            if row.phone_number:
+                continue
+            if await self._apply_caller_id_to_call(
+                call_id,
+                caller_id=caller_id,
+                caller_name=caller_name,
+                late=True,
+            ):
+                applied = True
+        return applied
 
     def _log_call(self, phase: str, **fields: Any) -> None:
         """
@@ -583,6 +728,14 @@ class CallManager:
             else:
                 self._call_db_finalized = True
 
+        if target_id:
+            try:
+                row = self.call_service.call_repo.get_by_id(target_id)
+                if row and not row.phone_number:
+                    self._register_cid_backfill(target_id)
+            except Exception as exc:
+                logger.debug("cid_backfill apres release: {}", exc)
+
         self._active_call_monotonic = None
         self._pending_call_duration_sec = None
 
@@ -746,14 +899,37 @@ class CallManager:
 
         @returns Texte TTS normalise.
         """
-        from backend.core.greeting_audiences import greeting_text_for_audience
+        from backend.core.greeting_audiences import (
+            greeting_text_for_audience,
+            lookup_caller_record,
+            resolve_greeting_for_caller,
+        )
 
         if hasattr(self, "incoming_policy"):
-            return greeting_text_for_audience(
+            audience = self._current_greeting_audience()  # type: ignore[arg-type]
+            base = greeting_text_for_audience(
                 self.config,
                 self.incoming_policy.settings,
-                self._current_greeting_audience(),  # type: ignore[arg-type]
+                audience,
             )
+            phone = self._pending_cid or getattr(self, "_last_incoming_caller_id", None)
+            cid_name = self._pending_cname or getattr(self, "_last_incoming_caller_name", None)
+            caller = None
+            if phone and hasattr(self, "block_service"):
+                caller = lookup_caller_record(self.block_service.caller_repo, phone)
+            if caller is not None:
+                return resolve_greeting_for_caller(
+                    base,
+                    audience=audience,
+                    caller_name=caller.name,
+                    caller_greeting_tts_text=getattr(caller, "greeting_tts_text", None),
+                    cid_name=cid_name,
+                )
+            if cid_name and audience == "known":
+                from backend.core.greeting_audiences import apply_greeting_name_placeholder
+
+                return apply_greeting_name_placeholder(base, cid_name)
+            return base
         greeting = (self.config.voicemail_greeting or "").strip()
         return greeting or DEFAULT_VOICEMAIL_GREETING
 
@@ -1753,6 +1929,8 @@ class CallManager:
             phone_number=caller_id,
             caller_name=caller_name,
         )
+        if not call.phone_number:
+            self._register_cid_backfill(call.id)
         if decision is not None:
             await self.call_service.annotate_incoming_policy(
                 call.id,
@@ -1773,8 +1951,11 @@ class CallManager:
         caller_id = self._pending_cid or caller_id
         caller_name = self._pending_cname or caller_name
         if caller_id or caller_name:
-            await self.call_service.set_call_caller_info(
-                call.id, phone_number=caller_id, caller_name=caller_name
+            await self._apply_caller_id_to_call(
+                call.id,
+                caller_id=caller_id,
+                caller_name=caller_name,
+                late=True,
             )
 
         record = bool(getattr(self.config, "phone_mode_record", True))
@@ -2037,12 +2218,24 @@ class CallManager:
             self._last_ring_seen = time.monotonic()
 
         if self._incoming_handling:
-            if (caller_id or caller_name) and self.current_call_id:
-                await self.call_service.set_call_caller_info(
-                    self.current_call_id,
-                    phone_number=caller_id,
-                    caller_name=caller_name,
-                )
+            if caller_id or caller_name:
+                if self.current_call_id:
+                    await self._apply_caller_id_to_call(
+                        self.current_call_id,
+                        caller_id=caller_id,
+                        caller_name=caller_name,
+                        late=True,
+                    )
+            return
+
+        if caller_id or caller_name:
+            if await self._try_backfill_caller_id(caller_id, caller_name):
+                return
+            logger.debug(
+                "CID recu sans appel actif (ignore): id={} name={}",
+                caller_id or "-",
+                caller_name or "-",
+            )
             return
 
         # Flag avant tout await : evite deux handlers RING en parallele.
@@ -2158,6 +2351,8 @@ class CallManager:
                 caller_name=caller_name,
             )
             self._current_incoming_decision = decision
+            self._last_incoming_caller_id = caller_id
+            self._last_incoming_caller_name = caller_name
             rings = int(decision.rings_before_answer)
             if rings < 0 or cut_max:
                 cut_max = True
@@ -2231,6 +2426,8 @@ class CallManager:
                 phone_number=caller_id,
                 caller_name=caller_name,
             )
+            if not call.phone_number:
+                self._register_cid_backfill(call.id)
             self.current_call_id = call.id
             self._call_db_finalized = False
             self._pending_call_duration_sec = None
@@ -2249,8 +2446,11 @@ class CallManager:
                 ignored=False,
             )
             if caller_id or caller_name:
-                await self.call_service.set_call_caller_info(
-                    call.id, phone_number=caller_id, caller_name=caller_name
+                await self._apply_caller_id_to_call(
+                    call.id,
+                    caller_id=caller_id,
+                    caller_name=caller_name,
+                    late=not bool(call.phone_number),
                 )
 
             if not ok:
@@ -2373,10 +2573,11 @@ class CallManager:
                     await self.call_service.miss_call(self.current_call_id)
                 return
             if self.current_call_id and (caller_id or caller_name):
-                await self.call_service.set_call_caller_info(
+                await self._apply_caller_id_to_call(
                     self.current_call_id,
-                    phone_number=caller_id,
+                    caller_id=caller_id,
                     caller_name=caller_name,
+                    late=True,
                 )
 
             greeting = self._greeting_text()

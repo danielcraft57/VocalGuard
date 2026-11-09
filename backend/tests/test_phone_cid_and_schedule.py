@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from backend.core.incoming_line_schedule import apply_schedule_to_auto_answer, resolve_scheduled_line_mode
-from backend.core.modem_handler import _escape_dle_pcm
+from backend.core.modem_handler import _escape_dle_pcm, _unescape_dle_pcm
 from backend.core.phone_cid import classify_cid_outcome, is_masked_cid_token, normalize_cid_value
 
 
@@ -29,6 +29,12 @@ def test_escape_dle_pcm_doubles_0x10() -> None:
     raw = bytes([0x00, 0x10, 0x20, 0x10])
     assert _escape_dle_pcm(raw) == bytes([0x00, 0x10, 0x10, 0x20, 0x10, 0x10])
     assert _escape_dle_pcm(b"\x01\x02") == b"\x01\x02"
+
+
+def test_unescape_dle_pcm_restores_pcm_and_skips_control() -> None:
+    escaped = bytes([0x00, 0x10, 0x10, 0x20, 0x10, 0x73])
+    assert _unescape_dle_pcm(escaped) == bytes([0x00, 0x10, 0x20])
+    assert _unescape_dle_pcm(b"\x01\x02") == b"\x01\x02"
 
 
 def test_schedule_night_voicemail() -> None:

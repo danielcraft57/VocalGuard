@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 from typing import Any, List, Optional
 
 from sqlalchemy import select
@@ -327,6 +328,32 @@ class CampaignStore:
         self.session.commit()
         return cs
 
+    def mark_session_hangup(self, session_id: int) -> None:
+        """
+        Horodate la fin d'appel au raccrochage (sans statut CRM).
+
+        @param session_id Id call_session.
+        """
+        cs = self.session.get(CallSession, session_id)
+        if cs is None:
+            return
+        if cs.ended_at is None:
+            cs.ended_at = datetime.utcnow()
+            self.session.commit()
+
+    def set_session_wav_path(self, session_id: int, wav_path: Optional[str]) -> None:
+        """
+        Attache le chemin du fichier WAV enregistre pour une session d'appel.
+
+        @param session Id ``call_session``.
+        @param wav_path Chemin absolu ``.wav`` ou None pour effacer.
+        """
+        cs = self.session.get(CallSession, session_id)
+        if cs is None:
+            return
+        cs.wav_session_dir = wav_path
+        self.session.commit()
+
     def end_call_session(
         self,
         session_id: int,
@@ -406,6 +433,92 @@ class CampaignStore:
                 select(CallSession).order_by(CallSession.started_at.desc()).limit(limit)
             ).all()
         )
+
+    def delete_call_session(
+        self,
+        session_id: int,
+        *,
+        delete_wav: bool = True,
+    ) -> bool:
+        """
+        Supprime une session du journal (+ transcription, lien entrant).
+
+        @param session_id Cle ``call_session``.
+        @param delete_wav Efface le fichier WAV du disque si present.
+        @returns False si session introuvable.
+        """
+        cs = self.session.get(CallSession, session_id)
+        if cs is None:
+            return False
+        wav_path = (cs.wav_session_dir or "").strip()
+        for line in self.session.scalars(
+            select(CallTranscriptLine).where(CallTranscriptLine.call_session_id == session_id)
+        ).all():
+            self.session.delete(line)
+        for ev in self.session.scalars(
+            select(IncomingRingEvent).where(IncomingRingEvent.call_session_id == session_id)
+        ).all():
+            ev.call_session_id = None
+        self.session.delete(cs)
+        self.session.commit()
+        if delete_wav and wav_path:
+            try:
+                p = Path(wav_path)
+                if p.is_file():
+                    p.unlink()
+            except OSError:
+                pass
+        return True
+
+    def clear_call_history(self, *, delete_wavs: bool = True) -> int:
+        """
+        Supprime toutes les sessions d'appel du journal local.
+
+        @param delete_wavs Efface les WAV references.
+        @returns Nombre de sessions supprimees.
+        """
+        ids = [cs.id for cs in self.list_call_sessions(limit=10_000)]
+        count = 0
+        for sid in ids:
+            if self.delete_call_session(sid, delete_wav=delete_wavs):
+                count += 1
+        return count
+
+    def entreprise_label(self, entreprise_id: Optional[int]) -> str:
+        """
+        Raison sociale pour l'historique.
+
+        @param entreprise_id Cle locale pl_entreprise.
+        @returns Libelle ou chaine vide.
+        """
+        if not entreprise_id:
+            return ""
+        ent = self.session.get(PlEntreprise, entreprise_id)
+        return (ent.raison_sociale or "").strip() if ent else ""
+
+    @staticmethod
+    def call_duration_label(cs: CallSession) -> str:
+        """
+        Duree humaine d'une session.
+
+        @param cs Ligne call_session.
+        @returns Ex. ``03:42`` ou tiret si inconnue.
+        """
+        if cs.started_at and cs.ended_at:
+            sec = max(0, int((cs.ended_at - cs.started_at).total_seconds()))
+            m, s = divmod(sec, 60)
+            return f"{m:02d}:{s:02d}"
+        if cs.wav_session_dir:
+            try:
+                from desktop.prospector.call_player import wav_duration_seconds
+
+                d = wav_duration_seconds(Path(cs.wav_session_dir))
+                if d > 0:
+                    m, s = divmod(int(d), 60)
+                    return f"{m:02d}:{s:02d}"
+            except Exception:
+                pass
+        return "—"
 
     def enqueue_sync_patch(
         self,

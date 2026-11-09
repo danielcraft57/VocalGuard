@@ -131,17 +131,20 @@ export function getCommercialVoiceUrl(basename: string): string {
 }
 
 /**
- * Prefetch voix sortantes (Edge ou ElevenLabs).
+ * Prefetch voix sortantes (ElevenLabs Matilda par defaut).
  *
  * @param force Ignore cache.
  * @param ttsProvider edge | elevenlabs.
+ * @param elevenlabsVoiceId Defaut Matilda.
  */
 export async function regenerateOutboundVoices(
   force = false,
-  ttsProvider?: "edge" | "elevenlabs"
+  ttsProvider: "edge" | "elevenlabs" = "elevenlabs",
+  elevenlabsVoiceId = "XrExE9yKIg1WjnnlVkGX"
 ): Promise<Record<string, unknown>> {
   return postJson("/kb/outbound-commercial/voices/regenerate", {
     force,
-    tts_provider: ttsProvider
+    tts_provider: ttsProvider,
+    elevenlabs_voice_id: elevenlabsVoiceId
   });
 }

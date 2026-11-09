@@ -59,6 +59,7 @@ class MaterialIcon(QWidget):
             "cockpit": self._cockpit,
             "phone": self._phone,
             "incoming": self._incoming,
+            "history": self._history,
             "settings": self._settings,
             "search": self._search,
             "notifications": self._bell,
@@ -94,6 +95,13 @@ class MaterialIcon(QWidget):
         p.drawLine(x + 4, y + 6, x + s / 2, y + s - 4)
         p.drawLine(x + s - 4, y + 6, x + s / 2, y + s - 4)
         p.drawLine(x + 4, y + 6, x + s - 4, y + 6)
+
+    @staticmethod
+    def _history(p: QPainter, x: float, y: float, s: float) -> None:
+        p.drawRoundedRect(x + 4, y + 5, s - 8, s - 8, 3, 3)
+        p.drawLine(x + 7, y + s - 6, x + s - 7, y + s - 6)
+        p.drawLine(x + s / 2, y + 8, x + s / 2, y + s - 7)
+        p.drawLine(x + s / 2, y + 8, x + s / 2 + 3, y + 11)
 
     @staticmethod
     def _settings(p: QPainter, x: float, y: float, s: float) -> None:

@@ -43,7 +43,7 @@ DATABASE_URL=postgresql+psycopg2://vocalguard:<mdp>@127.0.0.1:5432/vocalguard
 VG_DB_AUTOCREATE=0
 ```
 
-Pool SQLAlchemy (Postgres) : `pool_size=10`, `max_overflow=20`, `pool_pre_ping`, `pool_recycle=1800`.
+Pool SQLAlchemy (Postgres) : `VG_DB_POOL_SIZE` (defaut 5), `VG_DB_MAX_OVERFLOW` (defaut 10), `pool_pre_ping`, `pool_recycle=1800`.
 
 ## Schema normalise (points cles)
 

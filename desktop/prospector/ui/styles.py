@@ -220,9 +220,46 @@ QLabel#StatePillLive {{
     color: {t.on_surface};
     border: 1px solid {t.border};
     border-radius: 14px;
-    padding: 12px;
+    padding: 10px 14px;
+    min-height: 40px;
     selection-background-color: {t.info_container};
+    font-size: 14px;
+}}
+QLabel#FormLabel {{
+    color: {t.on_surface};
     font-size: 13px;
+    font-weight: 600;
+    padding-top: 10px;
+}}
+QLabel#FormHint {{
+    color: {t.on_surface_variant};
+    font-size: 12px;
+    line-height: 1.35;
+}}
+{root} QLineEdit#SettingsField, {root} QComboBox#SettingsCombo {{
+    background-color: {t.surface_card};
+    border: 1px solid {t.border_strong};
+    border-radius: 12px;
+    padding: 10px 14px;
+    min-height: 44px;
+    font-size: 14px;
+}}
+{root} QLineEdit#SettingsField:focus, {root} QComboBox#SettingsCombo:focus,
+{root} QComboBox#SettingsCombo:hover {{
+    border-color: {t.primary};
+}}
+QCheckBox#FormCheck {{
+    color: {t.on_surface_variant};
+    font-size: 12px;
+    spacing: 8px;
+    padding: 4px 0 8px 0;
+}}
+QScrollArea#SettingsScroll {{
+    background: transparent;
+    border: none;
+}}
+QWidget#SettingsBody {{
+    background: transparent;
 }}
 {root} QComboBox {{
     background-color: {t.input_bg};
@@ -230,7 +267,7 @@ QLabel#StatePillLive {{
     border: 1px solid {t.border};
     border-radius: 10px;
     padding: 8px 12px;
-    min-height: 20px;
+    min-height: 40px;
 }}
 {root} QComboBox::drop-down {{
     border: none;
@@ -457,6 +494,42 @@ QLabel#StatCardTrend {{
 }}
 QFrame#StatAccentStrip {{
     border-radius: 3px;
+}}
+{root} QLineEdit#DialNumberField {{
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 14px 16px;
+    min-height: 28px;
+}}
+QPushButton#DialPadKey {{
+    background-color: {t.input_bg};
+    border: 1px solid {t.border};
+    border-radius: 14px;
+    color: {t.on_surface};
+    font-size: 22px;
+    font-weight: 700;
+    min-width: 76px;
+    min-height: 56px;
+}}
+QPushButton#DialPadKey:hover {{
+    background-color: {t.button_hover};
+    border-color: {t.border_strong};
+}}
+QPushButton#DialPadKey:pressed {{
+    background-color: {t.primary_container};
+    color: {t.on_primary_container};
+    border-color: transparent;
+}}
+QPushButton#DialPadKey QLabel {{
+    background: transparent;
+    border: none;
+}}
+QLabel#DialLetters {{
+    color: {t.on_surface_variant};
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1.4px;
 }}
 QStackedWidget {{
     background: transparent;

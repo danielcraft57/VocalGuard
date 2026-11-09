@@ -18,6 +18,26 @@ from backend.database.models import Base
 SessionLocal = None
 
 
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    """
+    Lit une variable d environnement entiere bornee.
+
+    @param name Nom de la variable.
+    @param default Valeur si absente ou invalide.
+    @param minimum Borne basse incluse.
+    @param maximum Borne haute incluse.
+    @returns Entier dans [minimum, maximum].
+    """
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, min(maximum, value))
+
+
 async def init_database(database_url: str) -> None:
     """
     Initialise la base de donnees.
@@ -35,13 +55,20 @@ async def init_database(database_url: str) -> None:
     if is_sqlite:
         engine_kwargs["connect_args"] = {"check_same_thread": False}
     elif is_postgres:
+        pool_size = _env_int("VG_DB_POOL_SIZE", 5, 1, 50)
+        max_overflow = _env_int("VG_DB_MAX_OVERFLOW", 10, 0, 50)
         engine_kwargs.update(
             {
-                "pool_size": 10,
-                "max_overflow": 20,
+                "pool_size": pool_size,
+                "max_overflow": max_overflow,
                 "pool_recycle": 1800,
                 "pool_timeout": 30,
             }
+        )
+        logger.info(
+            "Pool PostgreSQL: pool_size={} max_overflow={}",
+            pool_size,
+            max_overflow,
         )
 
     engine = create_engine(database_url, **engine_kwargs)

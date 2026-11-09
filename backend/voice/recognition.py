@@ -4,6 +4,7 @@ Supporte Whisper et VOSK
 """
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Optional, AsyncIterator, List
 import io
@@ -30,6 +31,20 @@ class VoiceRecognition:
         self._out_stream_recs: dict[str, object] = {}
         self._remote_stt_available = False
 
+    def _skip_local_stt(self) -> bool:
+        """
+        True si aucun moteur local (Vosk/Whisper) ne doit etre charge.
+
+        Prod : STT_SERVICE_URL (Whisper node15) ou VG_STT_LOCAL=0.
+        Dev local : VG_STT_LOCAL=1 force Vosk/Whisper meme avec STT distant.
+        """
+        raw = (os.getenv("VG_STT_LOCAL") or "").strip().lower()
+        if raw in ("1", "true", "yes"):
+            return False
+        if raw in ("0", "false", "no"):
+            return True
+        return bool(self.config.stt_service_url)
+
     def is_available(self) -> bool:
         """
         Indique si la transcription est possible (local ou service distant).
@@ -40,7 +55,13 @@ class VoiceRecognition:
 
     async def initialize(self):
         """Initialise le moteur de reconnaissance vocale"""
-        logger.info(f"Initialisation de la reconnaissance vocale ({self.engine})...")
+        skip_local = self._skip_local_stt()
+        if skip_local:
+            logger.info(
+                "STT local desactive (STT distant ou VG_STT_LOCAL=0) — pas de Vosk/Whisper en RAM."
+            )
+        else:
+            logger.info(f"Initialisation de la reconnaissance vocale ({self.engine})...")
 
         if self.config.stt_service_url:
             from backend.voice.stt_remote import check_stt_service_health
@@ -53,6 +74,17 @@ class VoiceRecognition:
                     "STT distant configure ({}) mais injoignable ou modele non charge.",
                     self.config.stt_service_url,
                 )
+
+        if skip_local:
+            if self._remote_stt_available:
+                self.engine = None
+                logger.info("Reconnaissance vocale via service distant uniquement")
+                return
+            logger.warning(
+                "STT distant indisponible et STT local desactive — pas de transcription."
+            )
+            self.engine = None
+            return
 
         # gtts est un moteur de synthèse (texte -> parole), pas de reconnaissance
         if self.engine == "gtts":
@@ -182,6 +214,9 @@ class VoiceRecognition:
                     token=self.config.stt_internal_token,
                 )
             except Exception as e:
+                if self._skip_local_stt():
+                    logger.warning("STT distant echoue (pas de fallback local): {}", e)
+                    return ""
                 logger.warning("STT distant echoue, fallback local: {}", e)
 
         if self.engine is None:
@@ -222,10 +257,10 @@ class VoiceRecognition:
                 if text:
                     return text, cues or []
             except Exception as e:
+                if self._skip_local_stt():
+                    logger.warning("STT distant echoue (pas de fallback local): {}", e)
+                    return "", []
                 logger.warning("STT distant echoue, fallback local: {}", e)
-
-        text = ""
-        if self.engine == "whisper":
             text = await self._transcribe_whisper(audio_data)
         elif self.engine == "vosk":
             text = await self._transcribe_vosk(audio_data, sample_rate)

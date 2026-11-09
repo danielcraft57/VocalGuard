@@ -68,6 +68,7 @@ class CallerResponse(BaseModel):
     is_blocked: bool
     is_whitelisted: bool
     notes: Optional[str] = None
+    greeting_tts_text: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     
@@ -87,6 +88,7 @@ class CallerCreate(BaseModel):
     is_blocked: bool = False
     is_whitelisted: bool = False
     notes: Optional[str] = None
+    greeting_tts_text: Optional[str] = None
 
 
 class CallerUpdate(BaseModel):
@@ -95,6 +97,7 @@ class CallerUpdate(BaseModel):
     is_blocked: Optional[bool] = None
     is_whitelisted: Optional[bool] = None
     notes: Optional[str] = None
+    greeting_tts_text: Optional[str] = None
 
 
 class WhitelistAddRequest(BaseModel):
@@ -102,6 +105,7 @@ class WhitelistAddRequest(BaseModel):
     phone_number: str = Field(..., min_length=1, max_length=20)
     name: Optional[str] = Field(None, max_length=255)
     notes: Optional[str] = None
+    greeting_tts_text: Optional[str] = None
 
 
 class BlockAddRequest(BaseModel):

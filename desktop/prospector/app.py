@@ -17,6 +17,7 @@ if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
 from PySide6.QtCore import Qt, QThread, QTimer, Signal  # noqa: E402
+from PySide6.QtCore import QSignalBlocker  # noqa: E402
 from PySide6.QtGui import QFont, QIcon, QColor  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QTableWidgetItem  # noqa: E402
 
@@ -31,12 +32,29 @@ from desktop.prospector.incoming_match import match_incoming_caller  # noqa: E40
 from desktop.prospector.modem_listen import IncomingListenWorker  # noqa: E402
 from desktop.prospector.phone_utils import phone_digits  # noqa: E402
 from desktop.prospector.prospectlab_client import ProspectLabClient, ProspectLabError  # noqa: E402
+from desktop.prospector.audio_levels import (  # noqa: E402
+    LineRecordProcessor,
+    pcm16_for_recording,
+    pcm16_mono_crest,
+    pcm16_mono_rms,
+)
+from desktop.prospector.call_recorder import DualMonoCallRecorder, session_wav_path  # noqa: E402
 from desktop.prospector.settings import (  # noqa: E402
+    call_recordings_base_dir,
     load_prospector_env,
     modem_baudrate,
     modem_com_port,
+    call_line_gain,
+    persist_prospector_env,
     prospectlab_api_prefix,
+    prospectlab_base_url,
     prospectlab_token,
+    record_arm_on_speech,
+    record_arm_speech_crest,
+    record_arm_speech_hits,
+    record_arm_speech_rms,
+    record_calls_enabled,
+    record_start_delay_s,
 )
 from desktop.prospector.sounds import ProspectorSounds  # noqa: E402
 from desktop.prospector.ui_prefs import load_prefs, save_prefs  # noqa: E402
@@ -74,6 +92,8 @@ class CallWorker(QThread):
         output_device: Optional[int],
         on_uplink_pcm: Optional[Callable[[bytes], None]] = None,
         on_downlink_pcm: Optional[Callable[[bytes], None]] = None,
+        on_ptt_pcm: Optional[Callable[[bytes], None]] = None,
+        record_path: Optional[Path] = None,
     ) -> None:
         super().__init__()
         self.mode = mode
@@ -84,11 +104,17 @@ class CallWorker(QThread):
         self.output_device = output_device
         self.on_uplink_pcm = on_uplink_pcm
         self.on_downlink_pcm = on_downlink_pcm
+        self.on_ptt_pcm = on_ptt_pcm
+        self._record_path = record_path
+        self._recorder: Optional[DualMonoCallRecorder] = None
+        self._record_arm_allowed = False
+        self._speech_arm_streak = 0
         self._hangup = threading.Event()
         self._dtmf: queue.Queue[str] = queue.Queue()
         self._ptt: queue.Queue[bool] = queue.Queue()
 
     def hangup(self) -> None:
+        """Demande fin d'appel — le modem envoie ATH0 via ``ModemHandler.hangup()``."""
         self._hangup.set()
 
     def ptt(self) -> None:
@@ -96,6 +122,57 @@ class CallWorker(QThread):
 
     def run(self) -> None:
         import asyncio
+
+        def _arm_recorder() -> None:
+            """Ouvre le fichier WAV stereo (ligne + micro)."""
+            if self._recorder is not None or not self._record_path or not record_calls_enabled():
+                return
+            try:
+                self._recorder = DualMonoCallRecorder(self._record_path)
+                self._recorder.open()
+            except Exception:
+                self._recorder = None
+
+        def _on_voice_stream_ready() -> None:
+            """VRX pret : autorise l'armement (pas forcement immediat en sortant)."""
+            LineRecordProcessor.shared().reset()
+            if not self._record_path or not record_calls_enabled():
+                return
+            if self.mode == "incoming" or not record_arm_on_speech():
+                _arm_recorder()
+                return
+            self._record_arm_allowed = True
+            self._speech_arm_streak = 0
+
+        def _maybe_arm_recorder_from_line(pcm_raw: bytes) -> None:
+            """Sortant : attend la parole distante avant d'ecrire le WAV."""
+            if self._recorder is not None:
+                return
+            if self._record_arm_allowed:
+                LineRecordProcessor.shared().observe_line(pcm_raw)
+            if not self._record_arm_allowed:
+                return
+            thr = record_arm_speech_rms()
+            crest_min = record_arm_speech_crest()
+            if pcm16_mono_rms(pcm_raw) >= thr and pcm16_mono_crest(pcm_raw) >= crest_min:
+                self._speech_arm_streak += 1
+            else:
+                self._speech_arm_streak = 0
+            if self._speech_arm_streak >= record_arm_speech_hits():
+                _arm_recorder()
+
+        def _feed_mic(b: bytes) -> None:
+            if self.on_uplink_pcm:
+                self.on_uplink_pcm(b)
+            if self._recorder is not None:
+                self._recorder.feed_mic(pcm16_for_recording(b, "mic"))
+
+        def _feed_line(b: bytes) -> None:
+            if self.on_downlink_pcm:
+                self.on_downlink_pcm(b)
+            _maybe_arm_recorder_from_line(b)
+            if self._recorder is not None:
+                self._recorder.feed_line(pcm16_for_recording(b, "line"))
 
         async def _go() -> None:
             kw = dict(
@@ -109,10 +186,13 @@ class CallWorker(QThread):
                 on_status=lambda m: self.status.emit(m),
                 on_line_level=lambda v: self.line_level.emit(v),
                 on_mic_level=lambda v: self.mic_level.emit(v),
-                on_uplink_pcm=self.on_uplink_pcm,
-                on_downlink_pcm=self.on_downlink_pcm,
+                on_uplink_pcm=_feed_mic,
+                on_downlink_pcm=_feed_line,
+                on_ptt_pcm=_feed_mic,
                 push_to_talk=True,
                 ptt_ms=1400,
+                on_voice_ready=_on_voice_stream_ready,
+                record_delay_s=record_start_delay_s(),
             )
             if self.mode == "incoming":
                 await answer_incoming_call(**kw)
@@ -124,6 +204,15 @@ class CallWorker(QThread):
         except Exception as exc:
             self.failed.emit(str(exc))
         finally:
+            if self._recorder is not None:
+                self._recorder.close()
+                self._recorder = None
+            elif self._record_path and self._record_path.is_file():
+                try:
+                    if self._record_path.stat().st_size <= 1024:
+                        self._record_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
             self.finished_call.emit()
 
 
@@ -166,10 +255,13 @@ class ProspectorWindow(QMainWindow):
         self.pc = self.shell.page_cockpit
         self.ps = self.shell.page_softphone
         self.pe = self.shell.page_entrants
+        self.ph = self.shell.page_history
         self.pp = self.shell.page_pilotage
         self.pcfg = self.shell.page_settings
 
+        self._modem_ports_snap: list[tuple[str, str]] = []
         self._fill_settings_combos()
+        self._modem_ports_snap = self._modem_ports_snapshot()
         self._wire_ui()
         self._wire_sounds()
         self._wire_theme()
@@ -178,12 +270,18 @@ class ProspectorWindow(QMainWindow):
         self.listen_worker: Optional[IncomingListenWorker] = None
         self.stt: Optional[SttWsClient] = None
         self._active_call_session_id: Optional[int] = None
+        self._active_wav_path: Optional[Path] = None
         self._active_queue_id: Optional[int] = None
         self._incoming_number = ""
         self._call_seconds = 0
         self._call_timer = QTimer(self)
         self._call_timer.setInterval(1000)
         self._call_timer.timeout.connect(self._tick_call_timer)
+
+        self._modem_com_timer = QTimer(self)
+        self._modem_com_timer.setInterval(750)
+        self._modem_com_timer.timeout.connect(self._refresh_modem_com_ports)
+        self._modem_com_timer.start()
 
         self.shell.set_page(1)
         self._refresh_groupes_list()
@@ -193,9 +291,15 @@ class ProspectorWindow(QMainWindow):
         apply_main_window_geometry(self)
 
     def _fill_settings_combos(self) -> None:
-        self.pcfg.txt_pl_url.setText(os.environ.get("PROSPECTLAB_URL", ""))
+        self.pcfg.txt_pl_url.setText(prospectlab_base_url())
         self.pcfg.txt_pl_token.setText(prospectlab_token())
-        for port, desc in list_com_ports():
+        self.pcfg.set_call_line_gain_percent(int(round(call_line_gain() * 100)))
+        rec_on = load_prefs().get("record_calls")
+        if rec_on is None:
+            rec_on = record_calls_enabled()
+        self.pcfg.chk_record_calls.setChecked(bool(rec_on))
+        self.pcfg.cmb_com.clear()
+        for port, desc in self._modem_ports_snapshot():
             self.pcfg.cmb_com.addItem(f"{port} — {desc}", port)
         pref = modem_com_port()
         if pref:
@@ -208,8 +312,61 @@ class ProspectorWindow(QMainWindow):
         for name in self._out_names:
             if name in self.out_map:
                 self.pcfg.cmb_out.addItem(name, self.out_map[name])
-        com_label = self._com_port() or "non configure"
-        self.ps.lbl_modem_status.setText(f"COM modem {com_label}")
+        self._apply_modem_status_badge()
+
+    def _modem_ports_snapshot(self) -> list[tuple[str, str]]:
+        """
+        Liste des ports serie triee (COM) pour detection temps reel.
+
+        @returns Liste (device, description).
+        """
+        ports = list_com_ports()
+        try:
+            ports.sort(key=lambda x: x[0])
+        except Exception:
+            pass
+        return ports
+
+    def _refresh_modem_com_ports(self) -> None:
+        """
+        Rafraichit le combo Port COM et le footer quand un modem est branche ou retire.
+        """
+        snap = self._modem_ports_snapshot()
+        if snap == self._modem_ports_snap:
+            return
+        self._modem_ports_snap = snap
+        cur = str(self.pcfg.cmb_com.currentData() or "")
+        self.pcfg.cmb_com.clear()
+        for port, desc in snap:
+            self.pcfg.cmb_com.addItem(f"{port} — {desc}", port)
+        ix = -1
+        if cur:
+            ix = self.pcfg.cmb_com.findData(cur)
+        if ix < 0:
+            pref = modem_com_port()
+            if pref:
+                ix = self.pcfg.cmb_com.findData(pref)
+        if ix >= 0:
+            with QSignalBlocker(self.pcfg.cmb_com):
+                self.pcfg.cmb_com.setCurrentIndex(ix)
+        elif self.pcfg.cmb_com.count() > 0:
+            with QSignalBlocker(self.pcfg.cmb_com):
+                self.pcfg.cmb_com.setCurrentIndex(0)
+        self._apply_modem_status_badge()
+
+    def _apply_modem_status_badge(self) -> None:
+        """Met a jour pastille Line + Prospector et barre de statut bas."""
+        ports = self._modem_ports_snap or self._modem_ports_snapshot()
+        connected = len(ports) > 0
+        chosen = str(self.pcfg.cmb_com.currentData() or "") if self.pcfg.cmb_com.count() else ""
+        self.shell.footer.set_modem_hardware_state(connected=connected, port=chosen)
+        if connected and chosen:
+            short = f"{chosen} OK"
+            self.ps.lbl_modem_status.setText(f"Modem — {short}")
+        elif connected:
+            self.ps.lbl_modem_status.setText("Modem — branche, choisis le port COM")
+        else:
+            self.ps.lbl_modem_status.setText("Modem USB non branche")
 
     def _wire_ui(self) -> None:
         self.pf.btn_sync_groupes.clicked.connect(self._sync_groupes_api)
@@ -233,6 +390,18 @@ class ProspectorWindow(QMainWindow):
         self.pe.btn_listen_stop.clicked.connect(self._stop_listen)
 
         self.pcfg.btn_flush_outbox.clicked.connect(self._flush_outbox)
+        self.pcfg.btn_save_pl.clicked.connect(self._save_prospectlab_settings)
+        self.pcfg.call_line_gain_changed.connect(self._set_call_line_gain)
+        self.pcfg.record_calls_changed.connect(self._set_record_calls)
+        self.pcfg.cmb_com.currentIndexChanged.connect(self._apply_modem_status_badge)
+
+        self.ph.btn_refresh.clicked.connect(self._refresh_journal)
+        self.ph.play_requested.connect(self._play_history_selection)
+        self.ph.stop_requested.connect(self._stop_history_playback)
+        self.ph.btn_open.clicked.connect(self.ph.open_wav_in_explorer)
+        self.ph.wav_player.error.connect(self._on_history_player_error)
+        self.ph.delete_selected.connect(self._delete_history_selection)
+        self.ph.clear_all.connect(self._clear_call_history)
 
     def _wire_sounds(self) -> None:
         """Volume header + parametres, branche sur ProspectorSounds."""
@@ -258,6 +427,15 @@ class ProspectorWindow(QMainWindow):
         self.shell.volume.set_muted(muted)
         self.pcfg.volume_panel.set_muted(muted)
 
+    def _set_record_calls(self, enabled: bool) -> None:
+        save_prefs(record_calls=bool(enabled))
+
+    def _set_call_line_gain(self, percent: int) -> None:
+        """Persiste le gain ecoute ligne (prochain appel)."""
+        gain = max(0.05, min(1.0, percent / 100.0))
+        save_prefs(call_line_gain=round(gain, 2))
+        self.pcfg.set_call_line_gain_percent(percent)
+
     def _initial_theme(self) -> ThemeMode:
         raw = str(load_prefs().get("theme", "light"))
         return "light" if raw == "light" else "dark"
@@ -282,6 +460,11 @@ class ProspectorWindow(QMainWindow):
     def chat(self):
         return self.pc.chat
 
+    def _reset_prospectlab_client(self) -> None:
+        """Force relecture URL/token avant le prochain appel API."""
+        self.pl_client = None
+        self.store.pl_client = None
+
     def _pl(self) -> ProspectLabClient:
         if self.pl_client is None:
             url = self.pcfg.txt_pl_url.text().strip()
@@ -293,6 +476,33 @@ class ProspectorWindow(QMainWindow):
             self.pl_client = ProspectLabClient()
             self.store.pl_client = self.pl_client
         return self.pl_client
+
+    def _save_prospectlab_settings(self) -> None:
+        """Ecrit PROSPECTLAB_* dans prospector.env a cote de l'exe."""
+        from desktop.prospector.settings import normalize_prospectlab_url
+
+        url = normalize_prospectlab_url(self.pcfg.txt_pl_url.text())
+        tok = self.pcfg.txt_pl_token.text().strip()
+        if not url:
+            QMessageBox.warning(self, "ProspectLab", "URL ProspectLab obligatoire.")
+            return
+        if not tok:
+            QMessageBox.warning(self, "ProspectLab", "Token ProspectLab obligatoire.")
+            return
+        self.pcfg.txt_pl_url.setText(url)
+        path = persist_prospector_env({"PROSPECTLAB_URL": url, "PROSPECTLAB_TOKEN": tok})
+        self._reset_prospectlab_client()
+        try:
+            self._pl()
+        except ProspectLabError as exc:
+            QMessageBox.warning(self, "ProspectLab", str(exc))
+            return
+        self.sounds.play("success")
+        QMessageBox.information(
+            self,
+            "ProspectLab",
+            f"Connexion enregistree.\nFichier : {path}",
+        )
 
     def _com_port(self) -> str:
         if self.pcfg.cmb_com.count():
@@ -488,9 +698,36 @@ class ProspectorWindow(QMainWindow):
         self.pc.lbl_call_state.setText("Pret")
         self.pc.lbl_timer.setText("00:00")
 
+    def _ensure_call_session(self, mode: str, number: str) -> int:
+        """Cree une session en base si absent (enregistrement + journal)."""
+        if self._active_call_session_id:
+            return self._active_call_session_id
+        direction = "in" if mode == "incoming" else "out"
+        cs = self.store.create_call_session(
+            direction=direction,
+            phone_digits_val=phone_digits(number),
+        )
+        self._active_call_session_id = cs.id
+        return cs.id
+
     def _start_call_worker(self, mode: str, number: str) -> None:
         if self.call_worker is not None:
             return
+
+        session_id = self._ensure_call_session(mode, number)
+        self._active_wav_path = None
+        wav_path: Optional[Path] = None
+        if record_calls_enabled():
+            wav_path = session_wav_path(
+                call_recordings_base_dir(),
+                session_id,
+                phone_digits=phone_digits(number),
+            )
+            self._active_wav_path = wav_path
+            try:
+                self.store.set_session_wav_path(session_id, str(wav_path))
+            except Exception:
+                pass
 
         def pcm_agent(b: bytes) -> None:
             if self.stt:
@@ -510,6 +747,7 @@ class ProspectorWindow(QMainWindow):
             output_device=self._out_dev(),
             on_uplink_pcm=pcm_agent,
             on_downlink_pcm=pcm_remote,
+            record_path=wav_path,
         )
         self.call_worker.status.connect(self.pc.lbl_status.setText)
         self.call_worker.failed.connect(self._on_call_failed)
@@ -544,6 +782,7 @@ class ProspectorWindow(QMainWindow):
         self.chat.add_system("Appel sortant — STT actif.")
         self._start_stt()
         self._begin_call_ui(f"Appel en cours — {qi.entreprise.raison_sociale}")
+        self._show_recording_hint()
         self._start_call_worker("out", tel)
         self.shell.set_page(2)
 
@@ -551,10 +790,16 @@ class ProspectorWindow(QMainWindow):
         tel = self.ps.txt_dial.text().strip()
         if not tel:
             return
+        cs = self.store.create_call_session(
+            direction="out",
+            phone_digits_val=phone_digits(tel),
+        )
+        self._active_call_session_id = cs.id
         self.chat.clear()
         self.chat.add_system("Appel manuel Line.")
         self._start_stt()
         self._begin_call_ui(f"Appel — {tel}")
+        self._show_recording_hint()
         self._start_call_worker("out", tel)
         self.shell.set_page(2)
 
@@ -566,14 +811,37 @@ class ProspectorWindow(QMainWindow):
         if self.call_worker:
             self.call_worker.hangup()
 
+    def _show_recording_hint(self) -> None:
+        """Indique en cockpit que l'appel sera enregistre."""
+        if not record_calls_enabled():
+            return
+        base = call_recordings_base_dir()
+        self.chat.add_system(
+            "Enregistrement prevu (L=ligne, R=micro) : le WAV demarre a la "
+            f"parole distante, pas pendant la sonnerie. Dossier : {base}"
+        )
+        self.pf.chip_active.setText("REC · En cours")
+
     def _on_call_worker_done(self) -> None:
         if self.stt:
             self.stt.commit_final()
             self.stt.stop()
             self.stt = None
+        if self._active_call_session_id:
+            try:
+                self.store.mark_session_hangup(self._active_call_session_id)
+            except Exception:
+                pass
+        if self._active_wav_path and self._active_wav_path.is_file():
+            size_kb = max(1, self._active_wav_path.stat().st_size // 1024)
+            self.chat.add_system(
+                f"Fichier enregistre ({size_kb} Ko) : {self._active_wav_path}"
+            )
+            self.pc.lbl_status.setText(f"WAV : {self._active_wav_path.name}")
         self.call_worker = None
         self._end_call_ui()
         self._refresh_kpis()
+        self._refresh_journal()
 
     def _close_call_sync(self) -> None:
         if not self._active_call_session_id:
@@ -701,6 +969,7 @@ class ProspectorWindow(QMainWindow):
         self.chat.add_system("Appel entrant.")
         self._start_stt()
         self._begin_call_ui(f"Entrant — {num}")
+        self._show_recording_hint()
         self._start_call_worker("incoming", num)
         self.shell.set_page(2)
 
@@ -726,8 +995,105 @@ class ProspectorWindow(QMainWindow):
             self.pe.table_incoming.setItem(r, 3, QTableWidgetItem(match))
 
     def _refresh_journal(self) -> None:
-        rows = self.store.list_call_sessions(100)
+        """Remplit l'historique + KPI depuis call_session."""
+        rows_out: list[dict] = []
+        for cs in self.store.list_call_sessions(200):
+            wav = (cs.wav_session_dir or "").strip()
+            wav_ok = bool(wav) and Path(wav).is_file()
+            started = cs.started_at.strftime("%Y-%m-%d %H:%M") if cs.started_at else ""
+            direction = "Entrant" if cs.direction == "in" else "Sortant"
+            rows_out.append(
+                {
+                    "id": cs.id,
+                    "started": started,
+                    "direction": direction,
+                    "phone": cs.phone_digits or "—",
+                    "company": self.store.entreprise_label(cs.entreprise_id) or "—",
+                    "duration": self.store.call_duration_label(cs),
+                    "outcome": cs.outcome or "—",
+                    "wav_flag": "OK" if wav_ok else ("manquant" if wav else "—"),
+                    "wav_path": wav if wav_ok else None,
+                }
+            )
+        self.ph.set_sessions(rows_out)
         self._refresh_kpis()
+
+    def _play_history_selection(self) -> None:
+        """Lit le WAV selectionne dans l'historique."""
+        path = self.ph.selected_wav_path()
+        if path is None:
+            self.ph.set_player_status("Aucun fichier WAV pour cette ligne.")
+            return
+        self.ph.wav_player.stop()
+        self.ph.set_player_status(f"Lecture : {path.name}")
+        out_ix = self._out_dev()
+        if out_ix is None and self.pcfg.cmb_out.count() > 0:
+            out_ix = self.pcfg.cmb_out.currentData()
+        self.ph.wav_player.play(
+            path,
+            channel=self.ph.selected_channel(),  # type: ignore[arg-type]
+            output_device=out_ix,
+            gain=0.75,
+        )
+
+    def _stop_history_playback(self) -> None:
+        """Arrete le lecteur historique."""
+        self.ph.wav_player.stop()
+        self.ph.set_player_status("Lecture arretee.")
+
+    def _on_history_player_error(self, message: str) -> None:
+        """Affiche l'erreur PortAudio / fichier."""
+        self.ph.set_player_status(message)
+        QMessageBox.warning(self, "Lecteur", message)
+
+    def _delete_history_selection(self) -> None:
+        """Supprime la session selectionnee (+ WAV optionnel)."""
+        sid = self.ph.selected_session_id()
+        if sid is None:
+            QMessageBox.information(self, "Historique", "Selectionnez une ligne a supprimer.")
+            return
+        row = self.ph.table.currentRow()
+        wav = self.ph.selected_wav_path()
+        label = ""
+        if row >= 0 and self.ph.table.item(row, 2):
+            label = self.ph.table.item(row, 2).text()
+        msg = f"Supprimer l'appel {label or sid} du journal ?"
+        if wav:
+            msg += f"\n\nLe fichier sera aussi efface :\n{wav.name}"
+        if QMessageBox.question(self, "Historique", msg) != QMessageBox.StandardButton.Yes:
+            return
+        self.ph.wav_player.stop()
+        if not self.store.delete_call_session(sid, delete_wav=True):
+            QMessageBox.warning(self, "Historique", "Session introuvable.")
+            return
+        if self._active_call_session_id == sid:
+            self._active_call_session_id = None
+        self.sounds.play("notify")
+        self.ph.set_player_status("Entree supprimee.")
+        self._refresh_journal()
+
+    def _clear_call_history(self) -> None:
+        """Vide tout le journal local."""
+        n = len(self.store.list_call_sessions(10_000))
+        if n == 0:
+            QMessageBox.information(self, "Historique", "Le journal est deja vide.")
+            return
+        if (
+            QMessageBox.question(
+                self,
+                "Historique",
+                f"Supprimer les {n} entrees du journal ?\n"
+                "Les enregistrements WAV associes seront effaces du disque.",
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        self.ph.wav_player.stop()
+        removed = self.store.clear_call_history(delete_wavs=True)
+        self._active_call_session_id = None
+        self.sounds.play("notify")
+        QMessageBox.information(self, "Historique", f"{removed} entree(s) supprimee(s).")
+        self._refresh_journal()
 
     def _flush_outbox(self) -> None:
         try:
@@ -746,6 +1112,7 @@ class ProspectorWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # type: ignore[no-untyped-def]
         self.sounds.stop_ring()
+        self.ph.wav_player.stop()
         self._stop_listen()
         self._hangup_call()
         self.session.close()

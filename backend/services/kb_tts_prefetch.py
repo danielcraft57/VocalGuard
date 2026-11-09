@@ -17,8 +17,9 @@ from backend.voice.elevenlabs_tts import ElevenLabsQuotaError, ElevenLabsTts
 from backend.voice.ivr_cache import IvrAudioCache, ivr_content_hash
 from backend.voice.modem_profile import resolve_profile_from_config
 from backend.voice.node15_voice_client import Node15VoiceClient
-from backend.voice.qdrant_intents import PROFILE_INBOUND
+from backend.voice.qdrant_intents import PROFILE_INBOUND, PROFILE_OUTBOUND_COMMERCIAL
 from backend.voice.response_picker import variant_wav_basename
+from backend.voice.elevenlabs_client import ELEVENLABS_VOICE_MATILDA
 from backend.voice.tts_url import resolve_tts_service_url, resolve_tts_token
 
 if TYPE_CHECKING:
@@ -103,6 +104,15 @@ async def prefetch_intent_voices(
         wanted = {t.strip() for t in tags if t and t.strip()}
         intents = [i for i in intents if i["tag"] in wanted]
 
+    if profile == PROFILE_OUTBOUND_COMMERCIAL:
+        if tts_provider is None and not getattr(config, "tts_provider", None):
+            tts_provider = "elevenlabs"
+        _vid = (elevenlabs_voice_id or "").strip()
+        if not _vid or _vid == "JBFqnCBsd6RMkjVDRZzb":
+            elevenlabs_voice_id = ELEVENLABS_VOICE_MATILDA
+        if not (edge_tts_voice or "").strip():
+            edge_tts_voice = "fr-FR-DeniseNeural"
+
     provider = (
         (tts_provider or getattr(config, "tts_provider", None) or "edge")
         .strip()
@@ -111,11 +121,22 @@ async def prefetch_intent_voices(
     if provider not in ("edge", "elevenlabs"):
         provider = "edge"
 
+    if profile == PROFILE_OUTBOUND_COMMERCIAL and provider == "edge":
+        if not (edge_tts_voice or "").strip():
+            edge_tts_voice = "fr-FR-DeniseNeural"
+        elif "Henri" in edge_tts_voice or "henri" in edge_tts_voice.lower():
+            edge_tts_voice = "fr-FR-DeniseNeural"
+
     eleven: Optional[ElevenLabsTts] = None
     if provider == "elevenlabs":
         eleven = ElevenLabsTts.from_config(config)
-        if elevenlabs_voice_id and eleven is not None:
-            eleven.voice_id = str(elevenlabs_voice_id).strip()
+        voice_id = (elevenlabs_voice_id or "").strip()
+        if profile == PROFILE_OUTBOUND_COMMERCIAL and (
+            not voice_id or voice_id == "JBFqnCBsd6RMkjVDRZzb"
+        ):
+            voice_id = ELEVENLABS_VOICE_MATILDA
+        if voice_id and eleven is not None:
+            eleven.voice_id = voice_id
         if eleven is None:
             logger.warning(
                 "Prefetch ElevenLabs demande mais cle absente - fallback Edge"

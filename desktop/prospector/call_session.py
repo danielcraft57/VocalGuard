@@ -18,6 +18,9 @@ if str(_REPO) not in sys.path:
 from backend.core.config import Config  # noqa: E402
 from backend.core.modem_handler import ModemHandler  # noqa: E402
 from desktop.modem_local_call import LiveAudioBridge, run_modem_call  # noqa: E402
+from desktop.prospector.settings import call_line_gain  # noqa: E402
+from desktop.prospector.settings import call_mic_gain  # noqa: E402
+from desktop.prospector.settings import record_start_delay_s as default_record_start_delay  # noqa: E402
 
 
 async def run_outbound_call(
@@ -35,8 +38,13 @@ async def run_outbound_call(
     on_mic_level: Optional[Callable[[float], None]] = None,
     on_uplink_pcm: Optional[Callable[[bytes], None]] = None,
     on_downlink_pcm: Optional[Callable[[bytes], None]] = None,
+    on_ptt_pcm: Optional[Callable[[bytes], None]] = None,
     push_to_talk: bool = True,
     ptt_ms: int = 1200,
+    line_gain: Optional[float] = None,
+    mic_gain: Optional[float] = None,
+    on_voice_ready: Optional[Callable[[], None]] = None,
+    record_delay_s: Optional[float] = None,
 ) -> None:
     """
     Appel sortant via run_modem_call.
@@ -58,8 +66,15 @@ async def run_outbound_call(
         on_mic_level=on_mic_level,
         on_uplink_pcm=on_uplink_pcm,
         on_downlink_pcm=on_downlink_pcm,
+        on_ptt_pcm=on_ptt_pcm,
         push_to_talk=push_to_talk,
         ptt_ms=ptt_ms,
+        line_gain=call_line_gain() if line_gain is None else float(line_gain),
+        mic_gain=call_mic_gain() if mic_gain is None else float(mic_gain),
+        on_voice_ready=on_voice_ready,
+        record_start_delay_s=(
+            default_record_start_delay() if record_delay_s is None else float(record_delay_s)
+        ),
     )
 
 
@@ -135,14 +150,21 @@ async def answer_incoming_call(
     on_mic_level: Optional[Callable[[float], None]] = None,
     on_uplink_pcm: Optional[Callable[[bytes], None]] = None,
     on_downlink_pcm: Optional[Callable[[bytes], None]] = None,
+    on_ptt_pcm: Optional[Callable[[bytes], None]] = None,
     push_to_talk: bool = True,
     ptt_ms: int = 1200,
+    line_gain: Optional[float] = None,
+    mic_gain: Optional[float] = None,
+    on_voice_ready: Optional[Callable[[], None]] = None,
+    record_delay_s: Optional[float] = None,
 ) -> None:
     """
     Decroche un entrant et demarre le pont audio.
 
     @param hangup_event Fin de session.
     """
+    lg = call_line_gain() if line_gain is None else float(line_gain)
+    mg = call_mic_gain() if mic_gain is None else float(mic_gain)
     cfg_path = _REPO / "config" / "config.yaml"
     if not cfg_path.is_file():
         cfg_path = _REPO / "config" / "config.example.yaml"
@@ -163,6 +185,12 @@ async def answer_incoming_call(
         on_status(f"En communication{f' — {caller_id}' if caller_id else ''}.")
         vrx_ok = await modem.start_outgoing_vrx_stream(already_in_voice_mode=True)
         if vrx_ok:
+            if on_voice_ready is not None:
+                delay = default_record_start_delay() if record_delay_s is None else float(record_delay_s)
+                if delay > 0:
+                    await asyncio.sleep(delay)
+                on_voice_ready()
+            ptt_cb = (on_ptt_pcm if on_ptt_pcm is not None else on_uplink_pcm) if push_to_talk else None
             bridge = LiveAudioBridge(
                 modem,
                 input_device_index=input_device,
@@ -170,8 +198,11 @@ async def answer_incoming_call(
                 push_to_talk=push_to_talk,
                 on_line_level=on_line_level,
                 on_mic_level=on_mic_level,
-                on_uplink_pcm=on_uplink_pcm,
+                on_uplink_pcm=None if push_to_talk else on_uplink_pcm,
                 on_downlink_pcm=on_downlink_pcm,
+                on_ptt_pcm=ptt_cb,
+                line_gain=lg,
+                mic_gain=mg,
             )
             if not await bridge.start():
                 on_status("Audio casque indisponible.")

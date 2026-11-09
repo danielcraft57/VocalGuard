@@ -411,6 +411,7 @@ class CallService:
         call = self.call_repo.get_by_id(call_id)
         if not call:
             return None
+        had_phone = bool(call.phone_number)
         update_data: dict = {}
         if phone_number is not None:
             phone = normalize_phone_label(phone_number)
@@ -433,6 +434,24 @@ class CallService:
         if not update_data:
             return call
         call = self.call_repo.update(call_id, **update_data)
+        if not had_phone and call.phone_number:
+            phone_copy = call.phone_number
+            caller_fk = call.caller_id
+
+            async def _osint_bg() -> None:
+                try:
+                    await asyncio.to_thread(
+                        self.phone_osint_service.ensure_profile_for_number,
+                        phone_copy,
+                        caller_fk,
+                    )
+                except Exception as exc:
+                    logger.warning("OSINT apres CID tardif pour {}: {}", phone_copy, exc)
+
+            try:
+                asyncio.create_task(_osint_bg(), name=f"osint_call_cid_{call.id}")
+            except Exception as exc:
+                logger.warning("Planification OSINT apres CID pour {}: {}", phone_copy, exc)
         await event_bus.publish(
             Event(
                 event_type=EventType.CALL_UPDATED,

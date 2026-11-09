@@ -135,6 +135,33 @@ def _escape_dle_pcm(data: bytes) -> bytes:
     return bytes(out)
 
 
+def _unescape_dle_pcm(data: bytes) -> bytes:
+    """
+    Retire l'echappement DLE-DLE et les paires DLE+controle du flux VRX transparent.
+
+    @param data Trame brute lue sur le port serie en mode voix.
+    @returns PCM brut (0x10 restaure, codes controle hors borne).
+    """
+    if not data or _DLE not in data:
+        return data
+    out = bytearray()
+    i = 0
+    n = len(data)
+    while i < n:
+        b = data[i]
+        if b == _DLE and i + 1 < n:
+            nxt = data[i + 1]
+            if nxt == _DLE:
+                out.append(_DLE)
+                i += 2
+                continue
+            i += 2
+            continue
+        out.append(b)
+        i += 1
+    return bytes(out)
+
+
 def modem_silence_pcm(profile: ModemVoiceProfile, duration_sec: float) -> bytes:
     """
     Genere du silence PCM au format du profil (evite underrun TX en VTR).

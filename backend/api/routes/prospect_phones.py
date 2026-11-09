@@ -585,20 +585,23 @@ async def import_prospect_phones_xlsx(
 
                 await anyio.to_thread.run_sync(run_enrich)
                 b3 = bg_db.get(ProspectPhoneImportBatch, batch.id)
-                await event_bus.publish(
-                    Event(
-                        event_type=EventType.PROSPECT_PHONE_ENRICH_COMPLETED,
-                        timestamp=datetime.utcnow(),
-                        data={
-                            "batch_id": batch.id,
-                            "phase": b3.phase if b3 else None,
-                            "enrich_total": b3.enrich_total if b3 else None,
-                            "enrich_done": b3.enrich_done if b3 else None,
-                            "enrich_failed": b3.enrich_failed if b3 else None,
-                        },
-                        source="ProspectPhoneEnrich",
+                # Celery : enrich_batch ne fait que mettre en file ; le lot reste phase=enrich.
+                if b3 and (b3.phase or "") == "done":
+                    await event_bus.publish(
+                        Event(
+                            event_type=EventType.PROSPECT_PHONE_ENRICH_COMPLETED,
+                            timestamp=datetime.utcnow(),
+                            data={
+                                "batch_id": batch.id,
+                                "phase": b3.phase,
+                                "enrich_total": b3.enrich_total,
+                                "enrich_done": b3.enrich_done,
+                                "enrich_failed": b3.enrich_failed,
+                                "enrich_queued": b3.enrich_queued,
+                            },
+                            source="ProspectPhoneEnrich",
+                        )
                     )
-                )
         except Exception as exc:
             logger.exception("Import prospect_phones (background) echoue: {}", exc)
             push_recent_log("ERROR", f"Import batch {batch.id}: {exc}")

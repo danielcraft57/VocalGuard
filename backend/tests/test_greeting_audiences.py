@@ -11,6 +11,7 @@ from backend.core.greeting_audiences import (
     greeting_text_for_audience,
     normalize_audience,
     resolve_audio_for_audience,
+    resolve_greeting_for_caller,
 )
 from backend.core.incoming_call_types import IncomingCallAudioConfig, IncomingCallSettingsData
 from backend.services.greeting_audio_service import (
@@ -53,3 +54,23 @@ def test_prepare_audience_settings_importable() -> None:
     from backend.services.greeting_audio_service import _prepare_audience_settings
 
     assert callable(_prepare_audience_settings)
+
+
+def test_resolve_greeting_for_caller_custom_and_placeholder() -> None:
+    base = "Bonjour {name}, laissez un message."
+    custom = resolve_greeting_for_caller(
+        base,
+        audience="known",
+        caller_name="Marie",
+        caller_greeting_tts_text="Coucou {name}, c'est Daniel.",
+    )
+    assert custom == "Coucou Marie, c'est Daniel."
+    with_placeholder = resolve_greeting_for_caller(
+        base,
+        audience="known",
+        caller_name="Paul",
+        caller_greeting_tts_text=None,
+    )
+    assert with_placeholder == "Bonjour Paul, laissez un message."
+    unknown_aud = resolve_greeting_for_caller(base, audience="unknown", caller_name="X")
+    assert unknown_aud == base

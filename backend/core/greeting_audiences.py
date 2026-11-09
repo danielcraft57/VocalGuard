@@ -257,6 +257,85 @@ def greeting_text_for_audience(
     return DEFAULT_AUDIENCE_TEXTS[normalize_audience(audience)]
 
 
+GREETING_NAME_PLACEHOLDER = "{name}"
+
+
+def apply_greeting_name_placeholder(text: str, display_name: Optional[str]) -> str:
+    """
+    Remplace {name} dans un texte d'accueil.
+
+    @param text Texte avec placeholder eventuel.
+    @param display_name Nom a inserer.
+    @returns Texte pret pour TTS.
+    """
+    name = (display_name or "").strip()
+    if not name or GREETING_NAME_PLACEHOLDER not in text:
+        return text
+    return text.replace(GREETING_NAME_PLACEHOLDER, name)
+
+
+def resolve_greeting_for_caller(
+    base_text: str,
+    *,
+    audience: GreetingAudienceKey,
+    caller_name: Optional[str] = None,
+    caller_greeting_tts_text: Optional[str] = None,
+    cid_name: Optional[str] = None,
+) -> str:
+    """
+    Accueil effectif pour un appelant connu (liste blanche).
+
+    @param base_text Texte audience ``known`` deja resolu.
+    @param audience Cle produit de l'appel.
+    @param caller_name Nom enregistre sur le Caller.
+    @param caller_greeting_tts_text Message perso optionnel.
+    @param cid_name Nom Caller ID modem.
+    @returns Texte TTS une ligne.
+    """
+    if normalize_audience(audience) != "known":
+        return base_text
+    display = (caller_name or cid_name or "").strip()
+    custom = (caller_greeting_tts_text or "").strip()
+    if custom:
+        return apply_greeting_name_placeholder(" ".join(custom.split()), display)
+    return apply_greeting_name_placeholder(base_text, display)
+
+
+def lookup_caller_record(caller_repo, phone_number: Optional[str]):
+    """
+    Retrouve un Caller en base avec quelques variantes de numero.
+
+    @param caller_repo Repository appelants.
+    @param phone_number Numero entrant.
+    @returns Enregistrement Caller ou None.
+    """
+    if not phone_number:
+        return None
+    raw = str(phone_number).strip()
+    if not raw:
+        return None
+    direct = caller_repo.get_by_phone_number(raw)
+    if direct is not None:
+        return direct
+    digits = "".join(ch for ch in raw if ch.isdigit())
+    if not digits:
+        return None
+    candidates = {digits}
+    if digits.startswith("33") and len(digits) >= 11:
+        candidates.add("0" + digits[2:])
+        candidates.add("+" + digits)
+    if digits.startswith("0") and len(digits) >= 10:
+        candidates.add("+33" + digits[1:])
+        candidates.add("33" + digits[1:])
+    if len(digits) >= 9:
+        candidates.add(digits[-9:])
+    for candidate in candidates:
+        found = caller_repo.get_by_phone_number(candidate)
+        if found is not None:
+            return found
+    return None
+
+
 def sync_flat_audio_from_audiences(audio: IncomingCallAudioConfig) -> None:
     """
     Recopie unknown/commercial vers les champs plats legacy apres edition UI.

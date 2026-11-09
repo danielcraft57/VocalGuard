@@ -56,6 +56,10 @@ _CURATED_VOICES: tuple[ElevenLabsVoiceInfo, ...] = (
 )
 
 
+# Voix Marie (commercial sortant) — ElevenLabs premade.
+ELEVENLABS_VOICE_MATILDA = "XrExE9yKIg1WjnnlVkGX"
+
+
 def curated_elevenlabs_voices(*, fr_first: bool = True) -> list[dict[str, Any]]:
     """
     Catalogue local de voix ElevenLabs.

@@ -36,6 +36,7 @@ from backend.api.routes import (
     realtime,
     outgoing_audio,
     internal_telephony,
+    internal_kb,
     agenda_public,
     public_api,
     public_mobile,
@@ -108,6 +109,7 @@ def create_app(config: Config) -> FastAPI:
     # WebSocket temps reel (evenements d'appels, modem, etc.)
     app.include_router(realtime.router, tags=["realtime"])
     app.include_router(internal_telephony.router, prefix="/api/v1")
+    app.include_router(internal_kb.router, prefix="/api/v1")
     if not config.use_telephony_daemon:
         app.include_router(outgoing_audio.router, tags=["outgoing-audio"])
     app.include_router(public_api.router, prefix="/api/v1")
@@ -133,6 +135,9 @@ def create_app(config: Config) -> FastAPI:
     @app.on_event("startup")
     async def on_startup() -> None:
         """Initialise la base de donnees et demarre la surveillance des appels (modem)."""
+        from backend.core.asyncio_pool import install_bounded_default_executor
+
+        install_bounded_default_executor()
         await db_module.init_database(config.database_url)
 
         # Seed intents KB si table vide (one-shot)
@@ -150,15 +155,23 @@ def create_app(config: Config) -> FastAPI:
         except Exception as exc:
             logger.warning("Seed intents KB ignore: {}", exc)
 
-        # Demarrer le gestionnaire d'appels (modem, IVR, blocage) en tache de fond
-        db = db_module.SessionLocal()
-        call_manager = CallManager(config, db)
-        await call_manager.initialize()
-        task = asyncio.create_task(call_manager.run())
-        app.state.call_manager = call_manager
-        app.state.call_manager_task = task
-        app.state.call_manager_db = db
-        logger.info("Surveillance des appels (modem) demarree")
+        if config.use_telephony_daemon:
+            app.state.call_manager = None
+            app.state.call_manager_task = None
+            app.state.call_manager_db = None
+            logger.info(
+                "USE_TELEPHONY_DAEMON=1 : pas de CallManager sur l API "
+                "(modem/STT/TTS sur le daemon telephonie)."
+            )
+        else:
+            db = db_module.SessionLocal()
+            call_manager = CallManager(config, db)
+            await call_manager.initialize()
+            task = asyncio.create_task(call_manager.run())
+            app.state.call_manager = call_manager
+            app.state.call_manager_task = task
+            app.state.call_manager_db = db
+            logger.info("Surveillance des appels (modem) demarree")
 
         if config.use_telephony_daemon:
             base = str(config.telephony_daemon_url).strip().rstrip("/")

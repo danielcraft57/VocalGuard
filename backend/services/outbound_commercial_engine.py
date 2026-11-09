@@ -11,8 +11,9 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from backend.services import intent_repository as intent_repo
+from backend.voice.dialogue_persona import reshape_predictions
 from backend.voice.qdrant_intents import PROFILE_OUTBOUND_COMMERCIAL
-from backend.voice.response_picker import variant_wav_basename
+from backend.voice.response_picker import select_response, variant_wav_basename
 
 
 def _ivr_dir(config: Any) -> Path:
@@ -75,6 +76,145 @@ def build_phrase_choices(
             }
         )
     return out
+
+
+def predict_outbound_reply(
+    db: Session,
+    text: str,
+    *,
+    top_k: int = 8,
+    recent_tags: Optional[List[str]] = None,
+    recent_replies: Optional[List[str]] = None,
+    force_tag: Optional[str] = None,
+    variant_index: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Predict Qdrant (profil commercial) + persona → phrase + basename WAV.
+
+    Utilise par le service STT node15 (sans passer par l'API node14).
+
+    @param db Session Postgres.
+    @param text Parole prospect (STT).
+    @param top_k Voisins vectoriels.
+    @param recent_tags Historique tags deja joues.
+    @param recent_replies Historique reponses deja dites.
+    @param force_tag Ignore le predict et force un intent (ex. presentation).
+    @param variant_index Force l'index variante 0..4 (sinon select_response).
+    @returns Dict engine, tag, score, reply, variant_index, wav_basename, top_predictions.
+    """
+    query = (text or "").strip()
+    tags_hist = list(recent_tags or [])
+    replies_hist = list(recent_replies or [])
+
+    if force_tag:
+        tag = str(force_tag).strip()
+        intent = intent_repo.get_intent_by_tag(db, tag)
+        if intent is None:
+            raise ValueError(f"Intent inconnu: {tag}")
+        detail = intent_repo._intent_to_dict(intent)
+        if detail.get("profile") != PROFILE_OUTBOUND_COMMERCIAL:
+            raise ValueError(f"Intent hors profil commercial: {tag}")
+        responses = [
+            str(r).strip() for r in (detail.get("responses") or []) if str(r).strip()
+        ]
+        idx = int(variant_index if variant_index is not None else 0)
+        idx = max(0, min(idx, max(0, len(responses) - 1)))
+        reply = responses[idx] if responses else ""
+        custom = detail.get("wav_basename")
+        basename = variant_wav_basename(
+            tag,
+            idx,
+            wav_basename=str(custom) if custom else None,
+        )
+        return {
+            "text": query,
+            "engine": "forced",
+            "tag": tag,
+            "score": 1.0,
+            "reply": reply,
+            "variant_index": idx,
+            "wav_basename": basename,
+            "top_predictions": [{"tag": tag, "score": 1.0}],
+        }
+
+    preds, engine = intent_repo.predict_intent_scores_detailed(
+        db,
+        query,
+        top_k=max(1, int(top_k)),
+        profile=PROFILE_OUTBOUND_COMMERCIAL,
+    )
+    if not preds:
+        return {
+            "text": query,
+            "engine": engine,
+            "tag": None,
+            "score": 0.0,
+            "reply": "",
+            "variant_index": 0,
+            "wav_basename": None,
+            "top_predictions": [],
+        }
+
+    reshaped = reshape_predictions(
+        preds, recent_tags=tags_hist, user_text=query
+    )
+    top = reshaped[0]
+    tag = str(top.get("tag") or "")
+    score = float(top.get("score") or 0.0)
+    intent = intent_repo.get_intent_by_tag(db, tag)
+    if intent is None:
+        return {
+            "text": query,
+            "engine": engine,
+            "tag": tag,
+            "score": score,
+            "reply": "",
+            "variant_index": 0,
+            "wav_basename": None,
+            "top_predictions": reshaped[:5],
+        }
+
+    detail = intent_repo._intent_to_dict(intent)
+    responses = [
+        str(r).strip() for r in (detail.get("responses") or []) if str(r).strip()
+    ]
+    custom = detail.get("wav_basename")
+    same_streak = 0
+    for prev in reversed(tags_hist):
+        if prev == tag:
+            same_streak += 1
+        else:
+            break
+
+    if variant_index is not None:
+        idx = max(0, min(int(variant_index), max(0, len(responses) - 1)))
+        reply = responses[idx] if responses else ""
+    else:
+        reply, idx = select_response(
+            responses,
+            recent_replies=replies_hist,
+            same_tag_streak=same_streak,
+        )
+        if idx < 0:
+            idx = 0
+            if not reply and responses:
+                reply = responses[0]
+
+    basename = variant_wav_basename(
+        tag,
+        idx,
+        wav_basename=str(custom) if custom else None,
+    )
+    return {
+        "text": query,
+        "engine": engine,
+        "tag": tag,
+        "score": score,
+        "reply": reply,
+        "variant_index": idx,
+        "wav_basename": basename,
+        "top_predictions": reshaped[:5],
+    }
 
 
 def suggest_top_intents(

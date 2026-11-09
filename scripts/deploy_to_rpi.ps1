@@ -232,8 +232,9 @@ if (Test-Path $localEnvProd) {
     scp -q $localEnvProd "${AppRemoteHost}:${RemoteDir}/.env.prod"
     ssh "$AppRemoteHost" "cd $RemoteDir && [ -f .env ] && cp .env .env.backup.\$(date +%Y%m%d%H%M%S) || true && cp .env.prod .env && chmod 600 .env" | Out-Null
 } elseif (Test-Path $localEnvProdExample) {
-    Info ".env.prod absent, fallback to .env.prod.example"
-    scp -q $localEnvProdExample "${AppRemoteHost}:${RemoteDir}/.env"
+    Info ".env.prod absent : ne pas ecraser le .env distant s il existe deja"
+    scp -q $localEnvProdExample "${AppRemoteHost}:${RemoteDir}/.env.prod.example"
+    ssh "$AppRemoteHost" "cd $RemoteDir && if [ ! -f .env ]; then cp .env.prod.example .env; fi && chmod 600 .env 2>/dev/null || true" | Out-Null
 } elseif (Test-Path $localEnvFallback) {
     Info ".env.prod absent, fallback to env.example"
     scp -q $localEnvFallback "${AppRemoteHost}:${RemoteDir}/.env"
@@ -253,11 +254,36 @@ fi
 "@ | Out-Null
 ssh "$AppRemoteHost" "cd $RemoteDir && grep -q '^PUBLIC_BASE_URL=' .env || echo 'PUBLIC_BASE_URL=https://$NginxServerName' >> .env" | Out-Null
 ssh "$AppRemoteHost" "cd $RemoteDir && grep -q '^DATABASE_URL=postgresql' .env || echo 'WARNING: DATABASE_URL is not PostgreSQL in .env'" | Out-Null
+ssh "$AppRemoteHost" "cd $RemoteDir && chmod +x scripts/prod/patch_env_prod_memory.sh 2>/dev/null || true && bash scripts/prod/patch_env_prod_memory.sh $RemoteDir" | Out-Host
 Ok "Production env synced"
+
+Step "[6b/8] PostgreSQL tune Pi (RAM)"
+ssh "$AppRemoteHost" "cd $RemoteDir && chmod +x scripts/postgres/tune_pi_memory.sh 2>/dev/null || true && sudo bash scripts/postgres/tune_pi_memory.sh" | Out-Host
+Ok "PostgreSQL tune Pi"
 
 Step "[7/8] Install Python dependencies (venv)"
 Invoke-SshStrict -RemoteHost $AppRemoteHost -Command "cd $RemoteDir && source venv/bin/activate && python -m pip install -q --upgrade pip && python -m pip install -q -r requirements.txt"
 Ok "Dependencies installed"
+
+Step "[7b/9] Migrations Alembic (PostgreSQL)"
+$pgMigrate = @"
+cd $RemoteDir
+if grep -q '^DATABASE_URL=postgresql' .env 2>/dev/null; then
+  if [ -x scripts/postgres/apply_perf_indexes.sh ]; then
+    sudo bash scripts/postgres/apply_perf_indexes.sh
+  else
+    export DATABASE_URL=`$(grep '^DATABASE_URL=' .env | cut -d= -f2-)
+    export PYTHONPATH=$RemoteDir
+    ./venv/bin/python -m alembic upgrade head
+    sudo systemctl restart vocalguard
+    sudo systemctl try-restart vocalguard-telephony 2>/dev/null || true
+  fi
+else
+  echo 'Skip alembic: DATABASE_URL non PostgreSQL'
+fi
+"@
+ssh "$AppRemoteHost" $pgMigrate | Out-Host
+Ok "Migrations PostgreSQL (si applicable)"
 
 Info "Installation rotation logs (logrotate + Celery Beat)..."
 ssh "$AppRemoteHost" "cd $RemoteDir && chmod +x scripts/install_logrotate.sh scripts/prod_log_maintenance.sh scripts/install_prod_log_maintenance_celery.sh && APP_DIR=$RemoteDir bash scripts/install_prod_log_maintenance_celery.sh" | Out-Null

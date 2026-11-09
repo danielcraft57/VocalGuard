@@ -68,6 +68,7 @@ NAV_ACCENTS: Tuple[str, ...] = (
     "#2563eb",  # cockpit — bleu
     "#d97706",  # line — ambre
     "#db2777",  # entrants — rose
+    "#7c3aed",  # historique — violet
     "#64748b",  # parametres — slate
 )
 

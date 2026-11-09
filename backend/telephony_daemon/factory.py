@@ -26,6 +26,9 @@ from backend.telephony_daemon.relay_wiring import get_wired_relay, wire_daemon_r
 def create_telephony_app(config: Config) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        from backend.core.asyncio_pool import install_bounded_default_executor
+
+        install_bounded_default_executor()
         load_incoming_line_mode(config)
         relay = wire_daemon_relay_once(config)
         app.state.event_relay = relay

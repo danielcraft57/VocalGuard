@@ -16,6 +16,24 @@ class ProspectLabError(Exception):
     """Erreur API ProspectLab."""
 
 
+def _unwrap_api_list(payload: Any) -> List[dict]:
+    """
+    Extrait une liste depuis les enveloppes ProspectLab ({success, data, count}).
+
+    @param payload JSON decode brut.
+    @returns Liste de dicts metier (eventuellement vide).
+    """
+    if isinstance(payload, list):
+        return [row for row in payload if isinstance(row, dict)]
+    if not isinstance(payload, dict):
+        return []
+    for key in ("data", "groupes", "items", "results"):
+        block = payload.get(key)
+        if isinstance(block, list):
+            return [row for row in block if isinstance(row, dict)]
+    return []
+
+
 class ProspectLabClient:
     """
     Client REST Bearer pour /api/public.
@@ -68,11 +86,7 @@ class ProspectLabClient:
     def list_groupes(self) -> List[dict]:
         """GET /groupes."""
         data = self._request("GET", "/groupes")
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict) and "groupes" in data:
-            return list(data["groupes"])
-        return []
+        return _unwrap_api_list(data)
 
     def get_groupe(self, groupe_id: int) -> dict:
         """GET /groupes/<id>."""

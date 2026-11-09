@@ -14,6 +14,7 @@ from typing import Deque, Literal, Optional
 
 from PySide6.QtCore import (
     QEasingCurve,
+    QEvent,
     QPropertyAnimation,
     Qt,
     QTimer,
@@ -657,6 +658,41 @@ class DialPadButton(QPushButton):
         )
         lay.addWidget(sub)
 
+    def showEvent(self, event) -> None:  # noqa: ANN001
+        super().showEvent(event)
+        self._refresh_label_colors()
+
+    def changeEvent(self, event) -> None:  # noqa: ANN001
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.PaletteChange:
+            self._refresh_label_colors()
+
+    def _refresh_label_colors(self) -> None:
+        """Contraste chiffres / lettres selon le fond (clair ou sombre)."""
+        lay = self.layout()
+        if lay is None or lay.count() < 2:
+            return
+        digit_lbl = lay.itemAt(0).widget()
+        letters_lbl = lay.itemAt(1).widget()
+        if digit_lbl is None or letters_lbl is None:
+            return
+        bg = self.palette().color(QPalette.ColorRole.Button)
+        light = bg.lightness()
+        if light > 145:
+            digit_color = "#0f172a"
+            letters_color = "#475569"
+        else:
+            digit_color = "#e6e1e5"
+            letters_color = "#a8a3b5"
+        digit_lbl.setStyleSheet(
+            f"background: transparent; border: none; color: {digit_color}; "
+            f"font-size: 22px; font-weight: 600;"
+        )
+        letters_lbl.setStyleSheet(
+            f"background: transparent; border: none; color: {letters_color}; "
+            f"font-size: 9px; font-weight: 600; letter-spacing: 1.4px;"
+        )
+
 
 class MotionWaveform(QWidget):
     """
@@ -1119,6 +1155,33 @@ class CollapsibleSection(QWidget):
         self._anim.setDuration(280)
         self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
+    def _content_widget(self) -> Optional[QWidget]:
+        """Widget enfant du panneau repliable."""
+        if self._inner.count() == 0:
+            return None
+        item = self._inner.itemAt(0)
+        return item.widget() if item else None
+
+    def _measure_content_height(self) -> int:
+        """
+        Hauteur utile du contenu (evite de couper QLineEdit / combo sous maxHeight).
+
+        @returns Pixels incluant marges internes.
+        """
+        widget = self._content_widget()
+        if widget is None:
+            return 0
+        widget.updateGeometry()
+        widget.adjustSize()
+        hint = max(widget.sizeHint().height(), widget.minimumSizeHint().height())
+        margins = self._inner.contentsMargins()
+        return hint + margins.top() + margins.bottom() + 4
+
+    def _apply_expanded_geometry(self) -> None:
+        """Libere la hauteur quand le panneau est ouvert."""
+        self._wrap.setMinimumHeight(0)
+        self._wrap.setMaximumHeight(16777215)
+
     def set_content_widget(self, widget: QWidget) -> None:
         """
         Remplace le contenu du panneau.
@@ -1131,17 +1194,59 @@ class CollapsibleSection(QWidget):
                 item.widget().setParent(None)
         self._inner.addWidget(widget)
         widget.adjustSize()
-        self._content_height = widget.sizeHint().height() + 16
+        self._content_height = self._measure_content_height()
+        QTimer.singleShot(0, self._deferred_measure)
+
+    def _deferred_measure(self) -> None:
+        """Re-mesure apres le premier layout (sizeHint souvent sous-estime au init)."""
+        self._content_height = self._measure_content_height()
+        if self._expanded:
+            self._apply_expanded_geometry()
 
     def _toggle(self) -> None:
         self._expanded = not self._expanded
         prefix = "▾ " if self._expanded else "▸ "
         self.btn_header.setText(prefix + self._title)
+        self.btn_header.setChecked(self._expanded)
+        self._content_height = self._measure_content_height()
         self._anim.stop()
-        self._anim.setStartValue(self._wrap.maximumHeight())
-        end = self._content_height if self._expanded else 0
-        self._anim.setEndValue(end)
-        self._anim.start()
+        if self._expanded:
+            start = self._wrap.maximumHeight()
+            if start <= 0:
+                start = 0
+            self._wrap.setMaximumHeight(16777215)
+            self._apply_expanded_geometry()
+            self._anim.setStartValue(start)
+            self._anim.setEndValue(max(self._content_height, 120))
+            self._anim.finished.connect(self._on_expand_anim_done)
+            self._anim.start()
+        else:
+            try:
+                self._anim.finished.disconnect(self._on_expand_anim_done)
+            except (RuntimeError, TypeError):
+                pass
+            self._anim.setStartValue(self._wrap.height())
+            self._anim.setEndValue(0)
+            self._anim.finished.connect(self._on_collapse_anim_done)
+            self._anim.start()
+
+    def _on_expand_anim_done(self) -> None:
+        """Fin ouverture : plus de plafond de hauteur."""
+        try:
+            self._anim.finished.disconnect(self._on_expand_anim_done)
+        except (RuntimeError, TypeError):
+            pass
+        if self._expanded:
+            self._apply_expanded_geometry()
+
+    def _on_collapse_anim_done(self) -> None:
+        """Fin fermeture : hauteur a 0."""
+        try:
+            self._anim.finished.disconnect(self._on_collapse_anim_done)
+        except (RuntimeError, TypeError):
+            pass
+        if not self._expanded:
+            self._wrap.setMaximumHeight(0)
 
     def expand(self) -> None:
         """Ouvre le panneau si ferme."""

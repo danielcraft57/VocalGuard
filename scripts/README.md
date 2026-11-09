@@ -21,6 +21,7 @@ Configurer l'hote via une variable d'environnement permet d'eviter de stocker de
 - **install_osint_tools.sh** / **install_osint_tools.ps1** : installation des outils OSINT (phoneinfoga, etc.).
 - **setup_audio_rpi.sh**, **fix_asoundrc.py** : configuration audio sur RPi.
 - **modem_live_call_cli.py** : appel sortant interactif modem USB (dial, ecoute, micro, DTMF) depuis un PC.
+- **launch_line_phone.bat** / **launch_line_phone.ps1** : GUI **Line Phone** (`desktop/line_phone.py`, modem local + casque).
 - **test_*.py** : scripts de test (audio, patterns, enregistrement, etc.). Ne pas inclure de numeros ou donnees reelles dans les tests commits.
 
 ## TTS publicite Facturio

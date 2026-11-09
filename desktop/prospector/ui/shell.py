@@ -15,6 +15,7 @@ from desktop.prospector.ui.pages import (
     CockpitPage,
     EntrantsPage,
     FileCampagnePage,
+    HistoryPage,
     PilotagePage,
     SettingsPage,
     SoftphonePage,
@@ -33,6 +34,7 @@ class ProspectorShell(QWidget):
         ("cockpit", "Cockpit d'appel"),
         ("phone", "Line + Prospection"),
         ("incoming", "Appels entrants"),
+        ("history", "Historique"),
         ("settings", "Parametres"),
     ]
 
@@ -81,7 +83,7 @@ class ProspectorShell(QWidget):
         hl.addLayout(kpi_row)
         hl.addSpacing(8)
         self.header_tools = HeaderToolsRow()
-        self.header_tools.btn_settings.clicked.connect(lambda: self.set_page(5))
+        self.header_tools.btn_settings.clicked.connect(lambda: self.set_page(6))
         self.avatar_header = UserAvatarChip("AG")
         hl.addWidget(self.header_tools)
         hl.addWidget(self.avatar_header)
@@ -136,6 +138,7 @@ class ProspectorShell(QWidget):
         self.page_cockpit = CockpitPage()
         self.page_softphone = SoftphonePage()
         self.page_entrants = EntrantsPage()
+        self.page_history = HistoryPage()
         self.page_settings = SettingsPage()
         for p in (
             self.page_pilotage,
@@ -143,6 +146,7 @@ class ProspectorShell(QWidget):
             self.page_cockpit,
             self.page_softphone,
             self.page_entrants,
+            self.page_history,
             self.page_settings,
         ):
             self.stack.addWidget(p)
