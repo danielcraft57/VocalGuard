@@ -17,7 +17,7 @@ sudo apt-get update
 sudo apt-get install -y python3-dev portaudio19-dev libasound2-dev
 ```
 
-Voir [INSTALLATION.md](INSTALLATION.md) pour la liste complete.
+Voir [INSTALLATION.md](INSTALLATION.md) pour la liste complete. Stack **deux Pi** (modem + STT/OSINT) : [INSTALLATION_LAN.md](INSTALLATION_LAN.md).
 
 ## 1. Deployer le projet
 

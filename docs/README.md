@@ -5,6 +5,7 @@
 | Document | Contenu |
 |----------|---------|
 | [INSTALLATION.md](INSTALLATION.md) | Prérequis, paquets système, Python |
+| [INSTALLATION_LAN.md](INSTALLATION_LAN.md) | Prod LAN deux Pi (node14 + node15), ElevenLabs, STT/OSINT |
 | [TELEPHONY_STACK.md](TELEPHONY_STACK.md) | Cablage ligne / filtre ADSL / telephone, modes repondeur-telephone, health CID, API vs daemon, deploy, smoke |
 | [DEPLOYMENT_PROD.md](DEPLOYMENT_PROD.md) | systemd, deploiement Pi |
 | [OSINT.md](OSINT.md) / [APPELS_OSINT_UI.md](APPELS_OSINT_UI.md) | Enrichissement numeros, UI liste appels |

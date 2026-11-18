@@ -3,7 +3,8 @@
 ## Architecture
 
 - **node14** : telephonie, VAD tour (`TurnVad`), belief intents, play WAV modem sous `ivr_wav/kb_*.wav`.
-- **node15** : `POST /v1/transcribe?mode=live|final`, `POST /v1/intent-predict`, `POST /v1/tts`, `POST /v1/greeting-mix` (TTS + mix intro).
+- **node15** : `POST /v1/transcribe?mode=live|final`, `POST /v1/intent-predict`, `POST /v1/tts`, `POST /v1/greeting-mix` (TTS + mix intro, legacy).
+- **Accueil entrant prod** : ElevenLabs sur **node14** (`tts_provider: elevenlabs`), pas Edge ni `greeting-mix` node15 (voir [INSTALLATION_LAN.md](INSTALLATION_LAN.md) section 2.6).
 - **Postgres** : tables `intents`, `intent_patterns`, `intent_responses`, `intent_embeddings` (+ colonne `embedding` pgvector), `call_leads`.
 - Seed one-shot : `data/intents/kb_seed/conversation_v1.json` (plus de JSON runtime).
 
@@ -22,11 +23,10 @@ STT_SERVICE_URL=http://node15.lan:8100
 TTS_SERVICE_URL=http://node15.lan:8100
 ```
 
-`TTS_SERVICE_URL` pilote la synthese distante (accueil incoming-audio, mix, prefetch KB).
-Si omis, repli sur `STT_SERVICE_URL` (meme daemon).
+`TTS_SERVICE_URL` pilote la synthese distante (conversation, prefetch KB, anciens apercus Edge).
+Si omis, repli sur `STT_SERVICE_URL` (meme daemon). **Ne pas** s'en servir pour l'accueil modem en prod : preferer ElevenLabs (mix local node14).
 
-L'apercu / regeneration incoming-audio appelle `POST /v1/greeting-mix` : TTS + mix jingle/piste
-(+ bip) sur node15, avec upload de l'intro locale. Repli mix local si node15 KO.
+`POST /v1/greeting-mix` (node15) reste pour les configs `tts_provider: edge` / legacy uniquement.
 
 Si conversation est demande mais STT indisponible, repli automatique sur le repondeur simple (log `repondeur_conversation_fallback_simple`).
 
@@ -47,9 +47,8 @@ POST /api/v1/kb/voices/regenerate
 {"force": true}
 ```
 
-Utilise les params voix d'accueil (`edge_tts_*` / settings incoming-audio)
-et `TTS_SERVICE_URL` (repli `STT_SERVICE_URL`) pour la synthese distante.
-L'apercu / regeneration incoming-audio passe aussi par ce TTS puis mixe sur node14.
+Utilise `TTS_SERVICE_URL` (ou ElevenLabs si configure sur l'accueil) selon les intents KB.
+L'accueil modem regenere reste ElevenLabs + mix sur node14.
 
 ## Bench latence
 

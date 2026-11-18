@@ -153,6 +153,7 @@ VocalGuard/
 - [Index `docs/`](docs/README.md) — tableau des guides et archives
 - [Téléphonie : API + daemon modem](docs/TELEPHONY_STACK.md) — `USE_TELEPHONY_DAEMON`, Pi vs PC, audio WS, déploiement
 - [Guide d'installation](docs/INSTALLATION.md)
+- [Installation LAN prod (node14 + node15)](docs/INSTALLATION_LAN.md)
 - [Architecture v3 (backend + frontend)](docs/ARCHITECTURE_V3.md)
 - [Architecture v2 (améliorée)](docs/ARCHITECTURE_V2.md) - historique
 - [Architecture originale](docs/ARCHITECTURE.md) - historique
