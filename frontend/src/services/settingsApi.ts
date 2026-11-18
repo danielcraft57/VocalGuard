@@ -70,16 +70,35 @@ export type IncomingAudioPresetsCatalog = {
 };
 
 export type GreetingPreviewMode = "full" | "voice" | "intro";
+export type GreetingAudience = "known" | "unknown" | "commercial";
 
 export type GreetingAudioStatus = {
+  audience?: GreetingAudience | string;
   track_wav?: string | null;
   voice_wav?: string | null;
   duration_sec?: number | null;
-  voice: string;
-  pitch: string;
-  rate: string;
-  text: string;
+  voice?: string;
+  pitch?: string;
+  rate?: string;
+  text?: string;
   regenerated_at?: string | null;
+};
+
+export type ElevenLabsVoiceOption = {
+  voice_id: string;
+  name: string;
+  labels?: string;
+  recommended_fr?: boolean;
+  source?: string;
+};
+
+export type ElevenLabsVoicesResponse = {
+  configured: boolean;
+  source: string;
+  voices: ElevenLabsVoiceOption[];
+  warning?: string;
+  default_voice_id?: string;
+  model_id?: string;
 };
 
 export type SettingsSnapshot = {
@@ -112,10 +131,11 @@ export type TelephonyStatus = {
 /**
  * Lit le snapshot settings (mode ligne entrante inclus).
  *
+ * @param signal AbortSignal optionnel.
  * @returns Configuration metier.
  */
-export async function fetchSettings(): Promise<SettingsSnapshot> {
-  const res = await fetch(`${getApiBaseUrl()}/settings`);
+export async function fetchSettings(signal?: AbortSignal): Promise<SettingsSnapshot> {
+  const res = await fetch(`${getApiBaseUrl()}/settings`, { signal });
   if (!res.ok) {
     throw new Error(`Erreur API settings: ${res.status}`);
   }
@@ -124,9 +144,13 @@ export async function fetchSettings(): Promise<SettingsSnapshot> {
 
 /**
  * Lit la configuration complete des appels entrants.
+ *
+ * @param signal AbortSignal optionnel.
  */
-export async function fetchIncomingCallConfig(): Promise<IncomingCallConfig> {
-  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call`);
+export async function fetchIncomingCallConfig(
+  signal?: AbortSignal
+): Promise<IncomingCallConfig> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call`, { signal });
   if (!res.ok) {
     throw new Error(`Erreur API incoming-call: ${res.status}`);
   }
@@ -163,8 +187,12 @@ export async function patchIncomingCallConfig(
 /**
  * Liste les jingles MusicScreen disponibles pour l'intro.
  */
-export async function fetchGreetingJingles(): Promise<GreetingJingleOption[]> {
-  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/jingles`);
+export async function fetchGreetingJingles(
+  signal?: AbortSignal
+): Promise<GreetingJingleOption[]> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/jingles`, {
+    signal
+  });
   if (!res.ok) {
     throw new Error(`Erreur liste jingles: ${res.status}`);
   }
@@ -182,8 +210,12 @@ export function getJingleListenUrl(jingleId: string): string {
 /**
  * Catalogue des prereglages audio (voix, intro, outro).
  */
-export async function fetchIncomingAudioPresets(): Promise<IncomingAudioPresetsCatalog> {
-  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/audio-presets`);
+export async function fetchIncomingAudioPresets(
+  signal?: AbortSignal
+): Promise<IncomingAudioPresetsCatalog> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/audio-presets`, {
+    signal
+  });
   if (!res.ok) {
     throw new Error(`Erreur prereglages audio: ${res.status}`);
   }
@@ -195,11 +227,88 @@ export async function fetchIncomingAudioPresets(): Promise<IncomingAudioPresetsC
   };
 }
 
+
 /**
- * Etat du cache accueil sur le modem.
+ * Liste les voix ElevenLabs (API ou catalogue curate).
  */
-export async function fetchGreetingAudioStatus(): Promise<GreetingAudioStatus> {
-  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/greeting/status`);
+export async function fetchElevenLabsVoices(
+  signal?: AbortSignal
+): Promise<ElevenLabsVoicesResponse> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/elevenlabs/voices`, {
+    signal
+  });
+  if (!res.ok) {
+    throw new Error(`Erreur voix ElevenLabs: ${res.status}`);
+  }
+  return (await res.json()) as ElevenLabsVoicesResponse;
+}
+
+/**
+ * Apercu MP3 court d'une voix ElevenLabs.
+ *
+ * @param voiceId Identifiant voix.
+ * @param text Texte optionnel (court).
+ */
+export async function previewElevenLabsVoice(
+  voiceId: string,
+  text?: string
+): Promise<Blob> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/elevenlabs/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ voice_id: voiceId, text: text || null })
+  });
+  if (!res.ok) {
+    let detail = `Erreur apercu ElevenLabs: ${res.status}`;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  return await res.blob();
+}
+
+/**
+ * Apercu WAV de la partition bip (mode croche).
+ */
+export async function previewBeepPattern(
+  audio?: Record<string, unknown>
+): Promise<Blob> {
+  const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/beep/preview`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(audio ? { audio } : {})
+  });
+  if (!res.ok) {
+    let detail = `Erreur apercu bip: ${res.status}`;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (body?.detail) detail = String(body.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  return await res.blob();
+}
+
+/**
+ * Etat du cache accueil modem pour une audience.
+ *
+ * @param audience known | unknown | commercial.
+ */
+export async function fetchGreetingAudioStatus(
+  audience: GreetingAudience | string = "unknown",
+  signal?: AbortSignal
+): Promise<GreetingAudioStatus> {
+  const qs = new URLSearchParams({ audience: String(audience || "unknown") });
+  const res = await fetch(
+    `${getApiBaseUrl()}/settings/incoming-call/greeting/status?${qs.toString()}`,
+    { signal }
+  );
   if (!res.ok) {
     throw new Error(`Erreur statut accueil: ${res.status}`);
   }
@@ -211,12 +320,17 @@ export async function fetchGreetingAudioStatus(): Promise<GreetingAudioStatus> {
  */
 export async function previewGreetingAudio(
   audio?: Record<string, unknown>,
-  previewMode: GreetingPreviewMode = "full"
+  previewMode: GreetingPreviewMode = "full",
+  audience: GreetingAudience | string = "unknown"
 ): Promise<Blob> {
   const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/greeting/preview`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(audio ? { audio, preview_mode: previewMode } : { preview_mode: previewMode })
+    body: JSON.stringify({
+      audio: audio || undefined,
+      preview_mode: previewMode,
+      audience
+    })
   });
   if (!res.ok) {
     let detail = `Erreur apercu accueil: ${res.status}`;
@@ -236,12 +350,16 @@ export async function previewGreetingAudio(
  * Regenere le cache WAV accueil sur le modem (parametres audio fournis ou sauvegardes).
  */
 export async function regenerateGreetingAudio(
-  audio?: Record<string, unknown>
+  audio?: Record<string, unknown>,
+  audience: GreetingAudience | string = "unknown"
 ): Promise<GreetingAudioStatus> {
   const res = await fetch(`${getApiBaseUrl()}/settings/incoming-call/greeting/regenerate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(audio ? { audio } : {})
+    body: JSON.stringify({
+      audio: audio || undefined,
+      audience
+    })
   });
   if (!res.ok) {
     let detail = `Erreur regeneration accueil: ${res.status}`;
@@ -259,10 +377,13 @@ export async function regenerateGreetingAudio(
 /**
  * Etat modem / daemon (pastille topbar).
  *
+ * @param signal AbortSignal optionnel.
  * @returns Snapshot telephonie.
  */
-export async function fetchTelephonyStatus(): Promise<TelephonyStatus> {
-  const res = await fetch(`${getApiBaseUrl()}/telephony/status`);
+export async function fetchTelephonyStatus(
+  signal?: AbortSignal
+): Promise<TelephonyStatus> {
+  const res = await fetch(`${getApiBaseUrl()}/telephony/status`, { signal });
   if (!res.ok) {
     throw new Error(`Erreur API telephony status: ${res.status}`);
   }

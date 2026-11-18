@@ -24,6 +24,7 @@ import {
   fetchGreetingAudioStatus,
   previewGreetingAudio,
   regenerateGreetingAudio,
+  type GreetingAudience,
   type GreetingAudioStatus,
   type GreetingPreviewMode
 } from "../../services/settingsApi";
@@ -31,6 +32,8 @@ import {
 export type VgGreetingPreviewPanelProps = {
   /** Bloc audio courant du formulaire (meme non sauvegarde). */
   audio: Record<string, unknown>;
+  /** Slot d'accueil (connu / inconnu / commercial). */
+  audience?: GreetingAudience;
   /** True si des changements non enregistres existent. */
   dirty?: boolean;
   /** Enregistre le formulaire avant regen modem (si dirty). */
@@ -39,14 +42,19 @@ export type VgGreetingPreviewPanelProps = {
 
 /**
  * Barre d'apercu / regeneration du message d'accueil (ecoute navigateur).
+ *
+ * Remonte le lecteur a chaque changement d'audience pour eviter de rejouer
+ * le mix precedent.
  */
 export function VgGreetingPreviewPanel({
   audio,
+  audience = "unknown",
   dirty,
   onSaveBeforeRegenerate
 }: VgGreetingPreviewPanelProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
+  const audienceRef = useRef(audience);
   const [status, setStatus] = useState<GreetingAudioStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -55,37 +63,56 @@ export function VgGreetingPreviewPanel({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
-  const revokeObjectUrl = useCallback(() => {
+  const clearPlayer = useCallback(() => {
+    const el = audioRef.current;
+    if (el) {
+      try {
+        el.pause();
+      } catch {
+        /* ignore */
+      }
+      el.removeAttribute("src");
+      el.load();
+    }
     if (objectUrlRef.current) {
       URL.revokeObjectURL(objectUrlRef.current);
       objectUrlRef.current = null;
     }
+    setPlaying(false);
   }, []);
 
   const loadStatus = useCallback(async () => {
     setStatusLoading(true);
+    setError(null);
     try {
-      const data = await fetchGreetingAudioStatus();
+      const data = await fetchGreetingAudioStatus(audience);
       setStatus(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Impossible de lire le cache accueil");
     } finally {
       setStatusLoading(false);
     }
-  }, []);
+  }, [audience]);
 
   useEffect(() => {
+    audienceRef.current = audience;
+    clearPlayer();
+    setSuccess(null);
     void loadStatus();
-    return () => revokeObjectUrl();
-  }, [loadStatus, revokeObjectUrl]);
+    return () => clearPlayer();
+  }, [audience, clearPlayer, loadStatus]);
 
   const handlePreview = async (mode: GreetingPreviewMode = "full") => {
+    const requestedAudience = audience;
     setError(null);
     setSuccess(null);
     setPreviewLoading(true);
     try {
-      const blob = await previewGreetingAudio(audio, mode);
-      revokeObjectUrl();
+      const blob = await previewGreetingAudio(audio, mode, requestedAudience);
+      if (audienceRef.current !== requestedAudience) {
+        return;
+      }
+      clearPlayer();
       const url = URL.createObjectURL(blob);
       objectUrlRef.current = url;
       const el = audioRef.current;
@@ -99,15 +126,20 @@ export function VgGreetingPreviewPanel({
         voice: "Voix seule",
         intro: "Intro seule"
       };
-      setSuccess(`Apercu ${labels[mode]} — lecture en cours`);
+      setSuccess(`Apercu ${labels[mode]} (${requestedAudience}) — lecture en cours`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Echec de l'apercu audio");
+      if (audienceRef.current === requestedAudience) {
+        setError(e instanceof Error ? e.message : "Echec de l'apercu audio");
+      }
     } finally {
-      setPreviewLoading(false);
+      if (audienceRef.current === requestedAudience) {
+        setPreviewLoading(false);
+      }
     }
   };
 
   const handleRegenerate = async () => {
+    const requestedAudience = audience;
     setError(null);
     setSuccess(null);
     setRegenLoading(true);
@@ -119,23 +151,32 @@ export function VgGreetingPreviewPanel({
           return;
         }
       }
-      const data = await regenerateGreetingAudio(audio);
+      const data = await regenerateGreetingAudio(audio, requestedAudience);
+      if (audienceRef.current !== requestedAudience) {
+        return;
+      }
       setStatus(data);
+      clearPlayer();
       setSuccess(
         data.track_wav
-          ? `Cache modem regenere : ${data.track_wav}`
-          : "Cache modem regenere"
+          ? `Cache ${requestedAudience} regenere : ${data.track_wav}`
+          : `Cache ${requestedAudience} regenere`
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Echec regeneration");
+      if (audienceRef.current === requestedAudience) {
+        setError(e instanceof Error ? e.message : "Echec regeneration");
+      }
     } finally {
-      setRegenLoading(false);
+      if (audienceRef.current === requestedAudience) {
+        setRegenLoading(false);
+      }
     }
   };
 
   const togglePlay = async () => {
     const el = audioRef.current;
-    if (!el || !el.src) {
+    // Toujours regenerer l'apercu si pas de source valide pour CET onglet.
+    if (!el || !el.src || !objectUrlRef.current) {
       await handlePreview("full");
       return;
     }
@@ -163,7 +204,7 @@ export function VgGreetingPreviewPanel({
       <Stack direction="row" spacing={1.5} sx={{ alignItems: "center", flexWrap: "wrap" }} useFlexGap>
         <GraphicEqIcon color="primary" fontSize="small" />
         <Typography variant="subtitle2" sx={{ flex: 1, minWidth: 140 }}>
-          Apercu et cache modem
+          Apercu et cache modem — {audience}
         </Typography>
         {statusLoading ? (
           <CircularProgress size={20} />
@@ -178,9 +219,15 @@ export function VgGreetingPreviewPanel({
             }
           />
         ) : (
-          <Chip size="small" color="warning" variant="outlined" label="Cache absent" />
+          <Chip size="small" color="warning" variant="outlined" label="Cache absent — regenerer" />
         )}
       </Stack>
+
+      {status?.text ? (
+        <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1 }}>
+          Texte actif : {status.text.length > 120 ? `${status.text.slice(0, 120)}…` : status.text}
+        </Typography>
+      ) : null}
 
       {dirty ? (
         <Alert severity="info" sx={{ mt: 1.5, py: 0 }}>

@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from backend.core.config import Config
 from backend.core.incoming_call_audio import (
     blocked_message_text,
@@ -46,6 +48,11 @@ def test_ensure_voice_assets(tmp_path, monkeypatch):
     blocked = tmp_path / "resources" / "voice" / "system" / "blocked_short.wav"
     assert blocked.is_file()
     with wave.open(str(blocked), "rb") as wf:
+        assert wf.getframerate() == MODEM_SAMPLE_RATE
+        assert wf.getsampwidth() == 2
+    talk_cue = tmp_path / "resources" / "voice" / "system" / "talk_cue.wav"
+    assert talk_cue.is_file()
+    with wave.open(str(talk_cue), "rb") as wf:
         assert wf.getframerate() == MODEM_SAMPLE_RATE
         assert wf.getsampwidth() == 2
     assert resolve_resource_path(config, "resources/voice/system/beep.wav") == beep.resolve()
@@ -172,7 +179,7 @@ def test_greeting_default_natural_text():
     settings.audio.greeting_tts_text = None
     config.voicemail_greeting = ""
     text = greeting_text(config, settings)
-    assert "Bonjour" in text
+    assert "je ne connais pas votre numéro" in text.lower()
     assert "break" not in text.lower()
 
 
@@ -191,3 +198,61 @@ def test_write_greeting_jingle(tmp_path):
     write_greeting_jingle_wav_8k(out, duration_ms=2000)
     assert out.is_file()
     assert out.stat().st_size > 500
+
+
+def test_write_talk_cue(tmp_path):
+    """La croche vocale est bien générée au format modem."""
+    from backend.voice.audio_utils import write_talk_cue_wav_8k
+
+    out = tmp_path / "talk_cue.wav"
+    write_talk_cue_wav_8k(out)
+    assert out.is_file()
+    assert out.stat().st_size > 500
+
+
+def test_write_beep_pattern_triolet(tmp_path):
+    """Une partition avec triolets produit un WAV non vide."""
+    from backend.voice.audio_utils import beep_note_freq_hz, write_beep_pattern_wav_8k
+
+    assert beep_note_freq_hz("G5") is not None
+    assert beep_note_freq_hz("rest") is None
+    out = tmp_path / "pattern.wav"
+    write_beep_pattern_wav_8k(
+        out,
+        notes=[("C5", "triolet"), ("E5", "triolet"), ("G5", "triolet")],
+        bpm=110,
+        gap_ms=20,
+    )
+    assert out.is_file()
+    assert out.stat().st_size > 500
+
+
+def test_rhythm_duration_solfege():
+    """
+    Les valeurs rythmiques respectent le solfege :
+    1 noire = 2 croches = 4 doubles croches = 3 triolets.
+    """
+    from backend.voice.audio_utils import rhythm_duration_sec
+
+    bpm = 120.0
+    noire = rhythm_duration_sec("noire", bpm)
+    croche = rhythm_duration_sec("croche", bpm)
+    double_croche = rhythm_duration_sec("double_croche", bpm)
+    triolet = rhythm_duration_sec("triolet", bpm)
+
+    assert noire == pytest.approx(0.5)
+    assert croche == pytest.approx(noire / 2.0)
+    assert double_croche == pytest.approx(noire / 4.0)
+    assert triolet == pytest.approx(noire / 3.0)
+    assert 2 * croche == pytest.approx(noire)
+    assert 4 * double_croche == pytest.approx(noire)
+    assert 3 * triolet == pytest.approx(noire)
+
+
+def test_notes_from_audio_default():
+    """La partition par defaut est Sol5 puis Mi5 en croches."""
+    from backend.core.incoming_call_audio import notes_from_audio
+    from backend.core.incoming_call_types import IncomingCallAudioConfig
+
+    audio = IncomingCallAudioConfig()
+    assert notes_from_audio(audio) == [("G5", "croche"), ("E5", "croche")]

@@ -30,6 +30,14 @@ class FemaleVoiceGreetingPreset:
 
 GREETING_TEXT_PRESETS: tuple[GreetingTextPreset, ...] = (
     GreetingTextPreset(
+        id="unknown_number",
+        label="Numero inconnu",
+        text=(
+            "Bonjour, je ne connais pas votre numéro ! "
+            "Merci de vous présenter et de laisser vos coordonnées."
+        ),
+    ),
+    GreetingTextPreset(
         id="absent",
         label="Absence Monsieur Daniel",
         text=(

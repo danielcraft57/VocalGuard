@@ -26,6 +26,18 @@ class AudioPresetEntry:
 
 VOICE_AUDIO_PRESETS: tuple[AudioPresetEntry, ...] = (
     AudioPresetEntry(
+        id="unknown_number",
+        label="Numéro inconnu",
+        description="Accueil dédié aux appels non reconnus, ton simple et direct.",
+        values={
+            "edge_tts_voice": "fr-FR-DeniseNeural",
+            "edge_tts_rate": "-4%",
+            "edge_tts_pitch": "+3Hz",
+            "tts_voice_gain_db": -6.0,
+            "greeting_tts_text": greeting_text_by_id("unknown_number"),
+        },
+    ),
+    AudioPresetEntry(
         id="denise_modem",
         label="Denise — modem (defaut)",
         description="Voix actuelle prod : douce, debit leger, volume attenue.",
@@ -232,6 +244,61 @@ OUTRO_AUDIO_PRESETS: tuple[AudioPresetEntry, ...] = (
         values={
             "record_beep": "dtmf",
             "record_beep_wav_path": "resources/voice/system/beep.wav",
+            "blocked_source": "wav",
+            "blocked_wav_path": "resources/voice/system/blocked_short.wav",
+            "blocked_tts_text": None,
+        },
+    ),
+    AudioPresetEntry(
+        id="croche_conversation",
+        label="Croche conversation",
+        description="Partition douce (Sol→Mi) : editable dans Messages et audio.",
+        values={
+            "record_beep": "croche",
+            "record_beep_wav_path": "resources/voice/system/talk_cue.wav",
+            "record_beep_bpm": 100,
+            "record_beep_gap_ms": 45,
+            "record_beep_notes": [
+                {"pitch": "G5", "rhythm": "croche"},
+                {"pitch": "E5", "rhythm": "croche"},
+            ],
+            "blocked_source": "wav",
+            "blocked_wav_path": "resources/voice/system/blocked_short.wav",
+            "blocked_tts_text": None,
+        },
+    ),
+    AudioPresetEntry(
+        id="triolet_clair",
+        label="Triolet clair",
+        description="Trois notes rapides (do-mi-sol) en triolets.",
+        values={
+            "record_beep": "croche",
+            "record_beep_wav_path": "resources/voice/system/talk_cue.wav",
+            "record_beep_bpm": 110,
+            "record_beep_gap_ms": 20,
+            "record_beep_notes": [
+                {"pitch": "C5", "rhythm": "triolet"},
+                {"pitch": "E5", "rhythm": "triolet"},
+                {"pitch": "G5", "rhythm": "triolet"},
+            ],
+            "blocked_source": "wav",
+            "blocked_wav_path": "resources/voice/system/blocked_short.wav",
+            "blocked_tts_text": None,
+        },
+    ),
+    AudioPresetEntry(
+        id="double_croche_sec",
+        label="Doubles croches",
+        description="Deux doubles croches aigues, bip court et net.",
+        values={
+            "record_beep": "croche",
+            "record_beep_wav_path": "resources/voice/system/talk_cue.wav",
+            "record_beep_bpm": 120,
+            "record_beep_gap_ms": 25,
+            "record_beep_notes": [
+                {"pitch": "A5", "rhythm": "double_croche"},
+                {"pitch": "A5", "rhythm": "double_croche"},
+            ],
             "blocked_source": "wav",
             "blocked_wav_path": "resources/voice/system/blocked_short.wav",
             "blocked_tts_text": None,

@@ -16,6 +16,7 @@ from backend.voice.audio_utils import (
     wav_matches_modem_profile,
     write_beep_wav_8k,
     write_greeting_intro_wav,
+    write_talk_cue_wav_8k,
 )
 from backend.voice.modem_profile import resolve_profile_from_config
 from backend.voice.musicscreen_jingles import (
@@ -32,47 +33,16 @@ from backend.voice.voice_paths import (
     resolve_beep_wav,
     resolve_blocked_wav,
     resolve_intro_wav,
+    resolve_talk_cue_wav,
     resolve_voice_asset,
     voice_root,
 )
 
 DEFAULT_BLOCKED_TTS = "Desole, cet appel a ete bloque."
 DEFAULT_GREETING_TTS = (
-    "Bonjour. Vous êtes bien chez Daniel Craft, de Loïc Daniel. "
-    "Merci de laisser votre message après le bip."
+    "Bonjour, je ne connais pas votre numéro ! "
+    "Merci de vous présenter et de laisser vos coordonnées."
 )
-
-
-def audio_float(value: object, default: float) -> float:
-    """
-    Convertit une valeur audio config en float (None / invalide -> default).
-
-    @param value Valeur brute (str, int, float, None).
-    @param default Fallback.
-    @returns Float exploitable.
-    """
-    if value is None or value == "":
-        return float(default)
-    try:
-        return float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return float(default)
-
-
-def audio_int(value: object, default: int) -> int:
-    """
-    Convertit une valeur audio config en int (None / invalide -> default).
-
-    @param value Valeur brute.
-    @param default Fallback.
-    @returns Entier exploitable.
-    """
-    if value is None or value == "":
-        return int(default)
-    try:
-        return int(round(float(value)))  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return int(default)
 
 
 def project_base(config: Config) -> Path:
@@ -135,6 +105,9 @@ def sync_edge_tts_from_audio(config: Config, audio: IncomingCallAudioConfig) -> 
     gain = getattr(audio, "tts_voice_gain_db", None)
     if gain is not None:
         config.edge_tts_voice_gain_db = float(gain)
+    voice_id = getattr(audio, "elevenlabs_voice_id", None)
+    if voice_id:
+        config.elevenlabs_voice_id = str(voice_id)
 
 
 def resolve_intro_voice_bed_gain_db(
@@ -151,10 +124,44 @@ def resolve_intro_voice_bed_gain_db(
     @param intro_variant Variante jingle active.
     @returns Gain en dB negatif, ou None si fond desactive.
     """
-    bed_db = float(getattr(audio, "greeting_intro_voice_bed_db", -24.0) or -24.0)
+    raw = getattr(audio, "greeting_intro_voice_bed_db", None)
+    if raw is None:
+        bed_db = -24.0
+    else:
+        try:
+            bed_db = float(raw)
+        except (TypeError, ValueError):
+            bed_db = -24.0
     if bed_db > -1.0:
         return None
     return bed_db
+
+
+def audio_float(value: object, default: float) -> float:
+    """
+    Lit un float settings sans traiter 0 comme « absent » (piege du ``or``).
+
+    @param value Valeur brute (peut etre None).
+    @param default Defaut si None / invalide.
+    @returns Float exploitable.
+    """
+    if value is None:
+        return float(default)
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
+
+
+def audio_int(value: object, default: int) -> int:
+    """
+    Lit un int settings sans traiter 0 comme « absent ».
+
+    @param value Valeur brute.
+    @param default Defaut si None / invalide.
+    @returns Entier.
+    """
+    return int(round(audio_float(value, float(default))))
 
 
 def greeting_intro_path(config: Config, audio: IncomingCallAudioConfig) -> Optional[Path]:
@@ -218,6 +225,10 @@ def refresh_modem_voice_assets(
     write_beep_wav_8k(beep, profile=profile)
     updated.append(str(BEEP_WAV))
 
+    talk_cue = base / "resources" / "voice" / "system" / "talk_cue.wav"
+    write_talk_cue_wav_8k(talk_cue, profile=profile)
+    updated.append("resources/voice/system/talk_cue.wav")
+
     blocked = base / BLOCKED_WAV
     write_beep_wav_8k(blocked, freq_hz=620, duration_ms=350, profile=profile)
     updated.append(str(BLOCKED_WAV))
@@ -268,6 +279,49 @@ def pick_wav_or_none(
     return resolve_resource_path(config, wav_path)
 
 
+def notes_from_audio(audio: IncomingCallAudioConfig) -> list[tuple[str, str]]:
+    """
+    Extrait la partition bip depuis la config audio.
+
+    @param audio Bloc audio.
+    @returns Liste (pitch, rhythm).
+    """
+    rows = getattr(audio, "record_beep_notes", None) or []
+    out: list[tuple[str, str]] = []
+    for row in rows:
+        pitch = str(getattr(row, "pitch", None) or (row.get("pitch") if isinstance(row, dict) else "") or "G5")
+        rhythm = str(
+            getattr(row, "rhythm", None) or (row.get("rhythm") if isinstance(row, dict) else "") or "croche"
+        )
+        out.append((pitch, rhythm))
+    if not out:
+        out = [("G5", "croche"), ("E5", "croche")]
+    return out
+
+
+def ensure_talk_cue_wav(config: Config, audio: IncomingCallAudioConfig) -> Path:
+    """
+    Regenere le WAV croche depuis la partition configuree.
+
+    @param config Configuration projet.
+    @param audio Bloc audio (BPM + notes).
+    @returns Chemin du WAV croche.
+    """
+    base = project_base(config)
+    path = base / "resources" / "voice" / "system" / "talk_cue.wav"
+    profile = resolve_profile_from_config(config)
+    bpm = float(getattr(audio, "record_beep_bpm", 100) or 100)
+    gap_ms = int(getattr(audio, "record_beep_gap_ms", 45) or 45)
+    write_talk_cue_wav_8k(
+        path,
+        profile=profile,
+        notes=notes_from_audio(audio),
+        bpm=bpm,
+        gap_ms=gap_ms,
+    )
+    return path
+
+
 def beep_wav_path(config: Config, audio: IncomingCallAudioConfig) -> Optional[Path]:
     """
     Chemin du bip d'enregistrement selon la config.
@@ -278,6 +332,8 @@ def beep_wav_path(config: Config, audio: IncomingCallAudioConfig) -> Optional[Pa
     """
     if audio.record_beep == "none":
         return None
+    if audio.record_beep == "croche":
+        return ensure_talk_cue_wav(config, audio)
     if audio.record_beep == "wav":
         base = project_base(config)
         found = resolve_beep_wav(base, audio.record_beep_wav_path)
