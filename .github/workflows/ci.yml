@@ -9,6 +9,8 @@ on:
 jobs:
   backend-tests:
     runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: ${{ github.workspace }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,6 +24,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+
+      - name: Tests ElevenLabs, accueil LAN et STT node15
+        run: |
+          python -m pytest backend/tests/test_elevenlabs_client.py \
+            backend/tests/test_greeting_elevenlabs_service.py \
+            backend/tests/test_settings_elevenlabs_routes.py \
+            backend/tests/test_voice_stt_config.py \
+            backend/tests/test_greeting_audiences.py -q --tb=short
 
       - name: Run backend tests
         run: |
