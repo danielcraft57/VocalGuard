@@ -217,8 +217,8 @@ export function CallSoundtrackBar({
               <Stack
                 direction="row"
                 spacing={1.5}
-                alignItems="center"
                 sx={{
+                  alignItems: "center",
                   pointerEvents: "auto",
                   px: 1.75,
                   py: 1,
