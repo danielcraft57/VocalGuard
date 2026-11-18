@@ -61,6 +61,8 @@ config/intents_ivr.yaml
 # Caches divers
 .pytest_cache/
 .coverage
+data/pytest_workspace/
+data/pytest_voice_stt_cfg/
 
 # Audio temporaires
 audio/

@@ -53,3 +53,14 @@ def test_prepare_audience_settings_importable() -> None:
     from backend.services.greeting_audio_service import _prepare_audience_settings
 
     assert callable(_prepare_audience_settings)
+
+
+def test_audience_slot_can_set_elevenlabs_provider() -> None:
+    """Chaque audience peut forcer tts_provider elevenlabs (prod accueil)."""
+    audio = IncomingCallAudioConfig(tts_provider="edge")
+    ensure_audience_slots(audio)
+    audio.audiences["unknown"].tts_provider = "elevenlabs"
+    audio.audiences["unknown"].elevenlabs_voice_id = "onwK4e9ZLuTAKqWW03F9"
+    resolved = resolve_audio_for_audience(IncomingCallSettingsData(audio=audio), "unknown")
+    assert resolved.audio.tts_provider == "elevenlabs"
+    assert resolved.audio.elevenlabs_voice_id == "onwK4e9ZLuTAKqWW03F9"

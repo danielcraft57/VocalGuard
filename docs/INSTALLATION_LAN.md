@@ -346,6 +346,17 @@ curl -sS http://127.0.0.1:8110/health
 
 Ou sur le Pi : `bash /opt/vocalguard/scripts/smoke_telephony_stack.sh`
 
+### Tests unitaires (ElevenLabs + STT LAN)
+
+Depuis la racine du depot :
+
+```powershell
+$env:PYTHONPATH="."
+pytest backend/tests/test_elevenlabs_client.py backend/tests/test_greeting_elevenlabs_service.py backend/tests/test_settings_elevenlabs_routes.py backend/tests/test_voice_stt_config.py -q
+```
+
+Ces tests verifient notamment : catalogue / synthese ElevenLabs (sans reseau), accueil qui evite `greeting-mix` node15 quand `tts_provider=elevenlabs`, routes settings voix, lecture `STT_SERVICE_URL` / `STT_INTERNAL_TOKEN` depuis `.env`.
+
 ---
 
 ## 5. Depannage courant
